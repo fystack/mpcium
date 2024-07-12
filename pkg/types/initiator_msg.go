@@ -25,12 +25,13 @@ type GenerateKeyMessage struct {
 }
 
 type SignTxMessage struct {
-	KeyType             KeyType `json:"key_type"`
-	WalletID            string  `json:"wallet_id"`
-	NetworkInternalCode string  `json:"network_internal_code"`
-	TxID                string  `json:"tx_id"`
-	Tx                  []byte  `json:"tx"`
-	Signature           []byte  `json:"signature"`
+	KeyType             KeyType  `json:"key_type"`
+	WalletID            string   `json:"wallet_id"`
+	NetworkInternalCode string   `json:"network_internal_code"`
+	TxID                string   `json:"tx_id"`
+	Tx                  []byte   `json:"tx"`
+	Signature           []byte   `json:"signature"`
+	DerivationPath      []uint32 `json:"derivation_path"`
 }
 
 type ResharingMessage struct {
