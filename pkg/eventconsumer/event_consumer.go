@@ -407,6 +407,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	case types.KeyTypeEd25519:
@@ -416,6 +417,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	default:

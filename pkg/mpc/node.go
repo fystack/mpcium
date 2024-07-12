@@ -146,6 +146,7 @@ func (p *Node) CreateSigningSession(
 	txID string,
 	networkInternalCode string,
 	resultQueue messaging.MessageQueue,
+	derivationPath []uint32,
 	idempotentKey string,
 ) (SigningSession, error) {
 	version := p.getVersion(sessionType, walletID)
@@ -193,6 +194,7 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
 		), nil
 
@@ -211,6 +213,7 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
 		), nil
 	}
