@@ -9,7 +9,6 @@ import (
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/mpc"
-	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -30,18 +29,18 @@ func main() {
 		NatsConn: natsConn,
 		KeyPath:  "/home/viet/Documents/other/mpcium/event_initiator.key",
 	})
-	err = mpcClient.OnWalletCreationResult(func(event mpc.KeygenSuccessEvent) {
-		logger.Info("Received wallet creation result", "event", event)
+	err = mpcClient.OnResharingResult(func(event mpc.ResharingSuccessEvent) {
+		logger.Info("Received resharing result", "event", event)
 	})
 	if err != nil {
-		logger.Fatal("Failed to subscribe to wallet-creation results", err)
+		logger.Fatal("Failed to subscribe to resharing results", err)
 	}
 
-	walletID := uuid.New().String()
-	if err := mpcClient.CreateWallet(walletID); err != nil {
-		logger.Fatal("CreateWallet failed", err)
+	walletID := "c7597ccf-20fb-4754-8653-c6634b2faee9"
+	if err := mpcClient.Resharing(walletID, 2); err != nil {
+		logger.Fatal("Resharing failed", err)
 	}
-	logger.Info("CreateWallet sent, awaiting result...", "walletID", walletID)
+	logger.Info("Resharing sent, awaiting result...", "walletID", walletID)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop

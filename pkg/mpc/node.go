@@ -197,13 +197,39 @@ func (p *Node) CreateEDDSASigningSession(
 }
 
 func (p *Node) CreateECDSAResharingSession(walletID string, newThreshold int, resultQueue messaging.MessageQueue) (*ResharingSession, error) {
-	// readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
-	// _, _ := p.generatePartyIDs(PurposeKeygen, readyPeerIDs)
+	// Get existing key info to determine old participants
+	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("ecdsa:%s", walletID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key info: %w", err)
+	}
+
+	// Get new participants
+	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
+	if len(readyPeerIDs) < newThreshold+1 {
+		return nil, fmt.Errorf("not enough peers to create resharing session! Expected %d, got %d", newThreshold+1, len(readyPeerIDs))
+	}
+
+	// Generate party IDs for new participants
+	selfPartyID, newPartyIDs := p.generatePartyIDs(PurposeKeygen, readyPeerIDs)
+
+	// Generate party IDs for old participants
+	_, oldPartyIDs := p.generatePartyIDs(PurposeKeygen, keyInfo.ParticipantPeerIDs)
+
 	session := NewResharingSession(
 		walletID,
-		newThreshold,
 		p.pubSub,
 		p.direct,
+		readyPeerIDs,
+		selfPartyID,
+		oldPartyIDs,
+		newPartyIDs,
+		keyInfo.Threshold,
+		newThreshold,
+		p.ecdsaPreParams,
+		p.kvstore,
+		p.keyinfoStore,
+		resultQueue,
+		p.identityStore,
 	)
 	return session, nil
 }

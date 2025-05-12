@@ -46,7 +46,15 @@ func (r *ResharingMessage) InitiatorID() string {
 
 // Raw implements InitiatorMessage.
 func (r *ResharingMessage) Raw() ([]byte, error) {
-	return json.Marshal(r)
+	// Create a struct with only the fields that should be signed
+	payload := struct {
+		WalletID     string `json:"wallet_id"`
+		NewThreshold int    `json:"new_threshold"`
+	}{
+		WalletID:     r.WalletID,
+		NewThreshold: r.NewThreshold,
+	}
+	return json.Marshal(payload)
 }
 
 // Sig implements InitiatorMessage.
