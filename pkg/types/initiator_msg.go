@@ -33,6 +33,27 @@ type SignTxMessage struct {
 	Signature           []byte  `json:"signature"`
 }
 
+type ResharingMessage struct {
+	WalletID     string `json:"wallet_id"`
+	NewThreshold int    `json:"new_threshold"`
+	Signature    []byte `json:"signature"`
+}
+
+// InitiatorID implements InitiatorMessage.
+func (r *ResharingMessage) InitiatorID() string {
+	return r.WalletID
+}
+
+// Raw implements InitiatorMessage.
+func (r *ResharingMessage) Raw() ([]byte, error) {
+	return json.Marshal(r)
+}
+
+// Sig implements InitiatorMessage.
+func (r *ResharingMessage) Sig() []byte {
+	return r.Signature
+}
+
 func (m *SignTxMessage) Raw() ([]byte, error) {
 	// omit the Signature field itself when computing the signed‐over data
 	payload := struct {

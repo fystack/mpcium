@@ -196,6 +196,18 @@ func (p *Node) CreateEDDSASigningSession(
 	return session, nil
 }
 
+func (p *Node) CreateECDSAResharingSession(walletID string, newThreshold int, resultQueue messaging.MessageQueue) (*ResharingSession, error) {
+	// readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
+	// _, _ := p.generatePartyIDs(PurposeKeygen, readyPeerIDs)
+	session := NewResharingSession(
+		walletID,
+		newThreshold,
+		p.pubSub,
+		p.direct,
+	)
+	return session, nil
+}
+
 func (p *Node) generatePartyIDs(purpose string, readyPeerIDs []string) (self *tss.PartyID, all []*tss.PartyID) {
 	var selfPartyID *tss.PartyID
 	partyIDs := make([]*tss.PartyID, len(readyPeerIDs))
