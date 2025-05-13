@@ -49,7 +49,9 @@ type Session struct {
 	party    tss.Party
 
 	// preParams is nil for EDDSA session
-	preParams     *keygen.LocalPreParams
+	preParams *keygen.LocalPreParams
+	// reshareParams is nil for non resharing session
+	reshareParams *tss.ReSharingParameters
 	kvstore       kvstore.KVStore
 	keyinfoStore  keyinfo.Store
 	broadcastSub  messaging.Subscription
@@ -84,7 +86,6 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 		s.ErrCh <- err
 		return
 	}
-	fmt.Printf("routing %v\n", routing)
 	tssMsg := types.NewTssMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To)
 	signature, err := s.identityStore.SignMessage(&tssMsg)
 	if err != nil {
@@ -118,6 +119,14 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 	}
 }
 
+func (s *Session) sendMessageToParty(msg []byte, partyID *tss.PartyID, isBroadcast bool) {
+	if isBroadcast {
+		s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
+	} else {
+		s.direct.Send(s.topicComposer.ComposeDirectTopic(PartyIDToNodeID(partyID)), msg)
+	}
+}
+
 func (s *Session) handleResharingMessage(msg tss.Message) {
 	data, routing, err := msg.WireBytes()
 	if err != nil {
@@ -125,43 +134,57 @@ func (s *Session) handleResharingMessage(msg tss.Message) {
 		return
 	}
 
+	fmt.Printf("routing from %s to %s\n", routing.From, routing.To)
+
+	tssMsg := types.NewTssResharingMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To, routing.IsToOldCommittee, routing.IsToOldAndNewCommittees)
+	signature, err := s.identityStore.SignMessage(&tssMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to sign message: %w", err)
+		return
+	}
+	tssMsg.Signature = signature
+	msgBytes, err := types.MarshalTssMessage(&tssMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+		return
+	}
+
 	// Handle broadcast messages
 	if routing.IsBroadcast {
 		if routing.IsToOldCommittee {
 			// Send to all old parties
-			for _, oldParty := range s.OldParties().IDs() {
-				s.sendMessageToParty(data, oldParty.Id, true)
+			for _, oldParty := range s.reshareParams.OldParties().IDs() {
+				s.sendMessageToParty(msgBytes, oldParty, true)
 			}
 		} else if routing.IsToOldAndNewCommittees {
 			// Send to all parties (both old and new)
-			for _, newParty := range p.reshareParams.OldAndNewParties() {
-				p.sendMessageToParty(msgBytes, newParty.Id, true)
+			for _, newParty := range s.reshareParams.OldAndNewParties() {
+				s.sendMessageToParty(msgBytes, newParty, true)
 			}
 		} else {
 			// Send to all new parties
-			for _, newParty := range p.reshareParams.NewParties().IDs() {
-				p.sendMessageToParty(msgBytes, newParty.Id, true)
+			for _, newParty := range s.reshareParams.NewParties().IDs() {
+				s.sendMessageToParty(msgBytes, newParty, true)
 			}
 		}
 	} else {
 		// Handle point-to-point messages
 		for _, to := range msg.GetTo() {
 			// Verify the recipient is in the appropriate committee
-			if p.isOldParty {
+			if s.reshareParams.IsOldCommittee() {
 				// Old parties can send to both old and new parties
-				p.sendMessageToParty(msgBytes, to.Id, false)
+				s.sendMessageToParty(msgBytes, to, false)
 			} else {
 				// New parties can only send to other new parties
-				for _, newParty := range p.reshareParams.NewParties().IDs() {
+				for _, newParty := range s.reshareParams.NewParties().IDs() {
 					if newParty.Id == to.Id {
-						p.sendMessageToParty(msgBytes, to.Id, false)
+						s.sendMessageToParty(data, to, false)
 						break
 					}
 				}
 			}
 		}
 	}
-
 }
 
 func (s *Session) receiveTssMessage(rawMsg []byte) {
@@ -170,6 +193,7 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 		s.ErrCh <- fmt.Errorf("Failed to unmarshal message: %w", err)
 		return
 	}
+	fmt.Printf("receiveTssMessage msg %s\n", msg.From)
 	err = s.identityStore.VerifyMessage(msg)
 	if err != nil {
 		s.ErrCh <- fmt.Errorf("Failed to verify message: %w, tampered message", err)

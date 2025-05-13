@@ -53,6 +53,10 @@ func NewResharingSession(
 	identityStore identity.Store,
 	isOldParty bool,
 ) *ResharingSession {
+	oldCtx := tss.NewPeerContext(oldPartyIDs)
+	newCtx := tss.NewPeerContext(newPartyIDs)
+	reshareParams := tss.NewReSharingParameters(tss.S256(), oldCtx, newCtx, selfID, threshold, newThreshold, 3, 2)
+
 	return &ResharingSession{
 		Session: Session{
 			walletID:           walletID,
@@ -65,6 +69,7 @@ func NewResharingSession(
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error),
 			preParams:          preParams,
+			reshareParams:      reshareParams,
 			kvstore:            kvstore,
 			keyinfoStore:       keyinfoStore,
 			topicComposer: &TopicComposer{
@@ -93,10 +98,6 @@ func NewResharingSession(
 
 func (s *ResharingSession) Init() {
 	logger.Infof("Initializing resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
-	oldCtx := tss.NewPeerContext(s.oldPartyIDs)
-	newCtx := tss.NewPeerContext(s.partyIDs)
-	reshareParams := tss.NewReSharingParameters(tss.S256(), oldCtx, newCtx, s.selfPartyID, 3, 2, 3, 2)
-
 	var share keygen.LocalPartySaveData
 	if s.isOldParty {
 		// Get existing key data for old party
@@ -116,14 +117,14 @@ func (s *ResharingSession) Init() {
 		share = keygen.NewLocalPartySaveData(len(s.partyIDs))
 	}
 
-	s.party = resharing.NewLocalParty(reshareParams, share, s.outCh, s.endCh)
+	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
 
 	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
 }
 
 func (s *ResharingSession) Resharing(done func()) {
-	logger.Info("Starting resharing", "walletID", s.walletID)
+	logger.Info("Starting resharing", "walletID", s.walletID, "partyID", s.selfPartyID)
 	go func() {
 		if err := s.party.Start(); err != nil {
 			s.ErrCh <- err
@@ -184,7 +185,7 @@ func (s *ResharingSession) Resharing(done func()) {
 			done()
 			return
 		case msg := <-s.outCh:
-			s.handleTssMessage(msg)
+			s.handleResharingMessage(msg)
 		}
 	}
 }
