@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v2/ecdsa/resharing"
 	"github.com/bnb-chain/tss-lib/v2/tss"
 	"github.com/fystack/mpcium/pkg/encoding"
 	"github.com/fystack/mpcium/pkg/identity"
@@ -21,6 +22,8 @@ const (
 
 type ResharingSession struct {
 	Session
+	isOldParty   bool
+	oldPartyIDs  []*tss.PartyID
 	oldThreshold int
 	newThreshold int
 	endCh        chan *keygen.LocalPartySaveData
@@ -48,7 +51,7 @@ func NewResharingSession(
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
-
+	isOldParty bool,
 ) *ResharingSession {
 	return &ResharingSession{
 		Session: Session{
@@ -80,6 +83,8 @@ func NewResharingSession(
 			sessionType:   SessionTypeEcdsa,
 			identityStore: identityStore,
 		},
+		isOldParty:   isOldParty,
+		oldPartyIDs:  oldPartyIDs,
 		oldThreshold: threshold,
 		newThreshold: newThreshold,
 		endCh:        make(chan *keygen.LocalPartySaveData),
@@ -88,25 +93,31 @@ func NewResharingSession(
 
 func (s *ResharingSession) Init() {
 	logger.Infof("Initializing resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
-	ctx := tss.NewPeerContext(s.partyIDs)
-	params := tss.NewParameters(tss.S256(), ctx, s.selfPartyID, len(s.partyIDs), s.newThreshold)
+	oldCtx := tss.NewPeerContext(s.oldPartyIDs)
+	newCtx := tss.NewPeerContext(s.partyIDs)
+	reshareParams := tss.NewReSharingParameters(tss.S256(), oldCtx, newCtx, s.selfPartyID, 3, 2, 3, 2)
 
-	// Get existing key data
-	keyData, err := s.kvstore.Get(s.composeKey(s.walletID))
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to get wallet data from KVStore: %w", err)
-		return
+	var share keygen.LocalPartySaveData
+	if s.isOldParty {
+		// Get existing key data for old party
+		keyData, err := s.kvstore.Get(s.composeKey(s.walletID))
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to get wallet data from KVStore: %w", err)
+			return
+		}
+
+		err = json.Unmarshal(keyData, &share)
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to unmarshal wallet data: %w", err)
+			return
+		}
+	} else {
+		// Initialize empty share data for new party
+		share = keygen.NewLocalPartySaveData(len(s.partyIDs))
 	}
 
-	var data keygen.LocalPartySaveData
-	err = json.Unmarshal(keyData, &data)
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to unmarshal wallet data: %w", err)
-		return
-	}
+	s.party = resharing.NewLocalParty(reshareParams, share, s.outCh, s.endCh)
 
-	// Create resharing party
-	s.party = keygen.NewLocalParty(params, s.outCh, s.endCh, *s.preParams)
 	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
 }
@@ -121,8 +132,6 @@ func (s *ResharingSession) Resharing(done func()) {
 
 	for {
 		select {
-		case msg := <-s.outCh:
-			s.handleTssMessage(msg)
 		case saveData := <-s.endCh:
 			keyBytes, err := json.Marshal(saveData)
 			if err != nil {
@@ -174,6 +183,8 @@ func (s *ResharingSession) Resharing(done func()) {
 			}
 			done()
 			return
+		case msg := <-s.outCh:
+			s.handleTssMessage(msg)
 		}
 	}
 }

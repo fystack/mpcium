@@ -391,13 +391,28 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 
 		walletID := msg.WalletID
 		newThreshold := msg.NewThreshold
-		session, err := ec.node.CreateECDSAResharingSession(walletID, newThreshold, ec.resharingResultQueue)
+
+		// Get new participants
+		readyPeerIDs := ec.node.GetReadyPeersIncludeSelf()
+		if len(readyPeerIDs) < newThreshold+1 {
+			logger.Error("Not enough peers for resharing", nil, "expected", newThreshold+1, "got", len(readyPeerIDs))
+			return
+		}
+
+		// Create resharing oldPSession
+		oldPSession, err := ec.node.CreateECDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+		if err != nil {
+			logger.Error("Failed to create resharing session", err)
+			return
+		}
+		newPSession, err := ec.node.CreateECDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
 		if err != nil {
 			logger.Error("Failed to create resharing session", err)
 			return
 		}
 
-		session.Init()
+		oldPSession.Init()
+		newPSession.Init()
 
 		ctx, done := context.WithCancel(context.Background())
 
@@ -406,16 +421,16 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
+		wg.Add(2)
 
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
-					successEvent.ECDSAPubKey = session.GetPubKeyResult()
+					successEvent.ECDSAPubKey = oldPSession.GetPubKeyResult()
 					wg.Done()
 					return
-				case err := <-session.ErrChan():
+				case err := <-oldPSession.ErrChan():
 					if err != nil {
 						logger.Error("Resharing session error", err)
 					}
@@ -423,13 +438,33 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			}
 		}()
 
-		session.ListenToIncomingMessageAsync()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
+					wg.Done()
+					return
+				case err := <-newPSession.ErrChan():
+					if err != nil {
+						logger.Error("Resharing session error", err)
+					}
+				}
+			}
+		}()
+
+		// Start listening for messages
+		oldPSession.ListenToIncomingMessageAsync()
+		newPSession.ListenToIncomingMessageAsync()
 		time.Sleep(1 * time.Second)
 
-		go session.Resharing(done)
+		// Start resharing process
+		go oldPSession.Resharing(done)
+		go newPSession.Resharing(done)
 
 		wg.Wait()
-		logger.Info("Closing session successfully!", "event", successEvent)
+		logger.Info("Closing session successfully!",
+			"event", successEvent)
 
 		successEventBytes, err := json.Marshal(successEvent)
 		if err != nil {
@@ -444,7 +479,8 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			logger.Error("Failed to publish resharing result event", err)
 			return
 		}
-		logger.Info("Resharing completed successfully", "walletID", walletID)
+		logger.Info("Resharing completed successfully",
+			"walletID", walletID)
 	})
 
 	ec.resharingSub = sub

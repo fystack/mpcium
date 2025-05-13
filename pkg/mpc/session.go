@@ -84,7 +84,7 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 		s.ErrCh <- err
 		return
 	}
-
+	fmt.Printf("routing %v\n", routing)
 	tssMsg := types.NewTssMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To)
 	signature, err := s.identityStore.SignMessage(&tssMsg)
 	if err != nil {
@@ -116,6 +116,52 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 		}
 
 	}
+}
+
+func (s *Session) handleResharingMessage(msg tss.Message) {
+	data, routing, err := msg.WireBytes()
+	if err != nil {
+		s.ErrCh <- err
+		return
+	}
+
+	// Handle broadcast messages
+	if routing.IsBroadcast {
+		if routing.IsToOldCommittee {
+			// Send to all old parties
+			for _, oldParty := range s.OldParties().IDs() {
+				s.sendMessageToParty(data, oldParty.Id, true)
+			}
+		} else if routing.IsToOldAndNewCommittees {
+			// Send to all parties (both old and new)
+			for _, newParty := range p.reshareParams.OldAndNewParties() {
+				p.sendMessageToParty(msgBytes, newParty.Id, true)
+			}
+		} else {
+			// Send to all new parties
+			for _, newParty := range p.reshareParams.NewParties().IDs() {
+				p.sendMessageToParty(msgBytes, newParty.Id, true)
+			}
+		}
+	} else {
+		// Handle point-to-point messages
+		for _, to := range msg.GetTo() {
+			// Verify the recipient is in the appropriate committee
+			if p.isOldParty {
+				// Old parties can send to both old and new parties
+				p.sendMessageToParty(msgBytes, to.Id, false)
+			} else {
+				// New parties can only send to other new parties
+				for _, newParty := range p.reshareParams.NewParties().IDs() {
+					if newParty.Id == to.Id {
+						p.sendMessageToParty(msgBytes, to.Id, false)
+						break
+					}
+				}
+			}
+		}
+	}
+
 }
 
 func (s *Session) receiveTssMessage(rawMsg []byte) {
