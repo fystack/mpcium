@@ -91,10 +91,6 @@ func (p *Node) ID() string {
 	return p.nodeID
 }
 
-func composeReadyTopic(nodeID string) string {
-	return fmt.Sprintf("%s-%s", nodeID, "ready")
-}
-
 func (p *Node) CreateKeyGenSession(walletID string, threshold int, successQueue messaging.MessageQueue) (*KeygenSession, error) {
 	if p.peerRegistry.GetReadyPeersCount() < int64(threshold+1) {
 		return nil, fmt.Errorf("Not enough peers to create gen session! Expected %d, got %d", threshold+1, p.peerRegistry.GetReadyPeersCount())
@@ -198,12 +194,6 @@ func (p *Node) CreateEDDSASigningSession(
 }
 
 func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*ResharingSession, error) {
-	var (
-		selfPartyID *tss.PartyID
-		oldPartyIDs []*tss.PartyID
-		newPartyIDs []*tss.PartyID
-	)
-
 	// Get existing key info to determine old participants
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("ecdsa:%s", walletID))
 	if err != nil {
@@ -213,6 +203,7 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 	oldSelfPartyID, oldPartyIDs := p.generatePartyIDs(PurposeKeygen, keyInfo.ParticipantPeerIDs)
 	newSelfPartyID, newPartyIDs := p.generatePartyIDsForResharing(PurposeResharing, readyPeerIDs)
 
+	var selfPartyID *tss.PartyID
 	if isOldParticipant {
 		selfPartyID = oldSelfPartyID
 	} else {
@@ -266,6 +257,7 @@ func (p *Node) generatePartyIDsForResharing(purpose string, readyPeerIDs []strin
 		}
 
 	}
+	// mark index of selfPartyID
 	allPartyIDs := tss.SortPartyIDs(partyIDs, len(readyPeerIDs))
 	return selfPartyID, allPartyIDs
 }

@@ -454,8 +454,8 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		}()
 
 		// Start listening for messages
-		oldPSession.ListenToIncomingMessageAsync()
-		newPSession.ListenToIncomingMessageAsync()
+		oldPSession.ListenToIncomingResharingMessageAsync()
+		newPSession.ListenToIncomingResharingMessageAsync()
 		time.Sleep(1 * time.Second)
 
 		// Start resharing process

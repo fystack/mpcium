@@ -2,6 +2,7 @@ package mpc
 
 import (
 	"fmt"
+		"slices"
 	"strings"
 	"sync"
 
@@ -119,22 +120,12 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 	}
 }
 
-func (s *Session) sendMessageToParty(msg []byte, partyID *tss.PartyID, isBroadcast bool) {
-	if isBroadcast {
-		s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
-	} else {
-		s.direct.Send(s.topicComposer.ComposeDirectTopic(PartyIDToNodeID(partyID)), msg)
-	}
-}
-
 func (s *Session) handleResharingMessage(msg tss.Message) {
 	data, routing, err := msg.WireBytes()
 	if err != nil {
 		s.ErrCh <- err
 		return
 	}
-
-	fmt.Printf("routing from %s to %s\n", routing.From, routing.To)
 
 	tssMsg := types.NewTssResharingMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To, routing.IsToOldCommittee, routing.IsToOldAndNewCommittees)
 	signature, err := s.identityStore.SignMessage(&tssMsg)
@@ -149,40 +140,10 @@ func (s *Session) handleResharingMessage(msg tss.Message) {
 		return
 	}
 
-	// Handle broadcast messages
-	if routing.IsBroadcast {
-		if routing.IsToOldCommittee {
-			// Send to all old parties
-			for _, oldParty := range s.reshareParams.OldParties().IDs() {
-				s.sendMessageToParty(msgBytes, oldParty, true)
-			}
-		} else if routing.IsToOldAndNewCommittees {
-			// Send to all parties (both old and new)
-			for _, newParty := range s.reshareParams.OldAndNewParties() {
-				s.sendMessageToParty(msgBytes, newParty, true)
-			}
-		} else {
-			// Send to all new parties
-			for _, newParty := range s.reshareParams.NewParties().IDs() {
-				s.sendMessageToParty(msgBytes, newParty, true)
-			}
-		}
-	} else {
-		// Handle point-to-point messages
-		for _, to := range msg.GetTo() {
-			// Verify the recipient is in the appropriate committee
-			if s.reshareParams.IsOldCommittee() {
-				// Old parties can send to both old and new parties
-				s.sendMessageToParty(msgBytes, to, false)
-			} else {
-				// New parties can only send to other new parties
-				for _, newParty := range s.reshareParams.NewParties().IDs() {
-					if newParty.Id == to.Id {
-						s.sendMessageToParty(data, to, false)
-						break
-					}
-				}
-			}
+	// Just send to all intended recipients except self
+	for _, to := range routing.To {
+		if to.Id != s.selfPartyID.Id {
+			s.direct.Send(s.topicComposer.ComposeDirectTopic(PartyIDToNodeID(to)), msgBytes)
 		}
 	}
 }
@@ -193,7 +154,6 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 		s.ErrCh <- fmt.Errorf("Failed to unmarshal message: %w", err)
 		return
 	}
-	fmt.Printf("receiveTssMessage msg %s\n", msg.From)
 	err = s.identityStore.VerifyMessage(msg)
 	if err != nil {
 		s.ErrCh <- fmt.Errorf("Failed to verify message: %w, tampered message", err)
@@ -211,7 +171,12 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 		return
 	}
 
-	logger.Debug(fmt.Sprintf("%s Received message", s.sessionType), "from", msg.From.String(), "to", strings.Join(toIDs, ","), "isBroadcast", msg.IsBroadcast, "round", round.RoundMsg)
+	logger.Info(fmt.Sprintf("%s Received message", s.sessionType),
+		"from", msg.From.String(),
+		"to", strings.Join(toIDs, ","),
+		"isBroadcast", msg.IsBroadcast,
+		"round", round.RoundMsg)
+
 	isBroadcast := msg.IsBroadcast && len(msg.To) == 0
 	isToSelf := len(msg.To) == 1 && ComparePartyIDs(msg.To[0], s.selfPartyID)
 
@@ -223,7 +188,36 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 			logger.Error("Failed to update party", err, "walletID", s.walletID)
 			return
 		}
+	}
+}
 
+func (s *Session) receiveTssResharingMessage(rawMsg []byte) {
+	msg, err := types.UnmarshalTssMessage(rawMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		return
+	}
+	err = s.identityStore.VerifyMessage(msg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to verify message: %w, tampered message", err)
+		return
+	}
+
+	toIDs := make([]string, len(msg.To))
+	for i, id := range msg.To {
+		toIDs[i] = id.String()
+	}
+
+	isToSelf := slices.Contains(toIDs, s.selfPartyID.String())
+	fmt.Println("receive msg", msg.From, msg.To, msg.IsBroadcast, isToSelf)
+	if isToSelf {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		ok, err := s.party.UpdateFromBytes(msg.MsgBytes, msg.From, msg.IsBroadcast)
+		if !ok || err != nil {
+			logger.Error("Failed to update party", err, "walletID", s.walletID)
+			return
+		}
 	}
 }
 
@@ -265,6 +259,18 @@ func (s *Session) ListenToIncomingMessageAsync() {
 	}
 	s.directSub = sub
 
+}
+
+func (s *Session) ListenToIncomingResharingMessageAsync() {
+	nodeID := PartyIDToNodeID(s.selfPartyID)
+	targetID := s.topicComposer.ComposeDirectTopic(nodeID)
+	sub, err := s.direct.Listen(targetID, func(msg []byte) {
+		go s.receiveTssResharingMessage(msg) // async for avoid timeout
+	})
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", targetID, err)
+	}
+	s.directSub = sub
 }
 
 func (s *Session) Close() error {

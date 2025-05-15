@@ -27,7 +27,6 @@ type ResharingSession struct {
 	oldThreshold int
 	newThreshold int
 	endCh        chan *keygen.LocalPartySaveData
-	party        tss.Party
 }
 
 type ResharingSuccessEvent struct {
@@ -55,8 +54,16 @@ func NewResharingSession(
 ) *ResharingSession {
 	oldCtx := tss.NewPeerContext(oldPartyIDs)
 	newCtx := tss.NewPeerContext(newPartyIDs)
-	reshareParams := tss.NewReSharingParameters(tss.S256(), oldCtx, newCtx, selfID, threshold, newThreshold, 3, 2)
-
+	reshareParams := tss.NewReSharingParameters(
+		tss.S256(),
+		oldCtx,
+		newCtx,
+		selfID,
+		len(oldPartyIDs),
+		threshold,
+		len(newPartyIDs),
+		newThreshold,
+	)
 	return &ResharingSession{
 		Session: Session{
 			walletID:           walletID,
@@ -106,7 +113,6 @@ func (s *ResharingSession) Init() {
 			s.ErrCh <- fmt.Errorf("failed to get wallet data from KVStore: %w", err)
 			return
 		}
-
 		err = json.Unmarshal(keyData, &share)
 		if err != nil {
 			s.ErrCh <- fmt.Errorf("failed to unmarshal wallet data: %w", err)
@@ -117,8 +123,8 @@ func (s *ResharingSession) Init() {
 		share = keygen.NewLocalPartySaveData(len(s.partyIDs))
 	}
 
+	fmt.Println("share", share)
 	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
-
 	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
 }
