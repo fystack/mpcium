@@ -36,7 +36,7 @@ func main() {
 		logger.Fatal("Failed to subscribe to resharing results", err)
 	}
 
-	walletID := "3eaef75e-35ab-49ef-8af4-a073b8c409c2"
+	walletID := "892122fd-f2f4-46dc-be25-6fd0b83dff60"
 	if err := mpcClient.Resharing(walletID, 2); err != nil {
 		logger.Fatal("Resharing failed", err)
 	}

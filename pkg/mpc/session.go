@@ -2,7 +2,7 @@ package mpc
 
 import (
 	"fmt"
-		"slices"
+	"slices"
 	"strings"
 	"sync"
 
@@ -209,7 +209,7 @@ func (s *Session) receiveTssResharingMessage(rawMsg []byte) {
 	}
 
 	isToSelf := slices.Contains(toIDs, s.selfPartyID.String())
-	fmt.Println("receive msg", msg.From, msg.To, msg.IsBroadcast, isToSelf)
+	fmt.Println("receive msg", msg.From, msg.IsBroadcast)
 	if isToSelf {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -274,13 +274,17 @@ func (s *Session) ListenToIncomingResharingMessageAsync() {
 }
 
 func (s *Session) Close() error {
-	err := s.broadcastSub.Unsubscribe()
-	if err != nil {
-		return err
+	if s.broadcastSub != nil {
+		err := s.broadcastSub.Unsubscribe()
+		if err != nil {
+			return err
+		}
 	}
-	err = s.directSub.Unsubscribe()
-	if err != nil {
-		return err
+	if s.directSub != nil {
+		err := s.directSub.Unsubscribe()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

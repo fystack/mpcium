@@ -140,30 +140,35 @@ func (s *ResharingSession) Resharing(done func()) {
 	for {
 		select {
 		case saveData := <-s.endCh:
-			keyBytes, err := json.Marshal(saveData)
-			if err != nil {
-				s.ErrCh <- err
-				return
-			}
+			// keyBytes, err := json.Marshal(saveData)
+			// if err != nil {
+			// 	s.ErrCh <- err
+			// 	return
+			// }
 
 			// Save new key data
-			err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-			if err != nil {
-				logger.Error("Failed to save key", err, "walletID", s.walletID)
-				s.ErrCh <- err
-				return
-			}
+			// err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+			// if err != nil {
+			// 	logger.Error("Failed to save key", err, "walletID", s.walletID)
+			// 	s.ErrCh <- err
+			// 	return
+			// }
 
 			// Update key info with new threshold and participants
-			keyInfo := keyinfo.KeyInfo{
-				ParticipantPeerIDs: s.participantPeerIDs,
-				Threshold:          s.newThreshold,
-			}
+			// keyInfo := keyinfo.KeyInfo{
+			// 	ParticipantPeerIDs: s.participantPeerIDs,
+			// 	Threshold:          s.newThreshold,
+			// }
 
-			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-			if err != nil {
-				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
-				s.ErrCh <- err
+			// err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
+			// if err != nil {
+			// 	logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+			// 	s.ErrCh <- err
+			// 	return
+			// }
+			// skip for old committee
+			if s.reshareParams.IsOldCommittee() {
+				done()
 				return
 			}
 

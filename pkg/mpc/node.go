@@ -201,7 +201,7 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 	}
 
 	oldSelfPartyID, oldPartyIDs := p.generatePartyIDs(PurposeKeygen, keyInfo.ParticipantPeerIDs)
-	newSelfPartyID, newPartyIDs := p.generatePartyIDsForResharing(PurposeResharing, readyPeerIDs)
+	newSelfPartyID, newPartyIDs := p.generatePartyIDs(PurposeResharing, readyPeerIDs)
 
 	var selfPartyID *tss.PartyID
 	if isOldParticipant {
@@ -242,23 +242,6 @@ func (p *Node) generatePartyIDs(purpose string, readyPeerIDs []string) (self *ts
 		}
 	}
 	allPartyIDs := tss.SortPartyIDs(partyIDs, 0)
-	return selfPartyID, allPartyIDs
-}
-
-func (p *Node) generatePartyIDsForResharing(purpose string, readyPeerIDs []string) (self *tss.PartyID, all []*tss.PartyID) {
-	var selfPartyID *tss.PartyID
-	partyIDs := make([]*tss.PartyID, len(readyPeerIDs))
-	for i, peerID := range readyPeerIDs {
-		if peerID == p.nodeID {
-			selfPartyID = CreatePartyID(peerID, purpose)
-			partyIDs[i] = selfPartyID
-		} else {
-			partyIDs[i] = CreatePartyID(peerID, purpose)
-		}
-
-	}
-	// mark index of selfPartyID
-	allPartyIDs := tss.SortPartyIDs(partyIDs, len(readyPeerIDs))
 	return selfPartyID, allPartyIDs
 }
 
