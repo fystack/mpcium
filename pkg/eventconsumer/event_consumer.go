@@ -423,14 +423,14 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		var wg sync.WaitGroup
 		wg.Add(2)
 
+		// For old party, we just need to wait for completion
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
-					successEvent.ECDSAPubKey = oldPSession.GetPubKeyResult()
 					wg.Done()
 					return
-				case err := <-oldPSession.ErrChan():
+				case err := <-oldPSession.ErrCh:
 					if err != nil {
 						logger.Error("Resharing session error", err)
 					}
@@ -438,6 +438,7 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			}
 		}()
 
+		// For new party, we need to get the public key
 		go func() {
 			for {
 				select {
@@ -445,7 +446,7 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 					successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
 					wg.Done()
 					return
-				case err := <-newPSession.ErrChan():
+				case err := <-newPSession.ErrCh:
 					if err != nil {
 						logger.Error("Resharing session error", err)
 					}
@@ -462,6 +463,7 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		go oldPSession.Resharing(done)
 		go newPSession.Resharing(done)
 
+		// Wait for both sessions to complete
 		wg.Wait()
 		logger.Info("Closing session successfully!",
 			"event", successEvent)
@@ -479,7 +481,8 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			logger.Error("Failed to publish resharing result event", err)
 			return
 		}
-		logger.Info("Resharing completed successfully",
+
+		logger.Info("[COMPLETED RESHARING] Resharing completed successfully",
 			"walletID", walletID)
 	})
 

@@ -208,8 +208,19 @@ func (s *Session) receiveTssResharingMessage(rawMsg []byte) {
 		toIDs[i] = id.String()
 	}
 
+	round, err := s.getRoundFunc(msg.MsgBytes, s.selfPartyID, msg.IsBroadcast)
+	if err != nil {
+		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")
+		return
+	}
+
+	logger.Info(fmt.Sprintf("%s Received resharing message", s.sessionType),
+		"from", msg.From.String(),
+		"to", strings.Join(toIDs, ","),
+		"isBroadcast", msg.IsBroadcast,
+		"round", round.RoundMsg)
+
 	isToSelf := slices.Contains(toIDs, s.selfPartyID.String())
-	fmt.Println("receive msg", msg.From, msg.IsBroadcast)
 	if isToSelf {
 		s.mu.Lock()
 		defer s.mu.Unlock()
