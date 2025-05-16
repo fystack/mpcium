@@ -414,7 +414,8 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		oldPSession.Init()
 		newPSession.Init()
 
-		ctx, done := context.WithCancel(context.Background())
+		oldPSessionCtx, oldPSessionDone := context.WithCancel(context.Background())
+		newPSessionCtx, newPSessionDone := context.WithCancel(context.Background())
 
 		successEvent := &mpc.ResharingSuccessEvent{
 			WalletID: walletID,
@@ -427,8 +428,9 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		go func() {
 			for {
 				select {
-				case <-ctx.Done():
+				case <-oldPSessionCtx.Done():
 					wg.Done()
+					logger.Info("oldPSession done")
 					return
 				case err := <-oldPSession.ErrCh:
 					if err != nil {
@@ -442,9 +444,10 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		go func() {
 			for {
 				select {
-				case <-ctx.Done():
+				case <-newPSessionCtx.Done():
 					successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
 					wg.Done()
+					logger.Info("newPSession done")
 					return
 				case err := <-newPSession.ErrCh:
 					if err != nil {
@@ -460,8 +463,8 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 		time.Sleep(1 * time.Second)
 
 		// Start resharing process
-		go oldPSession.Resharing(done)
-		go newPSession.Resharing(done)
+		go oldPSession.Resharing(oldPSessionDone)
+		go newPSession.Resharing(newPSessionDone)
 
 		// Wait for both sessions to complete
 		wg.Wait()

@@ -123,7 +123,6 @@ func (s *ResharingSession) Init() {
 		share = keygen.NewLocalPartySaveData(len(s.partyIDs))
 	}
 
-	fmt.Println("share", share)
 	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
 	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
@@ -140,62 +139,38 @@ func (s *ResharingSession) Resharing(done func()) {
 	for {
 		select {
 		case saveData := <-s.endCh:
-			// keyBytes, err := json.Marshal(saveData)
-			// if err != nil {
-			// 	s.ErrCh <- err
-			// 	return
-			// }
-
-			// Save new key data
-			// err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-			// if err != nil {
-			// 	logger.Error("Failed to save key", err, "walletID", s.walletID)
-			// 	s.ErrCh <- err
-			// 	return
-			// }
-
-			// Update key info with new threshold and participants
-			// keyInfo := keyinfo.KeyInfo{
-			// 	ParticipantPeerIDs: s.participantPeerIDs,
-			// 	Threshold:          s.newThreshold,
-			// }
-
-			// err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-			// if err != nil {
-			// 	logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
-			// 	s.ErrCh <- err
-			// 	return
-			// }
 			// skip for old committee
-			if s.reshareParams.IsOldCommittee() {
-				done()
-				return
+			if saveData.ECDSAPub != nil {
+				// Get public key
+				publicKey := saveData.ECDSAPub
+				pubKey := &ecdsa.PublicKey{
+					Curve: publicKey.Curve(),
+					X:     publicKey.X(),
+					Y:     publicKey.Y(),
+				}
+
+				pubKeyBytes, err := encoding.EncodeS256PubKey(pubKey)
+				if err != nil {
+					logger.Error("failed to encode public key", err)
+					s.ErrCh <- fmt.Errorf("failed to encode public key: %w", err)
+					return
+				}
+
+				// Set the public key bytes
+				s.pubkeyBytes = pubKeyBytes
+				logger.Info("Generated public key bytes",
+					"walletID", s.walletID,
+					"pubKeyBytes", pubKeyBytes)
 			}
 
-			// Get public key
-			publicKey := saveData.ECDSAPub
-			pubKey := &ecdsa.PublicKey{
-				Curve: publicKey.Curve(),
-				X:     publicKey.X(),
-				Y:     publicKey.Y(),
-			}
-
-			pubKeyBytes, err := encoding.EncodeS256PubKey(pubKey)
-			if err != nil {
-				logger.Error("failed to encode public key", err)
-				s.ErrCh <- fmt.Errorf("failed to encode public key: %w", err)
-				return
-			}
-			s.pubkeyBytes = pubKeyBytes
-
-			// Close session and call done callback
-			err = s.Close()
+			done()
+			err := s.Close()
 			if err != nil {
 				logger.Error("Failed to close session", err)
 			}
-			done()
 			return
 		case msg := <-s.outCh:
+			// Handle the message
 			s.handleResharingMessage(msg)
 		}
 	}
