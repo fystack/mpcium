@@ -24,6 +24,13 @@ At its cryptographic core, Mpcium integrates tss-lib, a production-grade thresho
 
 - **EdDSA (Ed25519)**: for Solana, Polkadot, Cardano, and other modern blockchains
 
+## Resources
+
+- **MPC nodes**: [GitHub Repository](https://github.com/fystack/mpcium)
+- **MPC clients**: 
+  - [TypeScript Client](https://github.com/fystack/mpcium-client-ts)
+  - [Golang Client](https://github.com/fystack/mpcium/blob/master/pkg/client/client.go)
+
 ![Mpcium Architecture](images/mpcium.png)
 
 ## Archtecture documentation
