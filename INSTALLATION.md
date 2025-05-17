@@ -176,7 +176,10 @@ event_initiator_pubkey: "09be5d070816aadaa1b6638cad33e819a8aed7101626f6bf1e0b427
 
 ```bash
 mkdir node{0..2}
-for dir in node{0..2}; do cp config.yaml peers.json "$dir/"; done
+for dir in node{0..2}; do
+  cp config.yaml peers.json "$dir/"
+  mkdir -p "$dir/identity"
+done
 ```
 
 ### 2. Generate Identity for Each Node
