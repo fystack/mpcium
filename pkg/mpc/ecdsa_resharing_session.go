@@ -148,6 +148,30 @@ func (s *ECDSAResharingSession) Resharing(done func()) {
 	for {
 		select {
 		case saveData := <-s.endCh:
+			keyBytes, err := json.Marshal(saveData)
+			if err != nil {
+				s.ErrCh <- err
+				return
+			}
+
+			err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+			if err != nil {
+				logger.Error("Failed to save key", err, "walletID", s.walletID)
+				s.ErrCh <- err
+				return
+			}
+
+			keyInfo := keyinfo.KeyInfo{
+				ParticipantPeerIDs: s.participantPeerIDs,
+				Threshold:          s.threshold,
+				IsReshared:         true,
+			}
+			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
+			if err != nil {
+				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+				s.ErrCh <- err
+				return
+			}
 			// skip for old committee
 			if saveData.ECDSAPub != nil {
 				// Get public key
@@ -173,7 +197,7 @@ func (s *ECDSAResharingSession) Resharing(done func()) {
 			}
 
 			done()
-			err := s.Close()
+			err = s.Close()
 			if err != nil {
 				logger.Error("Failed to close session", err)
 			}

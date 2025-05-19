@@ -9,6 +9,7 @@ import (
 	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 	"github.com/bnb-chain/tss-lib/v2/eddsa/signing"
 	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium/pkg/common/errors"
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/identity"
@@ -16,7 +17,6 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
-	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/samber/lo"
 )
 
@@ -116,7 +116,6 @@ func (s *EDDSASigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-
 	s.party = signing.NewLocalParty(tx, params, data, s.outCh, s.endCh)
 	s.data = &data
 	s.tx = tx

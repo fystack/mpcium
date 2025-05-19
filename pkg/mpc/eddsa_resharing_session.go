@@ -128,30 +128,31 @@ func (s *EDDSAResharingSession) Resharing(done func()) {
 		case saveData := <-s.endCh:
 			// skip for old committee
 			if saveData.EDDSAPub != nil {
-				// keyBytes, err := json.Marshal(saveData)
-				// if err != nil {
-				// 	s.ErrCh <- err
-				// 	return
-				// }
+				keyBytes, err := json.Marshal(saveData)
+				if err != nil {
+					s.ErrCh <- err
+					return
+				}
 
-				// err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-				// if err != nil {
-				// 	logger.Error("Failed to save key", err, "walletID", s.walletID)
-				// 	s.ErrCh <- err
-				// 	return
-				// }
+				err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+				if err != nil {
+					logger.Error("Failed to save key", err, "walletID", s.walletID)
+					s.ErrCh <- err
+					return
+				}
 
-				// keyInfo := keyinfo.KeyInfo{
-				// 	ParticipantPeerIDs: s.participantPeerIDs,
-				// 	Threshold:          s.threshold,
-				// }
+				keyInfo := keyinfo.KeyInfo{
+					ParticipantPeerIDs: s.participantPeerIDs,
+					Threshold:          s.threshold,
+					IsReshared:         true,
+				}
 
-				// err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-				// if err != nil {
-				// 	logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
-				// 	s.ErrCh <- err
-				// 	return
-				// }
+				err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
+				if err != nil {
+					logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+					s.ErrCh <- err
+					return
+				}
 
 				// Get public key
 				publicKey := saveData.EDDSAPub
