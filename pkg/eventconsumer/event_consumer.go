@@ -399,16 +399,33 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			return
 		}
 
-		// Create resharing oldPSession
-		oldPSession, err := ec.node.CreateECDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
-		if err != nil {
-			logger.Error("Failed to create resharing session", err)
-			return
-		}
-		newPSession, err := ec.node.CreateECDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
-		if err != nil {
-			logger.Error("Failed to create resharing session", err)
-			return
+		var oldPSession, newPSession mpc.IResharingSession
+
+		switch msg.KeyType {
+		case types.KeyTypeSecp256k1:
+			// Create resharing oldPSession
+			oldPSession, err = ec.node.CreateECDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+			newPSession, err = ec.node.CreateECDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+		case types.KeyTypeEd25519:
+			// Create resharing oldPSession
+			oldPSession, err = ec.node.CreeateEDDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+			newPSession, err = ec.node.CreeateEDDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
 		}
 
 		oldPSession.Init()
@@ -432,7 +449,7 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 					wg.Done()
 					logger.Info("oldPSession done")
 					return
-				case err := <-oldPSession.ErrCh:
+				case err := <-oldPSession.ErrChan():
 					if err != nil {
 						logger.Error("Resharing session error", err)
 					}
@@ -445,11 +462,15 @@ func (ec *eventConsumer) consumeResharingEvent() error {
 			for {
 				select {
 				case <-newPSessionCtx.Done():
-					successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
+					if msg.KeyType == types.KeyTypeSecp256k1 {
+						successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
+					} else {
+						successEvent.EDDSAPubKey = newPSession.GetPubKeyResult()
+					}
 					wg.Done()
 					logger.Info("newPSession done")
 					return
-				case err := <-newPSession.ErrCh:
+				case err := <-newPSession.ErrChan():
 					if err != nil {
 						logger.Error("Resharing session error", err)
 					}

@@ -32,7 +32,7 @@ type MPCClient interface {
 	SignTransaction(msg *types.SignTxMessage) error
 	OnSignResult(callback func(event event.SigningResultEvent)) error
 
-	Resharing(walletID string, newThreshold int) error
+	Resharing(walletID string, newThreshold int, keyType types.KeyType) error
 	OnResharingResult(callback func(event mpc.ResharingSuccessEvent)) error
 }
 
@@ -251,10 +251,11 @@ func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) 
 	return nil
 }
 
-func (c *mpcClient) Resharing(walletID string, newThreshold int) error {
+func (c *mpcClient) Resharing(walletID string, newThreshold int, keyType types.KeyType) error {
 	msg := &types.ResharingMessage{
 		WalletID:     walletID,
 		NewThreshold: newThreshold,
+		KeyType:      keyType,
 	}
 
 	// compute the canonical raw bytes

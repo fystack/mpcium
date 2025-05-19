@@ -193,7 +193,7 @@ func (p *Node) CreateEDDSASigningSession(
 	return session, nil
 }
 
-func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*ResharingSession, error) {
+func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*ECDSAResharingSession, error) {
 	// Get existing key info to determine old participants
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("ecdsa:%s", walletID))
 	if err != nil {
@@ -210,7 +210,7 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 		selfPartyID = newSelfPartyID
 	}
 
-	session := NewResharingSession(
+	session := ECDSANewResharingSession(
 		walletID,
 		p.pubSub,
 		p.direct,
@@ -221,6 +221,41 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 		keyInfo.Threshold,
 		newThreshold,
 		p.ecdsaPreParams,
+		p.kvstore,
+		p.keyinfoStore,
+		resultQueue,
+		p.identityStore,
+		isOldParticipant,
+	)
+	return session, nil
+}
+
+func (p *Node) CreeateEDDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*EDDSAResharingSession, error) {
+	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("eddsa:%s", walletID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key info: %w", err)
+	}
+
+	oldSelfPartyID, oldPartyIDs := p.generatePartyIDs(PurposeKeygen, keyInfo.ParticipantPeerIDs)
+	newSelfPartyID, newPartyIDs := p.generatePartyIDs(PurposeResharing, readyPeerIDs)
+
+	var selfPartyID *tss.PartyID
+	if isOldParticipant {
+		selfPartyID = oldSelfPartyID
+	} else {
+		selfPartyID = newSelfPartyID
+	}
+
+	session := EDDSANewResharingSession(
+		walletID,
+		p.pubSub,
+		p.direct,
+		readyPeerIDs,
+		selfPartyID,
+		oldPartyIDs,
+		newPartyIDs,
+		keyInfo.Threshold,
+		newThreshold,
 		p.kvstore,
 		p.keyinfoStore,
 		resultQueue,

@@ -207,7 +207,6 @@ func (s *Session) receiveTssResharingMessage(rawMsg []byte) {
 	for i, id := range msg.To {
 		toIDs[i] = id.String()
 	}
-
 	round, err := s.getRoundFunc(msg.MsgBytes, s.selfPartyID, msg.IsBroadcast)
 	if err != nil {
 		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")

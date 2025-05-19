@@ -1,14 +1,13 @@
 package mpc
 
 import (
-	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/resharing"
+	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
+	"github.com/bnb-chain/tss-lib/v2/eddsa/resharing"
 	"github.com/bnb-chain/tss-lib/v2/tss"
-	"github.com/fystack/mpcium/pkg/encoding"
+	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
@@ -16,19 +15,7 @@ import (
 	"github.com/fystack/mpcium/pkg/messaging"
 )
 
-const (
-	TypeResharingSuccess = "mpc.mpc_resharing_success.%s"
-)
-
-type IResharingSession interface {
-	ErrChan() <-chan error
-	ListenToIncomingResharingMessageAsync()
-	GetPubKeyResult() []byte
-	Init()
-	Resharing(done func())
-}
-
-type ECDSAResharingSession struct {
+type EDDSAResharingSession struct {
 	Session
 	isOldParty   bool
 	oldPartyIDs  []*tss.PartyID
@@ -37,13 +24,7 @@ type ECDSAResharingSession struct {
 	endCh        chan *keygen.LocalPartySaveData
 }
 
-type ResharingSuccessEvent struct {
-	WalletID    string `json:"wallet_id"`
-	ECDSAPubKey []byte `json:"ecdsa_pub_key"`
-	EDDSAPubKey []byte `json:"eddsa_pub_key"`
-}
-
-func ECDSANewResharingSession(
+func EDDSANewResharingSession(
 	walletID string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
@@ -53,17 +34,16 @@ func ECDSANewResharingSession(
 	newPartyIDs []*tss.PartyID,
 	threshold int,
 	newThreshold int,
-	preParams *keygen.LocalPreParams,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 	isOldParty bool,
-) *ECDSAResharingSession {
+) *EDDSAResharingSession {
 	oldCtx := tss.NewPeerContext(oldPartyIDs)
 	newCtx := tss.NewPeerContext(newPartyIDs)
 	reshareParams := tss.NewReSharingParameters(
-		tss.S256(),
+		tss.Edwards(),
 		oldCtx,
 		newCtx,
 		selfID,
@@ -72,7 +52,7 @@ func ECDSANewResharingSession(
 		len(newPartyIDs),
 		newThreshold,
 	)
-	return &ECDSAResharingSession{
+	return &EDDSAResharingSession{
 		Session: Session{
 			walletID:           walletID,
 			pubSub:             pubSub,
@@ -83,24 +63,23 @@ func ECDSANewResharingSession(
 			partyIDs:           newPartyIDs,
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error),
-			preParams:          preParams,
 			reshareParams:      reshareParams,
 			kvstore:            kvstore,
 			keyinfoStore:       keyinfoStore,
 			topicComposer: &TopicComposer{
 				ComposeBroadcastTopic: func() string {
-					return fmt.Sprintf("resharing:broadcast:ecdsa:%s", walletID)
+					return fmt.Sprintf("resharing:broadcast:eddsa:%s", walletID)
 				},
 				ComposeDirectTopic: func(nodeID string) string {
-					return fmt.Sprintf("resharing:direct:ecdsa:%s:%s", nodeID, walletID)
+					return fmt.Sprintf("resharing:direct:eddsa:%s:%s", nodeID, walletID)
 				},
 			},
 			composeKey: func(walletID string) string {
-				return fmt.Sprintf("ecdsa:%s", walletID)
+				return fmt.Sprintf("eddsa:%s", walletID)
 			},
-			getRoundFunc:  GetEcdsaMsgRound,
+			getRoundFunc:  GetEddsaMsgRound,
 			resultQueue:   resultQueue,
-			sessionType:   SessionTypeEcdsa,
+			sessionType:   SessionTypeEddsa,
 			identityStore: identityStore,
 		},
 		isOldParty:   isOldParty,
@@ -111,13 +90,14 @@ func ECDSANewResharingSession(
 	}
 }
 
-func (s *ECDSAResharingSession) Init() {
-	logger.Infof("Initializing resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
+func (s *EDDSAResharingSession) Init() {
+	logger.Infof("Initializing EDDSA resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 	if s.isOldParty {
 		// Get existing key data for old party
 		keyData, err := s.kvstore.Get(s.composeKey(s.walletID))
 		if err != nil {
+			fmt.Println("err", err)
 			s.ErrCh <- fmt.Errorf("failed to get wallet data from KVStore: %w", err)
 			return
 		}
@@ -129,16 +109,14 @@ func (s *ECDSAResharingSession) Init() {
 	} else {
 		// Initialize empty share data for new party
 		share = keygen.NewLocalPartySaveData(len(s.partyIDs))
-		share.LocalPreParams = *s.preParams
 	}
-
 	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
-	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
+	logger.Infof("[INITIALIZED] Initialized EDDSA resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
 }
 
-func (s *ECDSAResharingSession) Resharing(done func()) {
-	logger.Info("Starting resharing", "walletID", s.walletID, "partyID", s.selfPartyID)
+func (s *EDDSAResharingSession) Resharing(done func()) {
+	logger.Info("Starting EDDSA resharing", "walletID", s.walletID, "partyID", s.selfPartyID)
 	go func() {
 		if err := s.party.Start(); err != nil {
 			s.ErrCh <- err
@@ -149,24 +127,44 @@ func (s *ECDSAResharingSession) Resharing(done func()) {
 		select {
 		case saveData := <-s.endCh:
 			// skip for old committee
-			if saveData.ECDSAPub != nil {
+			if saveData.EDDSAPub != nil {
+				// keyBytes, err := json.Marshal(saveData)
+				// if err != nil {
+				// 	s.ErrCh <- err
+				// 	return
+				// }
+
+				// err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+				// if err != nil {
+				// 	logger.Error("Failed to save key", err, "walletID", s.walletID)
+				// 	s.ErrCh <- err
+				// 	return
+				// }
+
+				// keyInfo := keyinfo.KeyInfo{
+				// 	ParticipantPeerIDs: s.participantPeerIDs,
+				// 	Threshold:          s.threshold,
+				// }
+
+				// err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
+				// if err != nil {
+				// 	logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+				// 	s.ErrCh <- err
+				// 	return
+				// }
+
 				// Get public key
-				publicKey := saveData.ECDSAPub
-				pubKey := &ecdsa.PublicKey{
-					Curve: publicKey.Curve(),
-					X:     publicKey.X(),
-					Y:     publicKey.Y(),
+				publicKey := saveData.EDDSAPub
+				pkX, pkY := publicKey.X(), publicKey.Y()
+				pk := edwards.PublicKey{
+					Curve: tss.Edwards(),
+					X:     pkX,
+					Y:     pkY,
 				}
 
-				pubKeyBytes, err := encoding.EncodeS256PubKey(pubKey)
-				if err != nil {
-					logger.Error("failed to encode public key", err)
-					s.ErrCh <- fmt.Errorf("failed to encode public key: %w", err)
-					return
-				}
-
-				// Set the public key bytes
+				pubKeyBytes := pk.SerializeCompressed()
 				s.pubkeyBytes = pubKeyBytes
+
 				logger.Info("Generated public key bytes",
 					"walletID", s.walletID,
 					"pubKeyBytes", pubKeyBytes)

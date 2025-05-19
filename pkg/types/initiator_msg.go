@@ -34,9 +34,10 @@ type SignTxMessage struct {
 }
 
 type ResharingMessage struct {
-	WalletID     string `json:"wallet_id"`
-	NewThreshold int    `json:"new_threshold"`
-	Signature    []byte `json:"signature"`
+	WalletID     string  `json:"wallet_id"`
+	NewThreshold int     `json:"new_threshold"`
+	Signature    []byte  `json:"signature"`
+	KeyType      KeyType `json:"key_type"`
 }
 
 // InitiatorID implements InitiatorMessage.
