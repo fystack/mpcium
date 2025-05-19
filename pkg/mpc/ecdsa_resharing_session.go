@@ -154,24 +154,17 @@ func (s *ECDSAResharingSession) Resharing(done func()) {
 				return
 			}
 
-			err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-			if err != nil {
-				logger.Error("Failed to save key", err, "walletID", s.walletID)
+			if err := s.SaveKeyData(keyBytes); err != nil {
 				s.ErrCh <- err
 				return
 			}
 
-			keyInfo := keyinfo.KeyInfo{
-				ParticipantPeerIDs: s.participantPeerIDs,
-				Threshold:          s.threshold,
-				IsReshared:         true,
-			}
-			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-			if err != nil {
-				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+			// Save key info with resharing flag
+			if err := s.SaveKeyInfo(true); err != nil {
 				s.ErrCh <- err
 				return
 			}
+
 			// skip for old committee
 			if saveData.ECDSAPub != nil {
 				// Get public key

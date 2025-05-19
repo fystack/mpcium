@@ -306,3 +306,29 @@ func (s *Session) GetPubKeyResult() []byte {
 func (s *Session) ErrChan() <-chan error {
 	return s.ErrCh
 }
+
+// SaveKeyInfo saves the key info with resharing information
+func (s *Session) SaveKeyInfo(isReshared bool) error {
+	keyInfo := &keyinfo.KeyInfo{
+		ParticipantPeerIDs: s.participantPeerIDs,
+		Threshold:          s.threshold,
+		IsReshared:         isReshared,
+	}
+
+	err := s.keyinfoStore.Save(s.composeKey(s.walletID), keyInfo)
+	if err != nil {
+		logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+		return err
+	}
+	return nil
+}
+
+// SaveKeyData saves the key data to the kvstore
+func (s *Session) SaveKeyData(keyBytes []byte) error {
+	err := s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+	if err != nil {
+		logger.Error("Failed to save key", err, "walletID", s.walletID)
+		return err
+	}
+	return nil
+}
