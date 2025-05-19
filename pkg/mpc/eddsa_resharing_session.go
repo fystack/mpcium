@@ -68,14 +68,14 @@ func EDDSANewResharingSession(
 			keyinfoStore:       keyinfoStore,
 			topicComposer: &TopicComposer{
 				ComposeBroadcastTopic: func() string {
-					return fmt.Sprintf("resharing:broadcast:eddsa:%s", walletID)
+					return fmt.Sprintf(TopicFormatResharingBroadcast, "eddsa", walletID)
 				},
 				ComposeDirectTopic: func(nodeID string) string {
-					return fmt.Sprintf("resharing:direct:eddsa:%s:%s", nodeID, walletID)
+					return fmt.Sprintf(TopicFormatResharingDirect, "eddsa", nodeID, walletID)
 				},
 			},
 			composeKey: func(walletID string) string {
-				return fmt.Sprintf("eddsa:%s", walletID)
+				return fmt.Sprintf(KeyFormatEddsa, walletID)
 			},
 			getRoundFunc:  GetEddsaMsgRound,
 			resultQueue:   resultQueue,

@@ -22,19 +22,32 @@ var (
 	ErrNotEnoughParticipants = errors.New("Not enough participants to sign")
 )
 
-type TopicComposer struct {
-	ComposeBroadcastTopic func() string
-	ComposeDirectTopic    func(nodeID string) string
-}
-
-type KeyComposerFn func(id string) string
-
+// SessionType constants
 type SessionType string
 
 const (
 	SessionTypeEcdsa SessionType = "session_ecdsa"
 	SessionTypeEddsa SessionType = "session_eddsa"
 )
+
+// Topic format constants
+const (
+	TopicFormatResharingBroadcast = "resharing:broadcast:%s:%s"
+	TopicFormatResharingDirect    = "resharing:direct:%s:%s:%s"
+)
+
+// Key format constants
+const (
+	KeyFormatEcdsa = "ecdsa:%s"
+	KeyFormatEddsa = "eddsa:%s"
+)
+
+type TopicComposer struct {
+	ComposeBroadcastTopic func() string
+	ComposeDirectTopic    func(nodeID string) string
+}
+
+type KeyComposerFn func(id string) string
 
 type Session struct {
 	walletID           string

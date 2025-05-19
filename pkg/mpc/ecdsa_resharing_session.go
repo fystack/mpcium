@@ -89,14 +89,14 @@ func ECDSANewResharingSession(
 			keyinfoStore:       keyinfoStore,
 			topicComposer: &TopicComposer{
 				ComposeBroadcastTopic: func() string {
-					return fmt.Sprintf("resharing:broadcast:ecdsa:%s", walletID)
+					return fmt.Sprintf(TopicFormatResharingBroadcast, "ecdsa", walletID)
 				},
 				ComposeDirectTopic: func(nodeID string) string {
-					return fmt.Sprintf("resharing:direct:ecdsa:%s:%s", nodeID, walletID)
+					return fmt.Sprintf(TopicFormatResharingDirect, "ecdsa", nodeID, walletID)
 				},
 			},
 			composeKey: func(walletID string) string {
-				return fmt.Sprintf("ecdsa:%s", walletID)
+				return fmt.Sprintf(KeyFormatEcdsa, walletID)
 			},
 			getRoundFunc:  GetEcdsaMsgRound,
 			resultQueue:   resultQueue,
