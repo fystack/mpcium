@@ -2,6 +2,7 @@ package mpc
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -21,19 +22,32 @@ var (
 	ErrNotEnoughParticipants = errors.New("Not enough participants to sign")
 )
 
-type TopicComposer struct {
-	ComposeBroadcastTopic func() string
-	ComposeDirectTopic    func(nodeID string) string
-}
-
-type KeyComposerFn func(id string) string
-
+// SessionType constants
 type SessionType string
 
 const (
 	SessionTypeEcdsa SessionType = "session_ecdsa"
 	SessionTypeEddsa SessionType = "session_eddsa"
 )
+
+// Topic format constants
+const (
+	TopicFormatResharingBroadcast = "resharing:broadcast:%s:%s"
+	TopicFormatResharingDirect    = "resharing:direct:%s:%s:%s"
+)
+
+// Key format constants
+const (
+	KeyFormatEcdsa = "ecdsa:%s"
+	KeyFormatEddsa = "eddsa:%s"
+)
+
+type TopicComposer struct {
+	ComposeBroadcastTopic func() string
+	ComposeDirectTopic    func(nodeID string) string
+}
+
+type KeyComposerFn func(id string) string
 
 type Session struct {
 	walletID           string
@@ -49,7 +63,9 @@ type Session struct {
 	party    tss.Party
 
 	// preParams is nil for EDDSA session
-	preParams     *keygen.LocalPreParams
+	preParams *keygen.LocalPreParams
+	// reshareParams is nil for non resharing session
+	reshareParams *tss.ReSharingParameters
 	kvstore       kvstore.KVStore
 	keyinfoStore  keyinfo.Store
 	broadcastSub  messaging.Subscription
@@ -84,7 +100,6 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 		s.ErrCh <- err
 		return
 	}
-
 	tssMsg := types.NewTssMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To)
 	signature, err := s.identityStore.SignMessage(&tssMsg)
 	if err != nil {
@@ -118,6 +133,34 @@ func (s *Session) handleTssMessage(keyshare tss.Message) {
 	}
 }
 
+func (s *Session) handleResharingMessage(msg tss.Message) {
+	data, routing, err := msg.WireBytes()
+	if err != nil {
+		s.ErrCh <- err
+		return
+	}
+
+	tssMsg := types.NewTssResharingMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To, routing.IsToOldCommittee, routing.IsToOldAndNewCommittees)
+	signature, err := s.identityStore.SignMessage(&tssMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to sign message: %w", err)
+		return
+	}
+	tssMsg.Signature = signature
+	msgBytes, err := types.MarshalTssMessage(&tssMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+		return
+	}
+
+	// Just send to all intended recipients except self
+	for _, to := range routing.To {
+		if to.Id != s.selfPartyID.Id {
+			s.direct.Send(s.topicComposer.ComposeDirectTopic(PartyIDToNodeID(to)), msgBytes)
+		}
+	}
+}
+
 func (s *Session) receiveTssMessage(rawMsg []byte) {
 	msg, err := types.UnmarshalTssMessage(rawMsg)
 	if err != nil {
@@ -141,7 +184,12 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 		return
 	}
 
-	logger.Debug(fmt.Sprintf("%s Received message", s.sessionType), "from", msg.From.String(), "to", strings.Join(toIDs, ","), "isBroadcast", msg.IsBroadcast, "round", round.RoundMsg)
+	logger.Info(fmt.Sprintf("%s Received message", s.sessionType),
+		"from", msg.From.String(),
+		"to", strings.Join(toIDs, ","),
+		"isBroadcast", msg.IsBroadcast,
+		"round", round.RoundMsg)
+
 	isBroadcast := msg.IsBroadcast && len(msg.To) == 0
 	isToSelf := len(msg.To) == 1 && ComparePartyIDs(msg.To[0], s.selfPartyID)
 
@@ -153,7 +201,46 @@ func (s *Session) receiveTssMessage(rawMsg []byte) {
 			logger.Error("Failed to update party", err, "walletID", s.walletID)
 			return
 		}
+	}
+}
 
+func (s *Session) receiveTssResharingMessage(rawMsg []byte) {
+	msg, err := types.UnmarshalTssMessage(rawMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		return
+	}
+	err = s.identityStore.VerifyMessage(msg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to verify message: %w, tampered message", err)
+		return
+	}
+
+	toIDs := make([]string, len(msg.To))
+	for i, id := range msg.To {
+		toIDs[i] = id.String()
+	}
+	round, err := s.getRoundFunc(msg.MsgBytes, s.selfPartyID, msg.IsBroadcast)
+	if err != nil {
+		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")
+		return
+	}
+
+	logger.Info(fmt.Sprintf("%s Received resharing message", s.sessionType),
+		"from", msg.From.String(),
+		"to", strings.Join(toIDs, ","),
+		"isBroadcast", msg.IsBroadcast,
+		"round", round.RoundMsg)
+
+	isToSelf := slices.Contains(toIDs, s.selfPartyID.String())
+	if isToSelf {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		ok, err := s.party.UpdateFromBytes(msg.MsgBytes, msg.From, msg.IsBroadcast)
+		if !ok || err != nil {
+			logger.Error("Failed to update party", err, "walletID", s.walletID)
+			return
+		}
 	}
 }
 
@@ -197,14 +284,30 @@ func (s *Session) ListenToIncomingMessageAsync() {
 
 }
 
-func (s *Session) Close() error {
-	err := s.broadcastSub.Unsubscribe()
+func (s *Session) ListenToIncomingResharingMessageAsync() {
+	nodeID := PartyIDToNodeID(s.selfPartyID)
+	targetID := s.topicComposer.ComposeDirectTopic(nodeID)
+	sub, err := s.direct.Listen(targetID, func(msg []byte) {
+		go s.receiveTssResharingMessage(msg) // async for avoid timeout
+	})
 	if err != nil {
-		return err
+		s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", targetID, err)
 	}
-	err = s.directSub.Unsubscribe()
-	if err != nil {
-		return err
+	s.directSub = sub
+}
+
+func (s *Session) Close() error {
+	if s.broadcastSub != nil {
+		err := s.broadcastSub.Unsubscribe()
+		if err != nil {
+			return err
+		}
+	}
+	if s.directSub != nil {
+		err := s.directSub.Unsubscribe()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -215,4 +318,30 @@ func (s *Session) GetPubKeyResult() []byte {
 
 func (s *Session) ErrChan() <-chan error {
 	return s.ErrCh
+}
+
+// SaveKeyInfo saves the key info with resharing information
+func (s *Session) SaveKeyInfo(isReshared bool) error {
+	keyInfo := &keyinfo.KeyInfo{
+		ParticipantPeerIDs: s.participantPeerIDs,
+		Threshold:          s.threshold,
+		IsReshared:         isReshared,
+	}
+
+	err := s.keyinfoStore.Save(s.composeKey(s.walletID), keyInfo)
+	if err != nil {
+		logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
+		return err
+	}
+	return nil
+}
+
+// SaveKeyData saves the key data to the kvstore
+func (s *Session) SaveKeyData(keyBytes []byte) error {
+	err := s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
+	if err != nil {
+		logger.Error("Failed to save key", err, "walletID", s.walletID)
+		return err
+	}
+	return nil
 }

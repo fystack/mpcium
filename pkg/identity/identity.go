@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -264,5 +265,5 @@ func (s *fileStore) VerifyInitiatorMessage(msg types.InitiatorMessage) error {
 }
 
 func partyIDToNodeID(partyID *tss.PartyID) string {
-	return string(partyID.KeyInt().Bytes())
+	return strings.Split(string(partyID.KeyInt().Bytes()), ":")[0]
 }

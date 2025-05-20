@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	MPCGenerateEvent = "mpc:generate"
-	MPCSignEvent     = "mpc:sign"
+	MPCGenerateEvent  = "mpc:generate"
+	MPCSignEvent      = "mpc:sign"
+	MPCResharingEvent = "mpc:reshare"
 )
 
 type EventConsumer interface {
@@ -35,11 +36,13 @@ type eventConsumer struct {
 	pubsub       messaging.PubSub
 	mpcThreshold int
 
-	genKeySucecssQueue messaging.MessageQueue
-	signingResultQueue messaging.MessageQueue
+	genKeySucecssQueue   messaging.MessageQueue
+	signingResultQueue   messaging.MessageQueue
+	resharingResultQueue messaging.MessageQueue
 
 	keyGenerationSub messaging.Subscription
 	signingSub       messaging.Subscription
+	resharingSub     messaging.Subscription
 	identityStore    identity.Store
 
 	// Track active sessions with timestamps for cleanup
@@ -55,19 +58,21 @@ func NewEventConsumer(
 	pubsub messaging.PubSub,
 	genKeySucecssQueue messaging.MessageQueue,
 	signingResultQueue messaging.MessageQueue,
+	resharingResultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 ) EventConsumer {
 	ec := &eventConsumer{
-		node:               node,
-		pubsub:             pubsub,
-		genKeySucecssQueue: genKeySucecssQueue,
-		signingResultQueue: signingResultQueue,
-		activeSessions:     make(map[string]time.Time),
-		cleanupInterval:    5 * time.Minute,  // Run cleanup every 5 minutes
-		sessionTimeout:     30 * time.Minute, // Consider sessions older than 30 minutes stale
-		cleanupStopChan:    make(chan struct{}),
-		mpcThreshold:       viper.GetInt("mpc_threshold"),
-		identityStore:      identityStore,
+		node:                 node,
+		pubsub:               pubsub,
+		genKeySucecssQueue:   genKeySucecssQueue,
+		signingResultQueue:   signingResultQueue,
+		resharingResultQueue: resharingResultQueue,
+		activeSessions:       make(map[string]time.Time),
+		cleanupInterval:      5 * time.Minute,  // Run cleanup every 5 minutes
+		sessionTimeout:       30 * time.Minute, // Consider sessions older than 30 minutes stale
+		cleanupStopChan:      make(chan struct{}),
+		mpcThreshold:         viper.GetInt("mpc_threshold"),
+		identityStore:        identityStore,
 	}
 
 	// Start background cleanup goroutine
@@ -85,6 +90,11 @@ func (ec *eventConsumer) Run() {
 	err = ec.consumeTxSigningEvent()
 	if err != nil {
 		log.Fatal("Failed to consume tx signing event", err)
+	}
+
+	err = ec.consumeResharingEvent()
+	if err != nil {
+		log.Fatal("Failed to consume resharing event", err)
 	}
 
 	logger.Info("MPC Event consumer started...!")
@@ -362,6 +372,151 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, NetworkIntern
 	}
 }
 
+func (ec *eventConsumer) consumeResharingEvent() error {
+	sub, err := ec.pubsub.Subscribe(MPCResharingEvent, func(natMsg *nats.Msg) {
+		raw := natMsg.Data
+		var msg types.ResharingMessage
+		err := json.Unmarshal(raw, &msg)
+		if err != nil {
+			logger.Error("Failed to unmarshal resharing message", err)
+			return
+		}
+		logger.Info("Received resharing event", "walletID", msg.WalletID, "newThreshold", msg.NewThreshold)
+
+		err = ec.identityStore.VerifyInitiatorMessage(&msg)
+		if err != nil {
+			logger.Error("Failed to verify initiator message", err)
+			return
+		}
+
+		walletID := msg.WalletID
+		newThreshold := msg.NewThreshold
+
+		// Get new participants
+		readyPeerIDs := ec.node.GetReadyPeersIncludeSelf()
+		if len(readyPeerIDs) < newThreshold+1 {
+			logger.Error("Not enough peers for resharing", nil, "expected", newThreshold+1, "got", len(readyPeerIDs))
+			return
+		}
+
+		var oldPSession, newPSession mpc.IResharingSession
+
+		switch msg.KeyType {
+		case types.KeyTypeSecp256k1:
+			// Create resharing oldPSession
+			oldPSession, err = ec.node.CreateECDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+			newPSession, err = ec.node.CreateECDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+		case types.KeyTypeEd25519:
+			// Create resharing oldPSession
+			oldPSession, err = ec.node.CreeateEDDSAResharingSession(walletID, true, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+			newPSession, err = ec.node.CreeateEDDSAResharingSession(walletID, false, readyPeerIDs, newThreshold, ec.resharingResultQueue)
+			if err != nil {
+				logger.Error("Failed to create resharing session", err)
+				return
+			}
+		}
+
+		oldPSession.Init()
+		newPSession.Init()
+
+		oldPSessionCtx, oldPSessionDone := context.WithCancel(context.Background())
+		newPSessionCtx, newPSessionDone := context.WithCancel(context.Background())
+
+		successEvent := &mpc.ResharingSuccessEvent{
+			WalletID: walletID,
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// For old party, we just need to wait for completion
+		go func() {
+			for {
+				select {
+				case <-oldPSessionCtx.Done():
+					wg.Done()
+					logger.Info("oldPSession done")
+					return
+				case err := <-oldPSession.ErrChan():
+					if err != nil {
+						logger.Error("Resharing session error", err)
+					}
+				}
+			}
+		}()
+
+		// For new party, we need to get the public key
+		go func() {
+			for {
+				select {
+				case <-newPSessionCtx.Done():
+					if msg.KeyType == types.KeyTypeSecp256k1 {
+						successEvent.ECDSAPubKey = newPSession.GetPubKeyResult()
+					} else {
+						successEvent.EDDSAPubKey = newPSession.GetPubKeyResult()
+					}
+					wg.Done()
+					logger.Info("newPSession done")
+					return
+				case err := <-newPSession.ErrChan():
+					if err != nil {
+						logger.Error("Resharing session error", err)
+					}
+				}
+			}
+		}()
+
+		// Start listening for messages
+		oldPSession.ListenToIncomingResharingMessageAsync()
+		newPSession.ListenToIncomingResharingMessageAsync()
+		time.Sleep(1 * time.Second)
+
+		// Start resharing process
+		go oldPSession.Resharing(oldPSessionDone)
+		go newPSession.Resharing(newPSessionDone)
+
+		// Wait for both sessions to complete
+		wg.Wait()
+		logger.Info("Closing session successfully!",
+			"event", successEvent)
+
+		successEventBytes, err := json.Marshal(successEvent)
+		if err != nil {
+			logger.Error("Failed to marshal resharing success event", err)
+			return
+		}
+
+		err = ec.resharingResultQueue.Enqueue(fmt.Sprintf(mpc.TypeResharingSuccess, walletID), successEventBytes, &messaging.EnqueueOptions{
+			IdempotententKey: fmt.Sprintf(mpc.TypeResharingSuccess, walletID),
+		})
+		if err != nil {
+			logger.Error("Failed to publish resharing result event", err)
+			return
+		}
+
+		logger.Info("[COMPLETED RESHARING] Resharing completed successfully",
+			"walletID", walletID)
+	})
+
+	ec.resharingSub = sub
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Add a cleanup routine that runs periodically
 func (ec *eventConsumer) sessionCleanupRoutine() {
 	ticker := time.NewTicker(ec.cleanupInterval)
@@ -396,14 +551,6 @@ func (ec *eventConsumer) addSession(walletID, txID string) {
 	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
 	ec.sessionsLock.Lock()
 	ec.activeSessions[sessionID] = time.Now()
-	ec.sessionsLock.Unlock()
-}
-
-// Remove a session from tracking
-func (ec *eventConsumer) removeSession(walletID, txID string) {
-	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
-	ec.sessionsLock.Lock()
-	delete(ec.activeSessions, sessionID)
 	ec.sessionsLock.Unlock()
 }
 

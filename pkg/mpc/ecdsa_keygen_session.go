@@ -115,6 +115,7 @@ func (s *KeygenSession) GenerateKey(done func()) {
 			keyInfo := keyinfo.KeyInfo{
 				ParticipantPeerIDs: s.participantPeerIDs,
 				Threshold:          s.threshold,
+				IsReshared:         false,
 			}
 
 			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
