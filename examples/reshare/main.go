@@ -7,17 +7,19 @@ import (
 	"syscall"
 
 	"github.com/fystack/mpcium/pkg/client"
+	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/nats-io/nats.go"
+	"github.com/spf13/viper"
 )
 
 func main() {
 	const environment = "development"
-	// config.InitViperConfig()
+	config.InitViperConfig()
 	logger.Init(environment, false)
 
-	natsURL := "nats://localhost:4222"
+	natsURL := viper.GetString("nats.url")
 	natsConn, err := nats.Connect(natsURL)
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
@@ -27,7 +29,7 @@ func main() {
 
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
-		KeyPath:  "/home/viet/Documents/other/mpcium/event_initiator.key",
+		KeyPath:  "./event_initiator.key",
 	})
 	err = mpcClient.OnResharingResult(func(event mpc.ResharingSuccessEvent) {
 		logger.Info("Received resharing result", "event", event)
@@ -37,7 +39,7 @@ func main() {
 	}
 
 	walletID := "892122fd-f2f4-46dc-be25-6fd0b83dff60"
-	if err := mpcClient.Resharing(walletID, 2); err != nil {
+	if err := mpcClient.Resharing(walletID, 2, "ed25519"); err != nil {
 		logger.Fatal("Resharing failed", err)
 	}
 	logger.Info("Resharing sent, awaiting result...", "walletID", walletID)
