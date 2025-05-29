@@ -22,6 +22,7 @@ import (
 
 const (
 	GenerateWalletSuccessTopic = "mpc.mpc_keygen_success.*" // wildcard to listen to all success events
+	ResharingResultTopic       = "mpc.mpc_resharing_success.*"
 )
 
 type MPCClient interface {
@@ -30,14 +31,18 @@ type MPCClient interface {
 
 	SignTransaction(msg *types.SignTxMessage) error
 	OnSignResult(callback func(event event.SigningResultEvent)) error
+
+	Resharing(walletID string, newThreshold int, keyType types.KeyType) error
+	OnResharingResult(callback func(event mpc.ResharingSuccessEvent)) error
 }
 
 type mpcClient struct {
-	signingStream      messaging.StreamPubsub
-	pubsub             messaging.PubSub
-	genKeySuccessQueue messaging.MessageQueue
-	signResultQueue    messaging.MessageQueue
-	privKey            ed25519.PrivateKey
+	signingStream        messaging.StreamPubsub
+	pubsub               messaging.PubSub
+	genKeySuccessQueue   messaging.MessageQueue
+	signResultQueue      messaging.MessageQueue
+	resharingResultQueue messaging.MessageQueue
+	privKey              ed25519.PrivateKey
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -123,17 +128,20 @@ func NewMPCClient(opts Options) MPCClient {
 	manager := messaging.NewNATsMessageQueueManager("mpc", []string{
 		"mpc.mpc_keygen_success.*",
 		"mpc.signing_result.*",
+		"mpc.mpc_resharing_success.*",
 	}, opts.NatsConn)
 
 	genKeySuccessQueue := manager.NewMessageQueue("mpc_keygen_success")
 	signResultQueue := manager.NewMessageQueue("signing_result")
+	resharingResultQueue := manager.NewMessageQueue("mpc_resharing_success")
 
 	return &mpcClient{
-		signingStream:      signingStream,
-		pubsub:             pubsub,
-		genKeySuccessQueue: genKeySuccessQueue,
-		signResultQueue:    signResultQueue,
-		privKey:            priv,
+		signingStream:        signingStream,
+		pubsub:               pubsub,
+		genKeySuccessQueue:   genKeySuccessQueue,
+		signResultQueue:      signResultQueue,
+		resharingResultQueue: resharingResultQueue,
+		privKey:              priv,
 	}
 }
 
@@ -238,6 +246,50 @@ func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) 
 
 	if err != nil {
 		return fmt.Errorf("OnSignResult: subscribe error: %w", err)
+	}
+
+	return nil
+}
+
+func (c *mpcClient) Resharing(walletID string, newThreshold int, keyType types.KeyType) error {
+	msg := &types.ResharingMessage{
+		WalletID:     walletID,
+		NewThreshold: newThreshold,
+		KeyType:      keyType,
+	}
+
+	// compute the canonical raw bytes
+	raw, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("Resharing: raw payload error: %w", err)
+	}
+	// sign
+	msg.Signature = ed25519.Sign(c.privKey, raw)
+
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("Resharing: marshal error: %w", err)
+	}
+
+	if err := c.pubsub.Publish(eventconsumer.MPCResharingEvent, bytes); err != nil {
+		return fmt.Errorf("Resharing: publish error: %w", err)
+	}
+	return nil
+}
+
+func (c *mpcClient) OnResharingResult(callback func(event mpc.ResharingSuccessEvent)) error {
+	err := c.resharingResultQueue.Dequeue(ResharingResultTopic, func(msg []byte) error {
+		var event mpc.ResharingSuccessEvent
+		err := json.Unmarshal(msg, &event)
+		if err != nil {
+			return err
+		}
+		callback(event)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("OnResharingResult: subscribe error: %w", err)
 	}
 
 	return nil
