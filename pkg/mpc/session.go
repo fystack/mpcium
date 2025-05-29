@@ -2,6 +2,7 @@ package mpc
 
 import (
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 	"sync"
@@ -344,4 +345,12 @@ func (s *Session) SaveKeyData(keyBytes []byte) error {
 		return err
 	}
 	return nil
+}
+
+type ISigningSession interface {
+	Init(tx *big.Int) error
+	Sign(onSuccess func([]byte))
+	ListenToIncomingMessageAsync()
+	ErrChan() <-chan error
+	GetPubKeyResult() []byte
 }

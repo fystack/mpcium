@@ -1,7 +1,6 @@
 package mpc
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
@@ -15,7 +14,7 @@ import (
 )
 
 type EDDSAKeygenSession struct {
-	Session
+	*BaseKeygenSession
 	endCh chan *keygen.LocalPartySaveData
 }
 
@@ -37,34 +36,53 @@ func NewEDDSAKeygenSession(
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 ) *EDDSAKeygenSession {
-	return &EDDSAKeygenSession{Session: Session{
-		walletID:           walletID,
-		pubSub:             pubSub,
-		direct:             direct,
-		threshold:          threshold,
-		participantPeerIDs: participantPeerIDs,
-		selfPartyID:        selfID,
-		partyIDs:           partyIDs,
-		outCh:              make(chan tss.Message),
-		ErrCh:              make(chan error),
-		kvstore:            kvstore,
-		keyinfoStore:       keyinfoStore,
-		topicComposer: &TopicComposer{
-			ComposeBroadcastTopic: func() string {
-				return fmt.Sprintf("keygen:broadcast:eddsa:%s", walletID)
-			},
-			ComposeDirectTopic: func(nodeID string) string {
-				return fmt.Sprintf("keygen:direct:eddsa:%s:%s", nodeID, walletID)
-			},
+	topicComposer := &TopicComposer{
+		ComposeBroadcastTopic: func() string {
+			return fmt.Sprintf("keygen:broadcast:eddsa:%s", walletID)
 		},
-		composeKey: func(waleltID string) string {
-			return fmt.Sprintf("eddsa:%s", waleltID)
+		ComposeDirectTopic: func(nodeID string) string {
+			return fmt.Sprintf("keygen:direct:eddsa:%s:%s", nodeID, walletID)
 		},
-		getRoundFunc:  GetEddsaMsgRound,
-		resultQueue:   resultQueue,
-		sessionType:   SessionTypeEddsa,
-		identityStore: identityStore,
-	},
+	}
+
+	processSaveData := func(data any) ([]byte, error) {
+		saveData, ok := data.(*keygen.LocalPartySaveData)
+		if !ok {
+			return nil, fmt.Errorf("invalid save data type")
+		}
+
+		publicKey := saveData.EDDSAPub
+		pkX, pkY := publicKey.X(), publicKey.Y()
+		pk := edwards.PublicKey{
+			Curve: tss.Edwards(),
+			X:     pkX,
+			Y:     pkY,
+		}
+
+		return pk.SerializeCompressed(), nil
+	}
+
+	return &EDDSAKeygenSession{
+		BaseKeygenSession: NewBaseKeygenSession(
+			walletID,
+			pubSub,
+			direct,
+			participantPeerIDs,
+			selfID,
+			partyIDs,
+			threshold,
+			kvstore,
+			keyinfoStore,
+			resultQueue,
+			identityStore,
+			topicComposer,
+			func(walletID string) string {
+				return fmt.Sprintf("eddsa:%s", walletID)
+			},
+			GetEddsaMsgRound,
+			SessionTypeEddsa,
+			processSaveData,
+		),
 		endCh: make(chan *keygen.LocalPartySaveData),
 	}
 }
@@ -90,48 +108,7 @@ func (s *EDDSAKeygenSession) GenerateKey(done func()) {
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case saveData := <-s.endCh:
-			keyBytes, err := json.Marshal(saveData)
-			if err != nil {
-				s.ErrCh <- err
-				return
-			}
-
-			err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-			if err != nil {
-				logger.Error("Failed to save key", err, "walletID", s.walletID)
-				s.ErrCh <- err
-				return
-			}
-
-			keyInfo := keyinfo.KeyInfo{
-				ParticipantPeerIDs: s.participantPeerIDs,
-				Threshold:          s.threshold,
-				IsReshared:         false,
-			}
-
-			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-			if err != nil {
-				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
-				s.ErrCh <- err
-				return
-			}
-
-			publicKey := saveData.EDDSAPub
-			pkX, pkY := publicKey.X(), publicKey.Y()
-			pk := edwards.PublicKey{
-				Curve: tss.Edwards(),
-				X:     pkX,
-				Y:     pkY,
-			}
-
-			pubKeyBytes := pk.SerializeCompressed()
-			s.pubkeyBytes = pubKeyBytes
-
-			err = s.Close()
-			if err != nil {
-				logger.Error("Failed to close session", err)
-			}
-			done()
+			s.BaseKeygenSession.GenerateKey(done, saveData)
 			return
 		}
 	}

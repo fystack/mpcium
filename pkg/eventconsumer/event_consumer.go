@@ -240,7 +240,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 		var session mpc.ISigningSession
 		switch msg.KeyType {
 		case types.KeyTypeSecp256k1:
-			session, err = ec.node.CreateSigningSession(
+			session, err = ec.node.CreateEcdsaSigningSession(
 				msg.WalletID,
 				msg.TxID,
 				msg.NetworkInternalCode,

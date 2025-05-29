@@ -138,13 +138,13 @@ func (p *Node) CreateEDDSAKeyGenSession(walletID string, threshold int, successQ
 	return session, nil
 }
 
-func (p *Node) CreateSigningSession(
+func (p *Node) CreateEcdsaSigningSession(
 	walletID string,
 	txID string,
 	networkInternalCode string,
 	threshold int,
 	resultQueue messaging.MessageQueue,
-) (*SigningSession, error) {
+) (*EcdsaSigningSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("eddsa:%s", walletID))
 	if err != nil {
@@ -157,7 +157,7 @@ func (p *Node) CreateSigningSession(
 	} else {
 		selfPartyID, allPartyIDs = p.generatePartyIDs(PurposeKeygen, readyPeerIDs)
 	}
-	session := NewSigningSession(
+	session := NewEcdsaSigningSession(
 		walletID,
 		txID,
 		networkInternalCode,
@@ -182,7 +182,7 @@ func (p *Node) CreateEDDSASigningSession(
 	networkInternalCode string,
 	threshold int,
 	resultQueue messaging.MessageQueue,
-) (*EDDSASigningSession, error) {
+) (*EddsaSigningSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("eddsa:%s", walletID))
 	if err != nil {
@@ -195,7 +195,7 @@ func (p *Node) CreateEDDSASigningSession(
 	} else {
 		selfPartyID, allPartyIDs = p.generatePartyIDs(PurposeKeygen, readyPeerIDs)
 	}
-	session := NewEDDSASigningSession(
+	session := NewEddsaSigningSession(
 		walletID,
 		txID,
 		networkInternalCode,
@@ -213,7 +213,7 @@ func (p *Node) CreateEDDSASigningSession(
 	return session, nil
 }
 
-func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*ECDSAResharingSession, error) {
+func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*EcdsaResharingSession, error) {
 	// Get existing key info to determine old participants
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("ecdsa:%s", walletID))
 	if err != nil {
@@ -230,7 +230,7 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 		selfPartyID = newSelfPartyID
 	}
 
-	session := ECDSANewResharingSession(
+	session := NewEcdsaResharingSession(
 		walletID,
 		p.pubSub,
 		p.direct,
@@ -250,7 +250,7 @@ func (p *Node) CreateECDSAResharingSession(walletID string, isOldParticipant boo
 	return session, nil
 }
 
-func (p *Node) CreeateEDDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*EDDSAResharingSession, error) {
+func (p *Node) CreeateEDDSAResharingSession(walletID string, isOldParticipant bool, readyPeerIDs []string, newThreshold int, resultQueue messaging.MessageQueue) (*EddsaResharingSession, error) {
 	keyInfo, err := p.keyinfoStore.Get(fmt.Sprintf("eddsa:%s", walletID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key info: %w", err)
@@ -266,7 +266,7 @@ func (p *Node) CreeateEDDSAResharingSession(walletID string, isOldParticipant bo
 		selfPartyID = newSelfPartyID
 	}
 
-	session := EDDSANewResharingSession(
+	session := NewEddsaResharingSession(
 		walletID,
 		p.pubSub,
 		p.direct,

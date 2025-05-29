@@ -2,7 +2,6 @@ package mpc
 
 import (
 	"crypto/ecdsa"
-	"encoding/json"
 	"fmt"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
@@ -20,7 +19,7 @@ const (
 )
 
 type KeygenSession struct {
-	Session
+	*BaseKeygenSession
 	endCh chan *keygen.LocalPartySaveData
 }
 
@@ -44,36 +43,52 @@ func NewKeygenSession(
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 ) *KeygenSession {
+	topicComposer := &TopicComposer{
+		ComposeBroadcastTopic: func() string {
+			return fmt.Sprintf("keygen:broadcast:ecdsa:%s", walletID)
+		},
+		ComposeDirectTopic: func(nodeID string) string {
+			return fmt.Sprintf("keygen:direct:ecdsa:%s:%s", nodeID, walletID)
+		},
+	}
+
+	processSaveData := func(data any) ([]byte, error) {
+		saveData, ok := data.(*keygen.LocalPartySaveData)
+		if !ok {
+			return nil, fmt.Errorf("invalid save data type")
+		}
+
+		publicKey := saveData.ECDSAPub
+		pubKey := &ecdsa.PublicKey{
+			Curve: publicKey.Curve(),
+			X:     publicKey.X(),
+			Y:     publicKey.Y(),
+		}
+
+		return encoding.EncodeS256PubKey(pubKey)
+	}
+
 	return &KeygenSession{
-		Session: Session{
-			walletID:           walletID,
-			pubSub:             pubSub,
-			direct:             direct,
-			threshold:          threshold,
-			participantPeerIDs: participantPeerIDs,
-			selfPartyID:        selfID,
-			partyIDs:           partyIDs,
-			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
-			preParams:          preParams,
-			kvstore:            kvstore,
-			keyinfoStore:       keyinfoStore,
-			topicComposer: &TopicComposer{
-				ComposeBroadcastTopic: func() string {
-					return fmt.Sprintf("keygen:broadcast:ecdsa:%s", walletID)
-				},
-				ComposeDirectTopic: func(nodeID string) string {
-					return fmt.Sprintf("keygen:direct:ecdsa:%s:%s", nodeID, walletID)
-				},
-			},
-			composeKey: func(walletID string) string {
+		BaseKeygenSession: NewBaseKeygenSession(
+			walletID,
+			pubSub,
+			direct,
+			participantPeerIDs,
+			selfID,
+			partyIDs,
+			threshold,
+			kvstore,
+			keyinfoStore,
+			resultQueue,
+			identityStore,
+			topicComposer,
+			func(walletID string) string {
 				return fmt.Sprintf("ecdsa:%s", walletID)
 			},
-			getRoundFunc:  GetEcdsaMsgRound,
-			resultQueue:   resultQueue,
-			sessionType:   SessionTypeEcdsa,
-			identityStore: identityStore,
-		},
+			GetEcdsaMsgRound,
+			SessionTypeEcdsa,
+			processSaveData,
+		),
 		endCh: make(chan *keygen.LocalPartySaveData),
 	}
 }
@@ -99,53 +114,7 @@ func (s *KeygenSession) GenerateKey(done func()) {
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case saveData := <-s.endCh:
-			keyBytes, err := json.Marshal(saveData)
-			if err != nil {
-				s.ErrCh <- err
-				return
-			}
-
-			err = s.kvstore.Put(s.composeKey(s.walletID), keyBytes)
-			if err != nil {
-				logger.Error("Failed to save key", err, "walletID", s.walletID)
-				s.ErrCh <- err
-				return
-			}
-
-			keyInfo := keyinfo.KeyInfo{
-				ParticipantPeerIDs: s.participantPeerIDs,
-				Threshold:          s.threshold,
-				IsReshared:         false,
-			}
-
-			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
-			if err != nil {
-				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
-				s.ErrCh <- err
-				return
-			}
-
-			publicKey := saveData.ECDSAPub
-
-			pubKey := &ecdsa.PublicKey{
-				Curve: publicKey.Curve(),
-				X:     publicKey.X(),
-				Y:     publicKey.Y(),
-			}
-
-			pubKeyBytes, err := encoding.EncodeS256PubKey(pubKey)
-			if err != nil {
-				logger.Error("failed to encode public key", err)
-				s.ErrCh <- fmt.Errorf("failed to encode public key: %w", err)
-				return
-			}
-			s.pubkeyBytes = pubKeyBytes
-			done()
-			err = s.Close()
-			if err != nil {
-				logger.Error("Failed to close session", err)
-			}
-			// done()
+			s.BaseKeygenSession.GenerateKey(done, saveData)
 			return
 		}
 	}

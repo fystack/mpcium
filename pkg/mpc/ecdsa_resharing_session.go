@@ -28,13 +28,9 @@ type IResharingSession interface {
 	Resharing(done func())
 }
 
-type ECDSAResharingSession struct {
-	Session
-	isOldParty   bool
-	oldPartyIDs  []*tss.PartyID
-	oldThreshold int
-	newThreshold int
-	endCh        chan *keygen.LocalPartySaveData
+type EcdsaResharingSession struct {
+	*BaseResharingSession
+	endCh chan *keygen.LocalPartySaveData
 }
 
 type ResharingSuccessEvent struct {
@@ -43,7 +39,7 @@ type ResharingSuccessEvent struct {
 	EDDSAPubKey []byte `json:"eddsa_pub_key"`
 }
 
-func ECDSANewResharingSession(
+func NewEcdsaResharingSession(
 	walletID string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
@@ -59,66 +55,65 @@ func ECDSANewResharingSession(
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 	isOldParty bool,
-) *ECDSAResharingSession {
-	oldCtx := tss.NewPeerContext(oldPartyIDs)
-	newCtx := tss.NewPeerContext(newPartyIDs)
-	reshareParams := tss.NewReSharingParameters(
+) *EcdsaResharingSession {
+	topicComposer := &TopicComposer{
+		ComposeBroadcastTopic: func() string {
+			return fmt.Sprintf(TopicFormatResharingBroadcast, "ecdsa", walletID)
+		},
+		ComposeDirectTopic: func(nodeID string) string {
+			return fmt.Sprintf(TopicFormatResharingDirect, "ecdsa", nodeID, walletID)
+		},
+	}
+
+	base := NewBaseResharingSession(
+		walletID,
+		pubSub,
+		direct,
+		participantPeerIDs,
+		selfID,
+		oldPartyIDs,
+		newPartyIDs,
+		threshold,
+		newThreshold,
+		kvstore,
+		keyinfoStore,
+		resultQueue,
+		identityStore,
+		topicComposer,
+		func(walletID string) string {
+			return fmt.Sprintf(KeyFormatEcdsa, walletID)
+		},
+		GetEcdsaMsgRound,
+		SessionTypeEcdsa,
+		isOldParty,
+	)
+
+	// Override the reshare params with S256 curve
+	base.reshareParams = tss.NewReSharingParameters(
 		tss.S256(),
-		oldCtx,
-		newCtx,
+		tss.NewPeerContext(oldPartyIDs),
+		tss.NewPeerContext(newPartyIDs),
 		selfID,
 		len(oldPartyIDs),
 		threshold,
 		len(newPartyIDs),
 		newThreshold,
 	)
-	return &ECDSAResharingSession{
-		Session: Session{
-			walletID:           walletID,
-			pubSub:             pubSub,
-			direct:             direct,
-			threshold:          newThreshold,
-			participantPeerIDs: participantPeerIDs,
-			selfPartyID:        selfID,
-			partyIDs:           newPartyIDs,
-			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
-			preParams:          preParams,
-			reshareParams:      reshareParams,
-			kvstore:            kvstore,
-			keyinfoStore:       keyinfoStore,
-			topicComposer: &TopicComposer{
-				ComposeBroadcastTopic: func() string {
-					return fmt.Sprintf(TopicFormatResharingBroadcast, "ecdsa", walletID)
-				},
-				ComposeDirectTopic: func(nodeID string) string {
-					return fmt.Sprintf(TopicFormatResharingDirect, "ecdsa", nodeID, walletID)
-				},
-			},
-			composeKey: func(walletID string) string {
-				return fmt.Sprintf(KeyFormatEcdsa, walletID)
-			},
-			getRoundFunc:  GetEcdsaMsgRound,
-			resultQueue:   resultQueue,
-			sessionType:   SessionTypeEcdsa,
-			identityStore: identityStore,
-		},
-		isOldParty:   isOldParty,
-		oldPartyIDs:  oldPartyIDs,
-		oldThreshold: threshold,
-		newThreshold: newThreshold,
-		endCh:        make(chan *keygen.LocalPartySaveData),
+
+	return &EcdsaResharingSession{
+		BaseResharingSession: base,
+		endCh:                make(chan *keygen.LocalPartySaveData),
 	}
 }
 
-func (s *ECDSAResharingSession) Init() {
+func (s *EcdsaResharingSession) Init() {
 	logger.Infof("Initializing resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 	if s.isOldParty {
 		// Get existing key data for old party
-		keyData, err := s.kvstore.Get(s.composeKey(s.walletID))
+		keyData, err := s.GetExistingKeyData()
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("failed to get wallet data from KVStore: %w", err)
+			s.ErrCh <- err
 			return
 		}
 		err = json.Unmarshal(keyData, &share)
@@ -137,7 +132,7 @@ func (s *ECDSAResharingSession) Init() {
 		s.selfPartyID, s.partyIDs, s.walletID, s.oldThreshold, s.newThreshold)
 }
 
-func (s *ECDSAResharingSession) Resharing(done func()) {
+func (s *EcdsaResharingSession) Resharing(done func()) {
 	logger.Info("Starting resharing", "walletID", s.walletID, "partyID", s.selfPartyID)
 	go func() {
 		if err := s.party.Start(); err != nil {
