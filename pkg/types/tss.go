@@ -41,6 +41,28 @@ func NewTssMessage(
 	return tssMsg
 }
 
+func NewTssResharingMessage(
+	walletID string,
+	msgBytes []byte,
+	isBroadcast bool,
+	from *tss.PartyID,
+	to []*tss.PartyID,
+	isToOldCommittee bool,
+	isToOldAndNewCommittees bool,
+) TssMessage {
+	tssMsg := TssMessage{
+		WalletID:                walletID,
+		IsBroadcast:             isBroadcast,
+		MsgBytes:                msgBytes,
+		From:                    from,
+		To:                      to,
+		IsToOldCommittee:        isToOldCommittee,
+		IsToOldAndNewCommittees: isToOldAndNewCommittees,
+	}
+
+	return tssMsg
+}
+
 func MarshalTssMessage(tssMsg *TssMessage) ([]byte, error) {
 	msgBytes, err := json.Marshal(tssMsg)
 	if err != nil {

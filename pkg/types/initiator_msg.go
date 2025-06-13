@@ -6,7 +6,7 @@ type KeyType string
 
 const (
 	KeyTypeSecp256k1 KeyType = "secp256k1"
-	KeyTypeEd25519           = "ed25519"
+	KeyTypeEd25519   KeyType = "ed25519"
 )
 
 // InitiatorMessage is anything that carries a payload to verify and its signature.
@@ -31,6 +31,36 @@ type SignTxMessage struct {
 	TxID                string  `json:"tx_id"`
 	Tx                  []byte  `json:"tx"`
 	Signature           []byte  `json:"signature"`
+}
+
+type ResharingMessage struct {
+	WalletID     string  `json:"wallet_id"`
+	NewThreshold int     `json:"new_threshold"`
+	Signature    []byte  `json:"signature"`
+	KeyType      KeyType `json:"key_type"`
+}
+
+// InitiatorID implements InitiatorMessage.
+func (r *ResharingMessage) InitiatorID() string {
+	return r.WalletID
+}
+
+// Raw implements InitiatorMessage.
+func (r *ResharingMessage) Raw() ([]byte, error) {
+	// Create a struct with only the fields that should be signed
+	payload := struct {
+		WalletID     string `json:"wallet_id"`
+		NewThreshold int    `json:"new_threshold"`
+	}{
+		WalletID:     r.WalletID,
+		NewThreshold: r.NewThreshold,
+	}
+	return json.Marshal(payload)
+}
+
+// Sig implements InitiatorMessage.
+func (r *ResharingMessage) Sig() []byte {
+	return r.Signature
 }
 
 func (m *SignTxMessage) Raw() ([]byte, error) {

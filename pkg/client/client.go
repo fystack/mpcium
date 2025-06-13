@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"filippo.io/age"
@@ -15,165 +14,105 @@ import (
 	"github.com/fystack/mpcium/pkg/eventconsumer"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
-	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/nats-io/nats.go"
 )
 
 const (
-	GenerateWalletSuccessTopic = "mpc.mpc_keygen_success.*" // wildcard to listen to all success events
+	defaultKeyPath = "./event_initiator.key"
+	keyFileExt     = ".age"
+
+	// NATS stream names
+	mpcSigningStream = "mpc-signing"
+
+	// NATS queue names
+	mpcKeygenSuccessQueue    = "mpc_keygen_success"
+	mpcSigningResultQueue    = "signing_result"
+	mpcResharingSuccessQueue = "mpc_resharing_success"
+
+	// NATS subjects
+	mpcSigningRequestSubject   = "mpc.signing_request.*"
+	mpcKeygenSuccessSubject    = "mpc.mpc_keygen_success.*"
+	mpcSigningResultSubject    = "mpc.signing_result.*"
+	mpcResharingSuccessSubject = "mpc.mpc_resharing_success.*"
 )
 
 type MPCClient interface {
 	CreateWallet(walletID string) error
-	OnWalletCreationResult(callback func(event mpc.KeygenSuccessEvent)) error
+	OnWalletCreationResult(callback func(event.KeygenSuccessEvent)) error
 
 	SignTransaction(msg *types.SignTxMessage) error
-	OnSignResult(callback func(event event.SigningResultEvent)) error
+	OnSignResult(callback func(event.SigningResultEvent)) error
+
+	Resharing(walletID string, newThreshold int, keyType types.KeyType) error
+	OnResharingResult(callback func(event.ResharingSuccessEvent)) error
 }
 
 type mpcClient struct {
-	signingStream      messaging.StreamPubsub
-	pubsub             messaging.PubSub
-	genKeySuccessQueue messaging.MessageQueue
-	signResultQueue    messaging.MessageQueue
-	privKey            ed25519.PrivateKey
+	signingStream        messaging.StreamPubsub
+	pubsub               messaging.PubSub
+	genKeySuccessQueue   messaging.MessageQueue
+	signResultQueue      messaging.MessageQueue
+	resharingResultQueue messaging.MessageQueue
+	privKey              ed25519.PrivateKey
 }
 
 // Options defines configuration options for creating a new MPCClient
 type Options struct {
-	// NATS connection
-	NatsConn *nats.Conn
-
-	// Key path options
-	KeyPath string // Path to unencrypted key (default: "./event_initiator.key")
-
-	// Encryption options
+	NatsConn  *nats.Conn
+	KeyPath   string // Path to unencrypted key (default: "./event_initiator.key")
 	Encrypted bool   // Whether the key is encrypted
 	Password  string // Password for encrypted key
 }
 
 // NewMPCClient creates a new MPC client using the provided options.
-// It reads the Ed25519 private key from disk and sets up messaging connections.
-// If the key is encrypted (.age file), decryption options must be provided in the config.
 func NewMPCClient(opts Options) MPCClient {
-	// Set default paths if not provided
+	// Set default key path if not provided
 	if opts.KeyPath == "" {
-		opts.KeyPath = filepath.Join(".", "event_initiator.key")
+		opts.KeyPath = defaultKeyPath
 	}
 
-	if strings.HasSuffix(opts.KeyPath, ".age") {
+	// Auto-detect encryption based on file extension
+	if strings.HasSuffix(opts.KeyPath, keyFileExt) {
 		opts.Encrypted = true
 	}
 
-	var privHexBytes []byte
-	var err error
+	// Load private key
+	privKey := loadPrivateKey(opts)
 
-	// Check if key file exists
-	if _, err := os.Stat(opts.KeyPath); err == nil {
-		if opts.Encrypted {
-			// Encrypted key exists, try to decrypt it
-			if opts.Password == "" {
-				logger.Fatal("Encrypted key found but no decryption option provided", nil)
-			}
-
-			// Read encrypted file
-			encryptedBytes, err := os.ReadFile(opts.KeyPath)
-			if err != nil {
-				logger.Fatal("Failed to read encrypted private key file", err)
-			}
-
-			// Decrypt the key using the provided password
-			privHexBytes, err = decryptPrivateKey(encryptedBytes, opts.Password)
-			if err != nil {
-				logger.Fatal("Failed to decrypt private key", err)
-			}
-		} else {
-			// Unencrypted key exists, read it normally
-			privHexBytes, err = os.ReadFile(opts.KeyPath)
-			if err != nil {
-				logger.Fatal("Failed to read private key file", err)
-			}
-		}
-	} else {
-		logger.Fatal("No private key file found", nil)
-	}
-
-	privHex := string(privHexBytes)
-	// Decode private key from hex
-	privSeed, err := hex.DecodeString(privHex)
-	if err != nil {
-		fmt.Println("Failed to decode private key hex:", err)
-		os.Exit(1)
-	}
-
-	// Reconstruct full Ed25519 private key from seed
-	priv := ed25519.NewKeyFromSeed(privSeed)
-
-	// 2) Create the PubSub for both publish & subscribe
-	signingStream, err := messaging.NewJetStreamPubSub(opts.NatsConn, "mpc-signing", []string{
-		"mpc.signing_request.*",
-	})
-	if err != nil {
-		logger.Fatal("Failed to create JetStream PubSub", err)
-	}
-
+	// Initialize messaging components
+	signingStream := initSigningStream(opts.NatsConn)
 	pubsub := messaging.NewNATSPubSub(opts.NatsConn)
-
-	manager := messaging.NewNATsMessageQueueManager("mpc", []string{
-		"mpc.mpc_keygen_success.*",
-		"mpc.signing_result.*",
-	}, opts.NatsConn)
-
-	genKeySuccessQueue := manager.NewMessageQueue("mpc_keygen_success")
-	signResultQueue := manager.NewMessageQueue("signing_result")
+	manager := initMessageQueueManager(opts.NatsConn)
 
 	return &mpcClient{
-		signingStream:      signingStream,
-		pubsub:             pubsub,
-		genKeySuccessQueue: genKeySuccessQueue,
-		signResultQueue:    signResultQueue,
-		privKey:            priv,
+		signingStream:        signingStream,
+		pubsub:               pubsub,
+		genKeySuccessQueue:   manager.NewMessageQueue(mpcKeygenSuccessQueue),
+		signResultQueue:      manager.NewMessageQueue(mpcSigningResultQueue),
+		resharingResultQueue: manager.NewMessageQueue(mpcResharingSuccessQueue),
+		privKey:              privKey,
 	}
 }
 
-// decryptPrivateKey decrypts the encrypted private key using the provided password
-func decryptPrivateKey(encryptedData []byte, password string) ([]byte, error) {
-	// Create an age identity (decryption key) from the password
-	identity, err := age.NewScryptIdentity(password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create identity from password: %w", err)
-	}
-
-	// Create a reader from the encrypted data
-	decrypter, err := age.Decrypt(strings.NewReader(string(encryptedData)), identity)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create decrypter: %w", err)
-	}
-
-	// Read the decrypted data
-	decryptedData, err := io.ReadAll(decrypter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read decrypted data: %w", err)
-	}
-
-	return decryptedData, nil
+func initMessageQueueManager(natsConn *nats.Conn) *messaging.NATsMessageQueueManager {
+	return messaging.NewNATsMessageQueueManager("mpc", []string{
+		mpcKeygenSuccessSubject,
+		mpcSigningResultSubject,
+		mpcResharingSuccessSubject,
+	}, natsConn)
 }
 
 // CreateWallet generates a GenerateKeyMessage, signs it, and publishes it.
 func (c *mpcClient) CreateWallet(walletID string) error {
-	// build the message
-	msg := &types.GenerateKeyMessage{
-		WalletID: walletID,
-	}
-	// compute the canonical raw bytes
+	msg := &types.GenerateKeyMessage{WalletID: walletID}
+
 	raw, err := msg.Raw()
 	if err != nil {
 		return fmt.Errorf("CreateWallet: raw payload error: %w", err)
 	}
-	// sign
-	msg.Signature = ed25519.Sign(c.privKey, raw)
 
+	msg.Signature = ed25519.Sign(c.privKey, raw)
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("CreateWallet: marshal error: %w", err)
@@ -185,35 +124,17 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 	return nil
 }
 
-// The callback will be invoked whenever a wallet creation result is received.
-func (c *mpcClient) OnWalletCreationResult(callback func(event mpc.KeygenSuccessEvent)) error {
-	err := c.genKeySuccessQueue.Dequeue(GenerateWalletSuccessTopic, func(msg []byte) error {
-		var event mpc.KeygenSuccessEvent
-		err := json.Unmarshal(msg, &event)
-		if err != nil {
-			return err
-		}
-		callback(event)
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("OnWalletCreationResult: subscribe error: %w", err)
-	}
-
-	return nil
+func (c *mpcClient) OnWalletCreationResult(callback func(event.KeygenSuccessEvent)) error {
+	return c.handleQueueEvent(c.genKeySuccessQueue, event.KeygenSuccessEventTopic, callback)
 }
 
-// SignTransaction builds a SignTxMessage, signs it, and publishes it.
 func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
-	// compute the canonical raw bytes (omitting Signature field)
 	raw, err := msg.Raw()
 	if err != nil {
 		return fmt.Errorf("SignTransaction: raw payload error: %w", err)
 	}
-	// sign
-	msg.Signature = ed25519.Sign(c.privKey, raw)
 
+	msg.Signature = ed25519.Sign(c.privKey, raw)
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("SignTransaction: marshal error: %w", err)
@@ -225,20 +146,119 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 	return nil
 }
 
-func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
-	err := c.signResultQueue.Dequeue(event.SigningResultCompleteTopic, func(msg []byte) error {
-		var event event.SigningResultEvent
-		err := json.Unmarshal(msg, &event)
-		if err != nil {
-			return err
-		}
-		callback(event)
-		return nil
-	})
+func (c *mpcClient) OnSignResult(callback func(event.SigningResultEvent)) error {
+	return c.handleQueueEvent(c.signResultQueue, event.SigningResultCompleteTopic, callback)
+}
 
-	if err != nil {
-		return fmt.Errorf("OnSignResult: subscribe error: %w", err)
+func (c *mpcClient) Resharing(walletID string, newThreshold int, keyType types.KeyType) error {
+	msg := &types.ResharingMessage{
+		WalletID:     walletID,
+		NewThreshold: newThreshold,
+		KeyType:      keyType,
 	}
 
+	raw, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("Resharing: raw payload error: %w", err)
+	}
+
+	msg.Signature = ed25519.Sign(c.privKey, raw)
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("Resharing: marshal error: %w", err)
+	}
+
+	if err := c.pubsub.Publish(eventconsumer.MPCResharingEvent, bytes); err != nil {
+		return fmt.Errorf("Resharing: publish error: %w", err)
+	}
 	return nil
+}
+
+func (c *mpcClient) OnResharingResult(callback func(event.ResharingSuccessEvent)) error {
+	return c.handleQueueEvent(c.resharingResultQueue, event.ResharingSuccessEventTopic, callback)
+}
+
+// Generic handler for queue events
+func (c *mpcClient) handleQueueEvent(queue messaging.MessageQueue, topic string, callback interface{}) error {
+	return queue.Dequeue(topic, func(msg []byte) error {
+		switch cb := callback.(type) {
+		case func(event.KeygenSuccessEvent):
+			var event event.KeygenSuccessEvent
+			if err := json.Unmarshal(msg, &event); err != nil {
+				return err
+			}
+			cb(event)
+		case func(event.SigningResultEvent):
+			var event event.SigningResultEvent
+			if err := json.Unmarshal(msg, &event); err != nil {
+				return err
+			}
+			cb(event)
+		case func(event.ResharingSuccessEvent):
+			var event event.ResharingSuccessEvent
+			if err := json.Unmarshal(msg, &event); err != nil {
+				return err
+			}
+			cb(event)
+		default:
+			return fmt.Errorf("unsupported callback type")
+		}
+		return nil
+	})
+}
+
+func loadPrivateKey(opts Options) ed25519.PrivateKey {
+	if _, err := os.Stat(opts.KeyPath); os.IsNotExist(err) {
+		logger.Fatal("No private key file found", nil)
+	}
+
+	var privHexBytes []byte
+	var err error
+
+	if opts.Encrypted {
+		if opts.Password == "" {
+			logger.Fatal("Encrypted key found but no decryption option provided", nil)
+		}
+		privHexBytes, err = loadEncryptedKey(opts.KeyPath, opts.Password)
+	} else {
+		privHexBytes, err = os.ReadFile(opts.KeyPath)
+	}
+
+	if err != nil {
+		logger.Fatal("Failed to read private key file", err)
+	}
+
+	privSeed, err := hex.DecodeString(string(privHexBytes))
+	if err != nil {
+		logger.Fatal("Failed to decode private key hex", err)
+	}
+
+	return ed25519.NewKeyFromSeed(privSeed)
+}
+
+func loadEncryptedKey(keyPath, password string) ([]byte, error) {
+	encryptedBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted key file: %w", err)
+	}
+
+	identity, err := age.NewScryptIdentity(password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create identity from password: %w", err)
+	}
+
+	decrypter, err := age.Decrypt(strings.NewReader(string(encryptedBytes)), identity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decrypter: %w", err)
+	}
+
+	return io.ReadAll(decrypter)
+}
+
+func initSigningStream(natsConn *nats.Conn) messaging.StreamPubsub {
+	stream, err := messaging.NewJetStreamPubSub(natsConn, mpcSigningStream, []string{mpcSigningRequestSubject})
+	if err != nil {
+		logger.Fatal("Failed to create JetStream PubSub", err)
+	}
+	return stream
 }
