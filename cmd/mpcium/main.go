@@ -18,7 +18,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
-	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/mpc/node"
 	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
@@ -132,28 +132,33 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	mqManager := messaging.NewNATsMessageQueueManager("mpc", []string{
 		"mpc.mpc_keygen_success.*",
 		event.SigningResultTopic,
+		"mpc.mpc_resharing_success.*",
 	}, natsConn)
 
 	genKeySuccessQueue := mqManager.NewMessageQueue("mpc_keygen_success")
 	defer genKeySuccessQueue.Close()
 	singingResultQueue := mqManager.NewMessageQueue("signing_result")
 	defer singingResultQueue.Close()
+	resharingResultQueue := mqManager.NewMessageQueue("mpc_resharing_success")
+	defer resharingResultQueue.Close()
 
 	logger.Info("Node is running", "peerID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
-	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())
+	peerRegistry := node.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())
 
-	mpcNode := mpc.NewNode(
+	mpcNode := node.NewNode(
 		nodeID,
 		peerNodeIDs,
 		pubsub,
 		directMessaging,
 		badgerKV,
 		keyinfoStore,
-		peerRegistry,
 		identityStore,
+		peerRegistry,
 	)
+	// Preload preparams for the first time
+	mpcNode.PreloadPreParams()
 	defer mpcNode.Close()
 
 	eventConsumer := eventconsumer.NewEventConsumer(
@@ -161,6 +166,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		pubsub,
 		genKeySuccessQueue,
 		singingResultQueue,
+		resharingResultQueue,
 		identityStore,
 	)
 	eventConsumer.Run()

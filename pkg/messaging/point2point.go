@@ -37,7 +37,7 @@ func (d *natsDirectMessaging) Send(id string, message []byte) error {
 		retry.Delay(50*time.Millisecond),
 		retry.DelayType(retry.FixedDelay),
 		retry.OnRetry(func(n uint, err error) {
-			logger.Error("Failed to send direct message message", err, "retryCount", retryCount)
+			logger.Error("Failed to send direct message message", err, "retryCount", retryCount, "target", id)
 		}),
 	)
 
