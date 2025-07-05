@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -122,11 +123,17 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	defer natsConn.Close()
 
 	pubsub := messaging.NewNATSPubSub(natsConn)
-	signingStream, err := messaging.NewJetStreamPubSub(natsConn, event.SigningPublisherStream, []string{
+	keygenBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.KeygenBrokerStream, []string{
+		event.KeygenRequestTopic,
+	})
+	if err != nil {
+		logger.Fatal("Failed to create keygen jetstream broker", err)
+	}
+	signingBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.SigningPublisherStream, []string{
 		event.SigningRequestTopic,
 	})
 	if err != nil {
-		logger.Fatal("Failed to create JetStream PubSub", err)
+		logger.Fatal("Failed to create signing jetstream broker", err)
 	}
 
 	directMessaging := messaging.NewNatsDirectMessaging(natsConn)
@@ -178,7 +185,8 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	timeoutConsumer.Run()
 	defer timeoutConsumer.Close()
-	signingConsumer := eventconsumer.NewSigningConsumer(natsConn, signingStream, pubsub, peerRegistry)
+	keygenConsumer := eventconsumer.NewKeygenConsumer(natsConn, keygenBroker, pubsub, peerRegistry)
+	signingConsumer := eventconsumer.NewSigningConsumer(natsConn, signingBroker, pubsub, peerRegistry)
 
 	// Make the node ready before starting the signing consumer
 	peerRegistry.Ready()
@@ -193,10 +201,44 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		cancel()
 	}()
 
-	if err := signingConsumer.Run(appContext); err != nil {
-		logger.Error("error running consumer:", err)
-	}
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := keygenConsumer.Run(appContext); err != nil {
+			logger.Error("error running keygen consumer", err)
+			errChan <- fmt.Errorf("keygen consumer error: %w", err)
+			return
+		}
+		logger.Info("Keygen consumer finished successfully")
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := signingConsumer.Run(appContext); err != nil {
+			logger.Error("error running signing consumer", err)
+			errChan <- fmt.Errorf("signing consumer error: %w", err)
+			return
+		}
+		logger.Info("Signing consumer finished successfully")
+	}()
+
+	go func() {
+		wg.Wait()
+		logger.Info("All consumers have finished")
+		close(errChan)
+	}()
+
+	for err := range errChan {
+		if err != nil {
+			logger.Error("Consumer error received", err)
+			cancel()
+			return err
+		}
+	}
 	return nil
 }
 
