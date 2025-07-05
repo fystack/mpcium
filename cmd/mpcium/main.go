@@ -332,7 +332,13 @@ func GetIDFromName(name string, peers []config.Peer) string {
 
 func NewBadgerKV(nodeName string) *kvstore.BadgerKVStore {
 	// Badger KV DB
-	dbPath := filepath.Join(".", "db", nodeName)
+	// Use configured db_path or default to current directory + "db"
+	basePath := viper.GetString("db_path")
+	if basePath == "" {
+		basePath = filepath.Join(".", "db")
+	}
+	dbPath := filepath.Join(basePath, nodeName)
+
 	badgerKv, err := kvstore.NewBadgerKVStore(
 		dbPath,
 		[]byte(viper.GetString("badger_password")),
