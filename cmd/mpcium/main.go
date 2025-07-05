@@ -181,7 +181,9 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	signingConsumer := eventconsumer.NewSigningConsumer(natsConn, signingStream, pubsub, peerRegistry)
 
 	// Make the node ready before starting the signing consumer
-	peerRegistry.Ready()
+	if err := peerRegistry.Ready(); err != nil {
+		logger.Error("Failed to mark peer registry as ready", err)
+	}
 
 	appContext, cancel := context.WithCancel(context.Background())
 	// Setup signal handling to cancel context on termination signals.
@@ -247,7 +249,9 @@ func promptForSensitiveCredentials() {
 	// Prompt for initiator public key (using regular input since it's not as sensitive)
 	var initiatorKey string
 	fmt.Print("Enter event initiator public key (hex): ")
-	fmt.Scanln(&initiatorKey)
+	if _, err := fmt.Scanln(&initiatorKey); err != nil {
+		logger.Fatal("Failed to read initiator key", err)
+	}
 
 	if initiatorKey == "" {
 		logger.Fatal("Initiator public key cannot be empty", nil)

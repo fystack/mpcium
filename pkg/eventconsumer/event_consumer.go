@@ -721,14 +721,6 @@ func (ec *eventConsumer) addSession(walletID, txID string) {
 	ec.sessionsLock.Unlock()
 }
 
-// Remove a session from tracking
-func (ec *eventConsumer) removeSession(walletID, txID string) {
-	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
-	ec.sessionsLock.Lock()
-	delete(ec.activeSessions, sessionID)
-	ec.sessionsLock.Unlock()
-}
-
 // checkAndTrackSession checks if a session already exists and tracks it if new.
 // Returns true if the session is a duplicate.
 func (ec *eventConsumer) checkDuplicateSession(walletID, txID string) bool {

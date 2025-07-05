@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -252,8 +253,8 @@ func (s *fileStore) VerifyInitiatorMessage(msg types.InitiatorMessage) error {
 
 	// Get the signature
 	signature := msg.Sig()
-	if signature == nil || len(signature) == 0 {
-		return fmt.Errorf("message has no signature")
+	if len(signature) == 0 {
+		return errors.New("signature is empty")
 	}
 
 	// Verify the signature using the initiator's public key

@@ -132,7 +132,10 @@ func waitForConsulReady(address string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(fmt.Sprintf("http://%s/v1/status/leader", address))
 		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				// Log the error but don't fail the check since the main goal is achieved
+				fmt.Printf("Warning: failed to close response body: %v\n", err)
+			}
 			return nil
 		}
 		time.Sleep(1 * time.Second)
@@ -590,7 +593,9 @@ func (s *E2ETestSuite) checkKeyInAllNodes(t *testing.T, walletID, keyType, keyNa
 			}
 
 			// Close recovery DB and try read-only again
-			recoveryDB.Close()
+			if err := recoveryDB.Close(); err != nil {
+				t.Logf("Warning: failed to close recovery database for %s: %v", nodeName, err)
+			}
 			time.Sleep(1 * time.Second)
 
 			db, err = badger.Open(opts)
@@ -644,7 +649,9 @@ func (s *E2ETestSuite) checkKeyInAllNodes(t *testing.T, walletID, keyType, keyNa
 		assert.NoError(t, err, "Failed to get %s key for wallet %s from node %s", keyName, walletID, nodeName)
 		assert.NotEmpty(t, data, "Missing %s key for wallet %s in node %s", keyName, walletID, nodeName)
 
-		kvStore.Close()
+		if err := kvStore.Close(); err != nil {
+			t.Logf("Warning: failed to close kvStore for %s: %v", nodeName, err)
+		}
 	}
 }
 

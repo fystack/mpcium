@@ -130,12 +130,16 @@ func (mq *msgQueue) Dequeue(topic string, handler func(message []byte) error) er
 		if err != nil {
 			if errors.Is(err, ErrPermament) {
 				logger.Info("Permanent error on message", "meta", meta)
-				msg.Term()
+				if err := msg.Term(); err != nil {
+					logger.Error("Failed to terminate message", err)
+				}
 				return
 			}
 
 			logger.Error("Error handling message: ", err)
-			msg.Nak()
+			if err := msg.Nak(); err != nil {
+				logger.Error("Failed to nak message", err)
+			}
 			return
 		}
 
@@ -154,8 +158,4 @@ func (mq *msgQueue) Close() {
 	if mq.consumerContext != nil {
 		mq.consumerContext.Stop()
 	}
-}
-
-func (n *msgQueue) handleReconnect(nc *nats.Conn) {
-	logger.Info("NATS: Reconnected to NATS")
 }

@@ -47,7 +47,9 @@ func (d *natsDirectMessaging) Send(id string, message []byte) error {
 func (d *natsDirectMessaging) Listen(id string, handler func(data []byte)) (Subscription, error) {
 	sub, err := d.natsConn.Subscribe(id, func(m *nats.Msg) {
 		handler(m.Data)
-		m.Respond([]byte("OK"))
+		if err := m.Respond([]byte("OK")); err != nil {
+			logger.Error("Failed to respond to message", err)
+		}
 	})
 	if err != nil {
 		return nil, err

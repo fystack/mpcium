@@ -134,11 +134,9 @@ func TestInfof_FormattedMessage(t *testing.T) {
 }
 
 func TestError_PanicsOnOddKeyValues(t *testing.T) {
-	// Capture log output
-	var buf bytes.Buffer
-	Log = zerolog.New(&buf).With().Timestamp().Logger()
+	Init("test", false)
 
 	assert.Panics(t, func() {
-		Error("test error", nil, "odd_key") // odd number of key-value pairs
+		Error("test error", nil, "odd_key", "value", "another_odd_key") //nolint:staticcheck // intentionally testing odd number of key-value pairs
 	})
 }

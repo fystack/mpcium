@@ -27,9 +27,9 @@ func main() {
 		logger.Fatal("Failed to create badger kv store", err)
 	}
 
-	err = badgerKv.DB.View(func(txn *badger.Txn) error {
+	if err := badgerKv.DB.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
+		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -37,24 +37,32 @@ func main() {
 			item := it.Item()
 			key := item.Key()
 			var result []byte
-			item.Value(func(val []byte) error {
-				result = append([]byte{}, val...)
+
+			if err := item.Value(func(val []byte) error {
+				result = append(result, val...)
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 
 			if !strings.HasPrefix(string(key), "eddsa:") {
 				if !strings.HasPrefix(string(key), "ecdsa:") {
-					badgerKv.DB.Update(func(txn *badger.Txn) error {
-						txn.Set([]byte(fmt.Sprintf("ecdsa:%s", key)), result)
-						txn.Delete(key)
-						return nil
-					})
+					if err := badgerKv.DB.Update(func(txn *badger.Txn) error {
+						if err := txn.Set([]byte(fmt.Sprintf("ecdsa:%s", key)), result); err != nil {
+							return err
+						}
+						return txn.Delete(key)
+					}); err != nil {
+						return err
+					}
 				}
-
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		logger.Fatal("Failed to migrate keys", err)
+	}
+
 	keys, err := badgerKv.Keys()
 	if err != nil {
 		logger.Fatal("Failed to get keys from badger kv store", err)
