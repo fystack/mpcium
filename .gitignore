@@ -7,3 +7,11 @@ event_initiator.key
 event_initiator.key.age
 coverage.out
 coverage.html
+
+# E2E test artifacts
+e2e/test_db/
+e2e/test_node*/
+e2e/test_event_initiator.*
+e2e/coverage.out
+e2e/coverage.html
+e2e/logs/

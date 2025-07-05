@@ -1,0 +1,22 @@
+version: "3"
+
+services:
+  nats-server-test:
+    image: nats:latest
+    container_name: nats-server-test
+    command: -js --http_port 8223
+    ports:
+      - "4223:4222"
+      - "8223:8223"
+      - "6223:6222"
+    tty: true
+    restart: always
+
+  consul-test:
+    image: consul:1.15.4
+    container_name: consul-test
+    ports:
+      - "8501:8500"
+      - "8602:8600/udp"
+    command: "agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0"
+    restart: always

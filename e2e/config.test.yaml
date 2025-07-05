@@ -1,0 +1,11 @@
+badger_password: yx,qYwu*h!RZ{Q7f;70gU/VT.9kBOFCM
+consul:
+  address: localhost:8501
+db_path: ./test_db
+environment: development
+event_initiator_pubkey: bc2e465f11317616b3ac5ae1a91473224b9b00b97ebf921928ac6478df608a00
+max_concurrent_keygen: 2
+mpc_threshold: 2
+mpcium_version: 1.0.0
+nats:
+  url: nats://127.0.0.1:4223
