@@ -26,7 +26,11 @@ fi
 
 # Create a temporary config with placeholder values (will be updated later with real pubkey)
 TEMP_PUBKEY="0000000000000000000000000000000000000000000000000000000000000000"
-sed -e "s/{{\.BadgerPassword}}/$BADGER_PASSWORD/g" \
+
+# Escape special characters in password for sed
+ESCAPED_PASSWORD=$(printf '%s\n' "$BADGER_PASSWORD" | sed 's/[[\.*^$()+?{|]/\\&/g')
+
+sed -e "s/{{\.BadgerPassword}}/$ESCAPED_PASSWORD/g" \
     -e "s/{{\.EventInitiatorPubkey}}/$TEMP_PUBKEY/g" \
     config.test.yaml.template > config.test.yaml
 
@@ -93,43 +97,15 @@ if [ -f "test_event_initiator.identity.json" ]; then
     
     # Update all test node config files with the actual public key and password
     for i in $(seq 0 $((NUM_NODES-1))); do
-        # Update public key
+        # Update public key using sed with | as delimiter (safer than /)
         sed -i "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/test_node$i/config.yaml"
-        # Update password using Python to handle special characters safely
-        python3 -c "
-import yaml
-import sys
-
-config_file = '$BASE_DIR/test_node$i/config.yaml'
-password = sys.argv[1]
-
-with open(config_file, 'r') as f:
-    config = yaml.safe_load(f)
-
-config['badger_password'] = password
-
-with open(config_file, 'w') as f:
-    yaml.dump(config, f, default_flow_style=False, allow_unicode=True, width=1000)
-" "$BADGER_PASSWORD"
+        # Update password using sed with | as delimiter and escaped password
+        sed -i "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/test_node$i/config.yaml"
     done
     
     # Also update the main config.test.yaml
     sed -i "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/config.test.yaml"
-    python3 -c "
-import yaml
-import sys
-
-config_file = '$BASE_DIR/config.test.yaml'
-password = sys.argv[1]
-
-with open(config_file, 'r') as f:
-    config = yaml.safe_load(f)
-
-config['badger_password'] = password
-
-with open(config_file, 'w') as f:
-    yaml.dump(config, f, default_flow_style=False, allow_unicode=True, width=1000)
-" "$BADGER_PASSWORD"
+    sed -i "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/config.test.yaml"
     
     echo "✅ Event initiator public key updated: $PUBKEY"
     echo "✅ Badger password updated: $BADGER_PASSWORD"

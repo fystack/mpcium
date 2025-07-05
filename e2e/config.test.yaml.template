@@ -5,7 +5,7 @@ db_path: ./test_db
 environment: development
 event_initiator_pubkey: "{{.EventInitiatorPubkey}}"
 max_concurrent_keygen: 1
-mpc_threshold: 2
+mpc_threshold: 1
 mpcium_version: 1.0.0
 nats:
   url: nats://localhost:4223 
