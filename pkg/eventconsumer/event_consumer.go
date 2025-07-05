@@ -124,12 +124,12 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	var msg types.GenerateKeyMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		logger.Error("Failed to unmarshal keygen message", err)
-		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to unmarshal keygen message")
+		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to unmarshal keygen message", natMsg)
 		return
 	}
 	if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 		logger.Error("Failed to verify initiator message", err)
-		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to verify initiator message")
+		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to verify initiator message", natMsg)
 		return
 	}
 
@@ -137,13 +137,13 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {
 		logger.Error("Failed to create ECDSA key generation session", err, "walletID", walletID)
-		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session")
+		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
 		return
 	}
 	eddsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeEDDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {
 		logger.Error("Failed to create EdDSA key generation session", err, "walletID", walletID)
-		ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session")
+		ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session", natMsg)
 		return
 	}
 	ecdsaSession.Init()
@@ -163,7 +163,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 			successEvent.ECDSAPubKey = ecdsaSession.GetPubKeyResult()
 		case err := <-ecdsaSession.ErrChan():
 			logger.Error("ECDSA keygen session error", err)
-			ec.handleKeygenSessionError(walletID, err, "ECDSA keygen session error")
+			ec.handleKeygenSessionError(walletID, err, "ECDSA keygen session error", natMsg)
 			doneEcdsa()
 		}
 	}()
@@ -174,7 +174,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 			successEvent.EDDSAPubKey = eddsaSession.GetPubKeyResult()
 		case err := <-eddsaSession.ErrChan():
 			logger.Error("EdDSA keygen session error", err)
-			ec.handleKeygenSessionError(walletID, err, "EdDSA keygen session error")
+			ec.handleKeygenSessionError(walletID, err, "EdDSA keygen session error", natMsg)
 			doneEddsa()
 		}
 	}()
@@ -200,7 +200,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	case <-baseCtx.Done():
 		// timeout occurred
 		logger.Warn("Key generation timed out", "walletID", walletID)
-		ec.handleKeygenSessionError(walletID, fmt.Errorf("keygen session timed out after"), "Key generation timed out")
+		ec.handleKeygenSessionError(walletID, fmt.Errorf("keygen session timed out after"), "Key generation timed out", natMsg)
 		return
 	}
 
@@ -208,21 +208,22 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	payload, err := json.Marshal(successEvent)
 	if err != nil {
 		logger.Error("Failed to marshal keygen success event", err)
-		ec.handleKeygenSessionError(walletID, err, "Failed to marshal keygen success event")
+		ec.handleKeygenSessionError(walletID, err, "Failed to marshal keygen success event", natMsg)
 		return
 	}
 
 	key := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, walletID)
 	if err := ec.genKeyResultQueue.Enqueue(key, payload, &messaging.EnqueueOptions{IdempotententKey: key}); err != nil {
 		logger.Error("Failed to publish key generation success message", err)
-		ec.handleKeygenSessionError(walletID, err, "Failed to publish key generation success message")
+		ec.handleKeygenSessionError(walletID, err, "Failed to publish key generation success message", natMsg)
 		return
 	}
+	ec.sendReplyToRemoveMsg(natMsg)
 	logger.Info("[COMPLETED KEY GEN] Key generation completed successfully", "walletID", walletID)
 }
 
 // handleKeygenSessionError handles errors that occur during key generation
-func (ec *eventConsumer) handleKeygenSessionError(walletID string, err error, contextMsg string) {
+func (ec *eventConsumer) handleKeygenSessionError(walletID string, err error, contextMsg string, natMsg *nats.Msg) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
 
@@ -258,6 +259,7 @@ func (ec *eventConsumer) handleKeygenSessionError(walletID string, err error, co
 			"payload", string(keygenResultBytes),
 		)
 	}
+	ec.sendReplyToRemoveMsg(natMsg)
 }
 
 func (ec *eventConsumer) startKeyGenEventWorker() {
@@ -346,6 +348,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 				msg.NetworkInternalCode,
 				err,
 				"Failed to create signing session",
+				natMsg,
 			)
 			return
 		}
@@ -364,6 +367,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 				msg.NetworkInternalCode,
 				err,
 				"Failed to init signing session",
+				natMsg,
 			)
 			return
 		}
@@ -385,6 +389,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 							msg.NetworkInternalCode,
 							err,
 							"Failed to sign tx",
+							natMsg,
 						)
 						return
 					}
@@ -404,14 +409,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 
 		onSuccess := func(data []byte) {
 			done()
-			if natMsg.Reply != "" {
-				err = ec.pubsub.Publish(natMsg.Reply, data)
-				if err != nil {
-					logger.Error("Failed to publish reply", err)
-				} else {
-					logger.Info("Reply to the original message", "reply", natMsg.Reply)
-				}
-			}
+			ec.sendReplyToRemoveMsg(natMsg)
 		}
 		go session.Sign(onSuccess)
 	})
@@ -423,7 +421,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 
 	return nil
 }
-func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkInternalCode string, err error, contextMsg string) {
+func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkInternalCode string, err error, contextMsg string, natMsg *nats.Msg) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
 
@@ -453,7 +451,6 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkIntern
 		)
 		return
 	}
-
 	err = ec.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
 		IdempotententKey: txID,
 	})
@@ -464,7 +461,24 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkIntern
 			"payload", string(signingResultBytes),
 		)
 	}
+	ec.sendReplyToRemoveMsg(natMsg)
 }
+
+func (ec *eventConsumer) sendReplyToRemoveMsg(natMsg *nats.Msg) {
+	msg := natMsg.Data
+
+	if natMsg.Reply == "" {
+		logger.Warn("No reply inbox specified for sign success message", "msg", string(msg))
+		return
+	}
+
+	err := ec.pubsub.Publish(natMsg.Reply, msg)
+	if err != nil {
+		logger.Error("Failed to reply message", err, "reply", natMsg.Reply)
+		return
+	}
+}
+
 func (ec *eventConsumer) consumeReshareEvent() error {
 	sub, err := ec.pubsub.Subscribe(MPCReshareEvent, func(natMsg *nats.Msg) {
 		var msg types.ResharingMessage

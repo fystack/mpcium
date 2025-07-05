@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -36,7 +37,8 @@ type MPCClient interface {
 }
 
 type mpcClient struct {
-	signingStream       messaging.StreamPubsub
+	signingBroker       messaging.MessageBroker
+	keygenBroker        messaging.MessageBroker
 	pubsub              messaging.PubSub
 	genKeySuccessQueue  messaging.MessageQueue
 	signResultQueue     messaging.MessageQueue
@@ -115,11 +117,17 @@ func NewMPCClient(opts Options) MPCClient {
 	priv := ed25519.NewKeyFromSeed(privSeed)
 
 	// 2) Create the PubSub for both publish & subscribe
-	signingStream, err := messaging.NewJetStreamPubSub(opts.NatsConn, "mpc-signing", []string{
+	signingBroker, err := messaging.NewJetStreamBroker(context.Background(), opts.NatsConn, "mpc-signing", []string{
 		"mpc.signing_request.*",
 	})
 	if err != nil {
-		logger.Fatal("Failed to create JetStream PubSub", err)
+		logger.Fatal("Failed to create signing jetstream broker", err)
+	}
+	keygenBroker, err := messaging.NewJetStreamBroker(context.Background(), opts.NatsConn, "mpc-keygen", []string{
+		"mpc.keygen_request.*",
+	})
+	if err != nil {
+		logger.Fatal("Failed to create keygen jetstream broker", err)
 	}
 
 	pubsub := messaging.NewNATSPubSub(opts.NatsConn)
@@ -135,7 +143,8 @@ func NewMPCClient(opts Options) MPCClient {
 	reshareSuccessQueue := manager.NewMessageQueue("mpc_reshare_result")
 
 	return &mpcClient{
-		signingStream:       signingStream,
+		signingBroker:       signingBroker,
+		keygenBroker:        keygenBroker,
 		pubsub:              pubsub,
 		genKeySuccessQueue:  genKeySuccessQueue,
 		signResultQueue:     signResultQueue,
@@ -186,7 +195,7 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 		return fmt.Errorf("CreateWallet: marshal error: %w", err)
 	}
 
-	if err := c.pubsub.Publish(eventconsumer.MPCGenerateEvent, bytes); err != nil {
+	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes); err != nil {
 		return fmt.Errorf("CreateWallet: publish error: %w", err)
 	}
 	return nil
@@ -226,7 +235,7 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 		return fmt.Errorf("SignTransaction: marshal error: %w", err)
 	}
 
-	if err := c.signingStream.Publish(event.SigningRequestEventTopic, bytes); err != nil {
+	if err := c.signingBroker.PublishMessage(context.Background(), event.SigningRequestEventTopic, bytes); err != nil {
 		return fmt.Errorf("SignTransaction: publish error: %w", err)
 	}
 	return nil

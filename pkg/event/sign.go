@@ -6,7 +6,6 @@ const (
 	SigningRequestTopic        = "mpc.signing_request.*"
 	SigningResultTopic         = "mpc.mpc_signing_result.*"
 	SigningResultCompleteTopic = "mpc.mpc_signing_result.complete"
-	MPCSigningEventTopic       = "mpc:sign"
 	SigningRequestEventTopic   = "mpc.signing_request.event"
 )
 
