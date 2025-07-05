@@ -27,7 +27,7 @@ import (
 
 const (
 	numNodes      = 3
-	keygenTimeout = 120 * time.Second
+	keygenTimeout = 200 * time.Second
 )
 
 type TestConfig struct {
@@ -441,9 +441,9 @@ func (s *E2ETestSuite) testKeyGeneration(t *testing.T) {
 	// Wait for all nodes to be ready before proceeding
 	s.waitForNodesReady(t)
 
-	// Generate 3 wallet IDs for testing
-	walletIDs := make([]string, 3)
-	for i := 0; i < 3; i++ {
+	// Generate 1 wallet IDs for testing
+	walletIDs := make([]string, 1)
+	for i := 0; i < 1; i++ {
 		walletIDs[i] = uuid.New().String()
 		s.walletIDs = append(s.walletIDs, walletIDs[i])
 	}

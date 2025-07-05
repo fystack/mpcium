@@ -1,10 +1,10 @@
-badger_password: yx,qYwu*h!RZ{Q7f;70gU/VT.9kBOFCM
+badger_password: +TQ_=Iz^$R&G#2^PZ_3ojE+]2D6~\6$y
 consul:
   address: localhost:8501
 db_path: ./test_db
 environment: development
-event_initiator_pubkey: bc2e465f11317616b3ac5ae1a91473224b9b00b97ebf921928ac6478df608a00
-max_concurrent_keygen: 2
+event_initiator_pubkey: e42a14842c197a08af77e56b9fb8fae2e50316c3e51b51e14e6a7bf17c1ef77d
+max_concurrent_keygen: 1
 mpc_threshold: 2
 mpcium_version: 1.0.0
 nats:
