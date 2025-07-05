@@ -15,3 +15,5 @@ e2e/test_event_initiator.*
 e2e/coverage.out
 e2e/coverage.html
 e2e/logs/
+# Generated config file (template is tracked)
+e2e/config.test.yaml

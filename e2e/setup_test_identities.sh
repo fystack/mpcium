@@ -17,6 +17,21 @@ echo "🔐 Generating random password for badger encryption..."
 BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9!@#$^&*()-_=+[]{}|;:,.<>?/~' | head -c 32)
 echo "✅ Generated password: $BADGER_PASSWORD"
 
+# Generate config.test.yaml from template
+echo "📝 Generating config.test.yaml from template..."
+if [ ! -f "config.test.yaml.template" ]; then
+    echo "❌ Template file config.test.yaml.template not found"
+    exit 1
+fi
+
+# Create a temporary config with placeholder values (will be updated later with real pubkey)
+TEMP_PUBKEY="0000000000000000000000000000000000000000000000000000000000000000"
+sed -e "s/{{\.BadgerPassword}}/$BADGER_PASSWORD/g" \
+    -e "s/{{\.EventInitiatorPubkey}}/$TEMP_PUBKEY/g" \
+    config.test.yaml.template > config.test.yaml
+
+echo "✅ Generated config.test.yaml from template"
+
 # Clean up any existing test data
 echo "🧹 Cleaning up existing test data..."
 rm -rf "$TEST_DB_PATH"
