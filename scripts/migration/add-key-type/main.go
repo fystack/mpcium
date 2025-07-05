@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
-	"github.com/dgraph-io/badger/v4"
 )
 
 func main() {
-	logger.Init("production")
+	logger.Init("production", false)
 	nodeName := flag.String("name", "", "Provide node name")
 	flag.Parse()
 	if *nodeName == "" {
@@ -21,7 +21,7 @@ func main() {
 	dbPath := fmt.Sprintf("./db/%s", *nodeName)
 	badgerKv, err := kvstore.NewBadgerKVStore(
 		dbPath,
-		[]byte("1JwFmsc9lxlLfkPl"),
+		[]byte(""),
 	)
 	if err != nil {
 		logger.Fatal("Failed to create badger kv store", err)
