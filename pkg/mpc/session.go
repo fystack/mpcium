@@ -29,6 +29,7 @@ const (
 
 var (
 	ErrNotEnoughParticipants = errors.New("Not enough participants to sign")
+	ErrNotInParticipantList  = errors.New("Node is not in the participant list")
 )
 
 type TopicComposer struct {

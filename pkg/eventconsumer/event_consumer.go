@@ -351,6 +351,16 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 
 		}
 		if err != nil {
+			// Check if the error is due to node not being in participant list
+			if errors.Is(err, mpc.ErrNotInParticipantList) {
+				logger.Info("Node is not in participant list for this wallet, skipping signing",
+					"walletID", msg.WalletID,
+					"txID", msg.TxID,
+					"nodeID", ec.node.ID(),
+				)
+				return // Skip signing instead of treating as error
+			}
+
 			logger.Error("Failed to create signing session", err)
 			ec.handleSigningSessionError(
 				msg.WalletID,

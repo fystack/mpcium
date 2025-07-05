@@ -261,7 +261,7 @@ func (p *Node) getReadyPeersForSession(keyInfo *keyinfo.KeyInfo, readyPeers []st
 
 func (p *Node) ensureNodeIsParticipant(keyInfo *keyinfo.KeyInfo) error {
 	if !slices.Contains(keyInfo.ParticipantPeerIDs, p.nodeID) {
-		return fmt.Errorf("this node %s is not in the participant list", p.nodeID)
+		return ErrNotInParticipantList
 	}
 	return nil
 }
