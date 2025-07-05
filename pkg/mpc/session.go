@@ -176,19 +176,6 @@ func (s *session) receiveTssMessage(rawMsg []byte) {
 	}
 }
 
-func (s *session) SendReplySignSuccess(natMsg *nats.Msg) {
-	msg := natMsg.Data
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	err := s.pubSub.Publish(natMsg.Reply, msg)
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("Failed to reply sign sucess message: %w", err)
-		return
-	}
-	logger.Info("Sent reply sign sucess message", "reply", natMsg.Reply)
-}
-
 func (s *session) ListenToIncomingMessageAsync() {
 	go func() {
 		sub, err := s.pubSub.Subscribe(s.topicComposer.ComposeBroadcastTopic(), func(natMsg *nats.Msg) {
