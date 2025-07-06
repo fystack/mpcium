@@ -11,28 +11,25 @@ import (
 	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/spf13/viper"
 )
 
 const (
 	// Maximum time to wait for a signing response.
-	signingResponseTimeout = 30 * time.Second
+	keygenResponseTimeout = 30 * time.Second
 	// How often to poll for the reply message.
-	signingPollingInterval = 500 * time.Millisecond
-	// How often to check if enough peers are ready
-	readinessCheckInterval = 2 * time.Second
+	keygenPollingInterval = 500 * time.Millisecond
 )
 
-// SigningConsumer represents a consumer that processes signing events.
-type SigningConsumer interface {
+// KeygenConsumer represents a consumer that processes signing events.
+type KeygenConsumer interface {
 	// Run starts the consumer and blocks until the provided context is canceled.
 	Run(ctx context.Context) error
 	// Close performs a graceful shutdown of the consumer.
 	Close() error
 }
 
-// signingConsumer implements SigningConsumer.
-type signingConsumer struct {
+// keygenConsumer implements KeygenConsumer.
+type keygenConsumer struct {
 	natsConn     *nats.Conn
 	pubsub       messaging.PubSub
 	jsBroker     messaging.MessageBroker
@@ -43,25 +40,19 @@ type signingConsumer struct {
 	jsSub messaging.Subscription
 }
 
-// NewSigningConsumer returns a new instance of SigningConsumer.
-func NewSigningConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, pubsub messaging.PubSub, peerRegistry mpc.PeerRegistry) SigningConsumer {
-	mpcThreshold := viper.GetInt("mpc_threshold")
-	return &signingConsumer{
+// NewKeygenConsumer returns a new instance of KeygenConsumer.
+func NewKeygenConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, pubsub messaging.PubSub, peerRegistry mpc.PeerRegistry) KeygenConsumer {
+	return &keygenConsumer{
 		natsConn:     natsConn,
 		pubsub:       pubsub,
 		jsBroker:     jsBroker,
 		peerRegistry: peerRegistry,
-		mpcThreshold: mpcThreshold,
 	}
 }
 
-// waitForSufficientPeers waits until enough peers are ready to handle signing requests
-func (sc *signingConsumer) waitForSufficientPeers(ctx context.Context) error {
-	requiredPeers := int64(sc.mpcThreshold + 1) // t+1 peers needed for signing
+func (sc *keygenConsumer) waitForAllPeersReadyToGenKey(ctx context.Context) error {
 
-	logger.Info("SigningConsumer: Waiting for sufficient peers before consuming messages",
-		"required", requiredPeers,
-		"threshold", sc.mpcThreshold)
+	logger.Info("KeygenConsumer: Waiting for all peers to be ready before consuming messages")
 
 	ticker := time.NewTicker(readinessCheckInterval)
 	defer ticker.Stop()
@@ -71,32 +62,32 @@ func (sc *signingConsumer) waitForSufficientPeers(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			readyPeers := sc.peerRegistry.GetReadyPeersCount()
-			if readyPeers >= requiredPeers {
-				logger.Info("SigningConsumer: Sufficient peers ready, starting message consumption",
-					"ready", readyPeers,
-					"t+1", requiredPeers)
+			allPeersReady := sc.peerRegistry.ArePeersReady()
+
+			if allPeersReady {
+				logger.Info("KeygenConsumer: All peers are ready, proceeding to consume messages")
 				return nil
+			} else {
+				logger.Info("KeygenConsumer: Waiting for all peers to be ready",
+					"readyPeers", sc.peerRegistry.GetReadyPeersCount(),
+					"totalPeers", sc.peerRegistry.GetTotalPeersCount())
 			}
-			logger.Info("SigningConsumer: Waiting for more peers to be ready",
-				"ready", readyPeers,
-				"t+1", requiredPeers)
 		}
 	}
 }
 
 // Run subscribes to signing events and processes them until the context is canceled.
-func (sc *signingConsumer) Run(ctx context.Context) error {
+func (sc *keygenConsumer) Run(ctx context.Context) error {
 	// Wait for sufficient peers before starting to consume messages
-	if err := sc.waitForSufficientPeers(ctx); err != nil {
+	if err := sc.waitForAllPeersReadyToGenKey(ctx); err != nil {
 		return fmt.Errorf("failed to wait for sufficient peers: %w", err)
 	}
 
 	sub, err := sc.jsBroker.CreateSubscription(
 		ctx,
-		event.SigningConsumerStream,
-		event.SigningRequestEventTopic,
-		sc.handleSigningEvent,
+		event.KeygenConsumerStream,
+		event.KeygenRequestTopic,
+		sc.handleKeygenEvent,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to signing events: %w", err)
@@ -106,7 +97,7 @@ func (sc *signingConsumer) Run(ctx context.Context) error {
 
 	// Block until context cancellation.
 	<-ctx.Done()
-	logger.Info("SigningConsumer: Context cancelled, shutting down")
+	logger.Info("KeygenConsumer: Context cancelled, shutting down")
 
 	// When context is canceled, close subscription.
 	return sc.Close()
@@ -126,17 +117,12 @@ func (sc *signingConsumer) Run(ctx context.Context) error {
 // It publishes the signing request to the MPCSigningEventTopic, which is consumed by the eventconsumer.consumeTxSigningEvent handler.
 // This handler creates the appropriate signing session (SigningSession for ECDSA or EDDSASigningSession for EdDSA) via the MPC node's creation methods.
 // The MPC signing sessions manage the distributed cryptographic operations across multiple nodes, handling message routing, party updates, and signature verification.
-// When signing completes, the session publishes the result to a queue and calls the onSuccess callback, which sends a reply to the inbox that the SigningConsumer is monitoring.
-// The reply signals completion, allowing the SigningConsumer to acknowledge the original message.
-func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
-	// Check if we still have enough peers before processing the message
-	requiredPeers := int64(sc.mpcThreshold + 1)
-	readyPeers := sc.peerRegistry.GetReadyPeersCount()
+// When signing completes, the session publishes the result to a queue and calls the onSuccess callback, which sends a reply to the inbox that the KeygenConsumer is monitoring.
+// The reply signals completion, allowing the KeygenConsumer to acknowledge the original message.
+func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 
-	if readyPeers < requiredPeers {
-		logger.Warn("SigningConsumer: Not enough peers to process signing request, rejecting message",
-			"ready", readyPeers,
-			"required", requiredPeers)
+	if !sc.peerRegistry.ArePeersReady() {
+		logger.Warn("KeygenConsumer: Not all peers are ready to sign, skipping message processing")
 		return
 	}
 
@@ -146,19 +132,19 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	// Use a synchronous subscription for the reply inbox.
 	replySub, err := sc.natsConn.SubscribeSync(replyInbox)
 	if err != nil {
-		logger.Error("SigningConsumer: Failed to subscribe to reply inbox", err)
+		logger.Error("KeygenConsumer: Failed to subscribe to reply inbox", err)
 		_ = msg.Nak()
 		return
 	}
 	defer func() {
 		if err := replySub.Unsubscribe(); err != nil {
-			logger.Warn("SigningConsumer: Failed to unsubscribe from reply inbox", "error", err)
+			logger.Warn("KeygenConsumer: Failed to unsubscribe from reply inbox", "error", err)
 		}
 	}()
 
 	// Publish the signing event with the reply inbox.
-	if err := sc.pubsub.PublishWithReply(MPCSignEvent, replyInbox, msg.Data()); err != nil {
-		logger.Error("SigningConsumer: Failed to publish signing event with reply", err)
+	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data()); err != nil {
+		logger.Error("KeygenConsumer: Failed to publish signing event with reply", err)
 		_ = msg.Nak()
 		return
 	}
@@ -172,30 +158,30 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 			if err == nats.ErrTimeout {
 				continue
 			}
-			logger.Error("SigningConsumer: Error receiving reply message", err)
+			logger.Error("KeygenConsumer: Error receiving reply message", err)
 			break
 		}
 		if replyMsg != nil {
-			logger.Info("SigningConsumer: Completed signing event; reply received")
+			logger.Info("KeygenConsumer: Completed signing event; reply received")
 			if ackErr := msg.Ack(); ackErr != nil {
-				logger.Error("SigningConsumer: ACK failed", ackErr)
+				logger.Error("KeygenConsumer: ACK failed", ackErr)
 			}
 			return
 		}
 	}
 
-	logger.Warn("SigningConsumer: Timeout waiting for signing event response")
+	logger.Warn("KeygenConsumer: Timeout waiting for signing event response")
 	_ = msg.Nak()
 }
 
 // Close unsubscribes from the JetStream subject and cleans up resources.
-func (sc *signingConsumer) Close() error {
+func (sc *keygenConsumer) Close() error {
 	if sc.jsSub != nil {
 		if err := sc.jsSub.Unsubscribe(); err != nil {
-			logger.Error("SigningConsumer: Failed to unsubscribe from JetStream", err)
+			logger.Error("KeygenConsumer: Failed to unsubscribe from JetStream", err)
 			return err
 		}
-		logger.Info("SigningConsumer: Unsubscribed from JetStream")
+		logger.Info("KeygenConsumer: Unsubscribed from JetStream")
 	}
 	return nil
 }
