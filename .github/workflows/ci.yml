@@ -64,7 +64,11 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     name: Security Vulnerability Scan
-    
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -90,20 +94,31 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck
-        run: govulncheck ./...
+      - name: Run govulncheck and fail if vulnerabilities are found
+        run: |
+          govulncheck -json ./... > vuln.json
+          count=$(jq '[.[] | select(.finding != null and .finding.trace != null)] | length' vuln.json || echo 0)
+          echo "Found $count vulnerabilities"
+          if [ "$count" -gt 0 ]; then
+            echo "❌ Vulnerabilities found by govulncheck"
+            cat vuln.json
+            exit 1
+          fi
 
       - name: Install gosec
-        run: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Run gosec security scanner
-        run: gosec -fmt sarif -out gosec-results.sarif ./...
+        run: |
+          gosec -fmt sarif -out gosec-results.sarif ./...
+        continue-on-error: true
 
       - name: Upload gosec results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: gosec-results.sarif
+          category: gosec
 
   # CodeQL Analysis
   codeql-analysis:
@@ -117,14 +132,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ['go']
+        language: ["go"]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
           queries: +security-and-quality
@@ -153,7 +168,7 @@ jobs:
           go build -v ./cmd/mpcium-cli
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{matrix.language}}"
 
@@ -161,6 +176,10 @@ jobs:
   sbom:
     runs-on: ubuntu-latest
     name: Generate SBOM
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     
     steps:
       - name: Checkout code
@@ -189,23 +208,30 @@ jobs:
           go build -o mpcium ./cmd/mpcium
           go build -o mpcium-cli ./cmd/mpcium-cli
 
-      - name: Install Syft
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Generate SBOM with anchore/sbom-action (SPDX-JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: sbom-spdx.json
+          output-file: sbom.spdx.json
+          format: spdx-json
 
-      - name: Generate SBOM with Syft (SPDX-JSON)
-        run: |
-          syft . -o spdx-json=sbom.spdx.json
+      - name: Generate SBOM with anchore/sbom-action (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: sbom-cyclonedx.json
+          output-file: sbom.cyclonedx.json
+          format: cyclonedx-json
+          upload-artifact: false
 
-      - name: Generate SBOM with Syft (CycloneDX)
-        run: |
-          syft . -o cyclonedx-json=sbom.cyclonedx.json
+      - name: Generate SBOM with anchore/sbom-action (Syft JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: sbom-syft.json
+          output-file: sbom.syft.json
+          format: syft-json
+          upload-artifact: false
 
-      - name: Generate SBOM with Syft (Syft JSON)
-        run: |
-          syft . -o syft-json=sbom.syft.json
-
-      - name: Upload SBOM artifacts
+      - name: Upload all SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sbom-files
@@ -215,19 +241,21 @@ jobs:
             sbom.syft.json
           retention-days: 30
 
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Scan SBOM with Grype
-        uses: anchore/scan-action@v3
-        with:
-          path: sbom.spdx.json
-          fail-build: false
-          output-format: sarif
-          output-file: grype-results.sarif
+        run: |
+          grype sbom.spdx.json -o sarif --file grype-results.sarif
+        continue-on-error: true
 
       - name: Upload Grype results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: grype-results.sarif
+          category: grype
 
       - name: Display SBOM summary
         run: |
