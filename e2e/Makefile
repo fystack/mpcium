@@ -31,16 +31,8 @@ clean:
 	rm -rf test_node*/
 	rm -f test_event_initiator.*
 	rm -rf logs 
-	rm -rf coverage.*
 	rm -f config.test.yaml
 	docker compose -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
-
-# Run tests with coverage
-test-coverage: deps setup
-	@echo "🚀 Running E2E tests with coverage..."
-	go test -v -timeout=10m -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "📊 Coverage report generated: coverage.html"
 
 # Quick test (skip setup)
 test-quick:
@@ -52,7 +44,6 @@ help:
 	@echo "Available targets:"
 	@echo "  test         - Run E2E tests with full setup"
 	@echo "  test-quick   - Run E2E tests without setup"
-	@echo "  test-coverage- Run E2E tests with coverage report"
 	@echo "  setup        - Setup test environment"
 	@echo "  deps         - Install dependencies"
 	@echo "  clean        - Clean up test artifacts"

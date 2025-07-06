@@ -28,8 +28,6 @@ Before running the tests, ensure you have:
 # Run all E2E tests
 make test
 
-# Run tests with coverage report
-make test-coverage
 
 # Clean up test artifacts
 make clean
@@ -38,6 +36,7 @@ make clean
 ### Manual Steps
 
 1. **Build the binaries** (from root directory):
+
    ```bash
    make
    ```
@@ -61,25 +60,30 @@ make clean
 ### Test Flow
 
 1. **Setup Infrastructure**
+
    - Starts NATS (port 4223) and Consul (port 8501) containers
    - Creates service clients for test coordination
 
 2. **Setup Test Nodes**
+
    - Creates 3 test nodes (`test_node0`, `test_node1`, `test_node2`)
    - Generates unique identities for each node
    - Configures separate database paths (`./test_db/`)
    - Registers peers in Consul
 
 3. **Start MPC Nodes**
+
    - Launches 3 mpcium processes in parallel
    - Each node uses its own configuration and identity
 
 4. **Test Key Generation**
+
    - Generates 3 random wallet IDs
    - Triggers key generation for all wallets simultaneously
    - Waits for completion (2 minute timeout)
 
 5. **Verify Consistency**
+
    - Stops all nodes safely
    - Opens each node's database in read-only mode
    - Verifies both ECDSA and EdDSA keys exist for each wallet
@@ -113,15 +117,19 @@ Test nodes use a separate database path: `./test_db/` instead of `./db/`
 ### Common Issues
 
 1. **Binary not found**
+
    ```
    ❌ mpcium binary not found. Please run 'make' in the root directory first.
    ```
+
    **Solution**: Run `make` in the root directory to build the binaries.
 
 2. **Port conflicts**
+
    ```
    Error: port 4223 already in use
    ```
+
    **Solution**: Run `make clean` to stop any existing test containers.
 
 3. **Permission errors**
@@ -135,21 +143,24 @@ Test nodes use a separate database path: `./test_db/` instead of `./db/`
 To debug test failures:
 
 1. **Check container logs**:
+
    ```bash
    docker logs nats-server-test
    docker logs consul-test
    ```
 
 2. **Run with verbose output**:
+
    ```bash
    go test -v -timeout=10m ./...
    ```
 
 3. **Keep test artifacts** (comment out cleanup in the test):
+
    ```bash
    # Inspect test databases
    ls -la test_db/
-   
+
    # Check test node configurations
    cat test_node0/config.yaml
    ```
@@ -169,7 +180,7 @@ A successful test run should show:
 ✅ Test nodes setup complete
 📋 Registering peers in Consul...
 ✅ Registered peer test_node0 with ID xxx
-✅ Registered peer test_node1 with ID xxx  
+✅ Registered peer test_node1 with ID xxx
 ✅ Registered peer test_node2 with ID xxx
 🚀 Starting MPC nodes...
 ✅ Started node test_node0 (PID: xxx)
@@ -208,10 +219,11 @@ To integrate with CI/CD pipelines:
 ```
 
 The tests are designed to be:
+
 - **Isolated**: No dependencies on external services
 - **Deterministic**: Consistent results across runs
 - **Self-contained**: All setup and cleanup handled automatically
-- **Fast**: Complete in under 10 minutes 
+- **Fast**: Complete in under 10 minutes
 
 ## Test Cleanup and Process Management
 
@@ -229,7 +241,6 @@ The test suite now includes automatic cleanup mechanisms to prevent process inte
   - Kills any existing MPC processes
   - Stops Docker containers
   - Removes test artifacts
-  
 - **Post-test cleanup**: Tests use `defer` to ensure cleanup happens even if tests fail
 
 #### 2. Manual Cleanup Options
@@ -259,16 +270,19 @@ rm -rf test_node* *.log
 If you encounter signature verification errors or other mysterious test failures:
 
 1. **Check for running processes**:
+
    ```bash
    ps aux | grep mpcium
    ```
 
 2. **Kill any found processes**:
+
    ```bash
    pkill -f mpcium
    ```
 
 3. **Clean up completely**:
+
    ```bash
    make cleanup-test-env
    ```
@@ -294,9 +308,10 @@ If you encounter signature verification errors or other mysterious test failures
 
 ### Common Issues and Solutions
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "Failed to verify initiator message" | Multiple MPC instances running | Run cleanup script |
-| "Port already in use" | Docker containers still running | `docker compose down -v` |
-| "Database locked" | Previous test didn't clean up | Remove `test_node*` directories |
-| Test hangs during setup | Leftover processes interfering | Kill all `mpcium` processes | 
+| Issue                                | Cause                           | Solution                        |
+| ------------------------------------ | ------------------------------- | ------------------------------- |
+| "Failed to verify initiator message" | Multiple MPC instances running  | Run cleanup script              |
+| "Port already in use"                | Docker containers still running | `docker compose down -v`        |
+| "Database locked"                    | Previous test didn't clean up   | Remove `test_node*` directories |
+| Test hangs during setup              | Leftover processes interfering  | Kill all `mpcium` processes     |
+

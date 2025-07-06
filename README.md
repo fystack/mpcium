@@ -162,3 +162,15 @@ func main () {
 	logger.Info("CreateWallet sent, awaiting result...", "walletID", walletID)
 }
 ```
+
+### Testing
+## 1. Unit tests
+```
+go test ./... -v
+```
+
+## 2. Integration tests
+```
+cd e2e
+make test
+```
