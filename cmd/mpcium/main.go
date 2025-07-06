@@ -184,7 +184,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	if err := peerRegistry.Ready(); err != nil {
 		logger.Error("Failed to mark peer registry as ready", err)
 	}
-
+	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
 	// Setup signal handling to cancel context on termination signals.
 	go func() {

@@ -127,6 +127,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to unmarshal keygen message")
 		return
 	}
+
 	if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 		logger.Error("Failed to verify initiator message", err)
 		ec.handleKeygenSessionError(msg.WalletID, err, "Failed to verify initiator message")
@@ -216,7 +217,6 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		return
 	}
 
-	logger.Info("Closing session successfully!", "event", successEvent)
 	payload, err := json.Marshal(successEvent)
 	if err != nil {
 		logger.Error("Failed to marshal keygen success event", err)
