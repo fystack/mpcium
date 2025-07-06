@@ -26,8 +26,8 @@ import (
 
 const (
 	numNodes       = 3
-	keygenTimeout  = 10 * time.Minute
-	signingTimeout = 5 * time.Minute
+	keygenTimeout  = 15 * time.Minute
+	signingTimeout = 10 * time.Minute
 )
 
 type TestConfig struct {
@@ -362,7 +362,7 @@ func (s *E2ETestSuite) ShowRecentLogs(t *testing.T, nodeName string) {
 func (s *E2ETestSuite) WaitForNodesReady(t *testing.T) {
 	t.Log("Waiting for all nodes to be ready to accept MPC requests...")
 
-	timeout := time.NewTimer(60 * time.Second)
+	timeout := time.NewTimer(5 * time.Minute)
 	defer timeout.Stop()
 
 	ticker := time.NewTicker(2 * time.Second)

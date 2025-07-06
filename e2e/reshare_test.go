@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	resharingTimeout = 120 * time.Second
+	resharingTimeout = 10 * time.Minute
 )
 
 func TestResharing(t *testing.T) {

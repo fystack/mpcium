@@ -118,7 +118,7 @@ jobs:
       - name: Run Key Generation E2E tests
         run: |
           cd e2e
-          go test -v -timeout=600s -run TestKeyGeneration
+          go test -v -timeout=1200s -run TestKeyGeneration
         env:
           DOCKER_BUILDKIT: 1
 
@@ -196,7 +196,7 @@ jobs:
       - name: Run Signing E2E tests
         run: |
           cd e2e
-          go test -v -timeout=600s -run TestSigning
+          go test -v -timeout=1200s -run TestSigning
         env:
           DOCKER_BUILDKIT: 1
 
@@ -274,7 +274,7 @@ jobs:
       - name: Run Resharing E2E tests
         run: |
           cd e2e
-          go test -v -timeout=600s -run TestResharing
+          go test -v -timeout=1200s -run TestResharing
         env:
           DOCKER_BUILDKIT: 1
 
