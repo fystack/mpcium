@@ -14,7 +14,7 @@ echo "🚀 Setting up E2E Test Node Identities..."
 
 # Generate random password for badger encryption
 echo "🔐 Generating random password for badger encryption..."
-BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9!@#$^&*()-_=+[]{}|;:,.<>?/~' | head -c 32)
+BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 32)
 echo "✅ Generated password: $BADGER_PASSWORD"
 
 # Generate config.test.yaml from template

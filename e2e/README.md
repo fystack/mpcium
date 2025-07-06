@@ -1,6 +1,6 @@
-# E2E Integration Tests
+# E2E Testing for MPCium
 
-This directory contains end-to-end integration tests for the MPCIUM multi-party computation system.
+This directory contains end-to-end integration tests for the MPCium multi-party computation system.
 
 ## Overview
 
@@ -212,3 +212,91 @@ The tests are designed to be:
 - **Deterministic**: Consistent results across runs
 - **Self-contained**: All setup and cleanup handled automatically
 - **Fast**: Complete in under 10 minutes 
+
+## Test Cleanup and Process Management
+
+### Problem: Test Process Interference
+
+E2E tests can sometimes leave behind running processes that interfere with subsequent test runs. This can cause signature verification errors and other unexpected failures.
+
+### Solution: Comprehensive Cleanup
+
+The test suite now includes automatic cleanup mechanisms to prevent process interference:
+
+#### 1. Automatic Cleanup in Tests
+
+- **Pre-test cleanup**: Every test run starts with `CleanupTestEnvironment()` which:
+  - Kills any existing MPC processes
+  - Stops Docker containers
+  - Removes test artifacts
+  
+- **Post-test cleanup**: Tests use `defer` to ensure cleanup happens even if tests fail
+
+#### 2. Manual Cleanup Options
+
+If you need to manually clean up the test environment:
+
+```bash
+# Option 1: Use the cleanup script directly
+cd e2e
+./cleanup_test_env.sh
+
+# Option 2: Use the Makefile target
+make cleanup-test-env
+
+# Option 3: Manual cleanup commands
+cd e2e
+# Kill MPC processes
+pgrep -f "mpcium" | xargs kill -TERM
+# Stop Docker containers
+docker compose -f docker-compose.test.yaml down -v --remove-orphans
+# Remove test artifacts
+rm -rf test_node* *.log
+```
+
+#### 3. Troubleshooting Process Issues
+
+If you encounter signature verification errors or other mysterious test failures:
+
+1. **Check for running processes**:
+   ```bash
+   ps aux | grep mpcium
+   ```
+
+2. **Kill any found processes**:
+   ```bash
+   pkill -f mpcium
+   ```
+
+3. **Clean up completely**:
+   ```bash
+   make cleanup-test-env
+   ```
+
+4. **Run tests again**:
+   ```bash
+   go test -v -run TestKeyGeneration
+   ```
+
+### Best Practices
+
+1. **Always clean up before running tests** - The test suite does this automatically
+2. **Use the cleanup script** if you interrupt tests manually (Ctrl+C)
+3. **Check for leftover processes** if you see unexpected errors
+4. **Don't run multiple test instances** simultaneously in the same directory
+
+### Test Structure
+
+- `base_test.go` - Core test infrastructure and cleanup functions
+- `keygen_test.go` - Key generation tests
+- `cleanup_test_env.sh` - Standalone cleanup script
+- `docker-compose.test.yaml` - Test infrastructure (NATS, Consul)
+
+### Common Issues and Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "Failed to verify initiator message" | Multiple MPC instances running | Run cleanup script |
+| "Port already in use" | Docker containers still running | `docker compose down -v` |
+| "Database locked" | Previous test didn't clean up | Remove `test_node*` directories |
+| Test hangs during setup | Leftover processes interfering | Kill all `mpcium` processes | 

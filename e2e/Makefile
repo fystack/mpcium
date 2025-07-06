@@ -32,6 +32,7 @@ clean:
 	rm -f test_event_initiator.*
 	rm -rf logs 
 	rm -rf coverage.*
+	rm config.test.yaml
 	docker compose -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
 
 # Run tests with coverage

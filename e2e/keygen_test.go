@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,16 @@ import (
 
 func TestKeyGeneration(t *testing.T) {
 	suite := NewE2ETestSuite(".")
+
+	// Comprehensive cleanup before starting tests
+	t.Log("Performing pre-test cleanup...")
+	suite.CleanupTestEnvironment(t)
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Log("Performing post-test cleanup...")
+		suite.Cleanup(t)
+	}()
 
 	// Setup infrastructure
 	t.Run("Setup", func(t *testing.T) {
@@ -32,13 +43,19 @@ func TestKeyGeneration(t *testing.T) {
 		suite.RegisterPeers(t)
 		t.Log("registerPeers completed")
 
+		t.Log("Starting startNodes...")
+		suite.StartNodes(t)
+		t.Log("startNodes completed")
+
+		t.Log("Waiting for node ready")
+		// Wait for all nodes to be ready before proceeding
+		suite.WaitForNodesReady(t)
+		t.Log("Waiting for node completed")
+
 		t.Log("Starting setupMPCClient...")
 		suite.SetupMPCClient(t)
 		t.Log("setupMPCClient completed")
 
-		t.Log("Starting startNodes...")
-		suite.StartNodes(t)
-		t.Log("startNodes completed")
 	})
 
 	// Test key generation
@@ -59,21 +76,18 @@ func testKeyGeneration(t *testing.T, suite *E2ETestSuite) {
 	if suite.mpcClient == nil {
 		t.Fatal("MPC client is not initialized. Make sure Setup subtest runs first.")
 	}
-
-	// Wait for all nodes to be ready before proceeding
-	suite.WaitForNodesReady(t)
-
 	// Generate 1 wallet ID for testing
-	walletIDs := make([]string, 1)
+	walletIDs := make([]string, 0, 10)
 	for i := 0; i < 1; i++ {
-		walletIDs[i] = uuid.New().String()
+		walletIDs = append(walletIDs, uuid.New().String())
 		suite.walletIDs = append(suite.walletIDs, walletIDs[i])
 	}
 
-	t.Logf("Generated wallet IDs: %v", walletIDs)
+	logger.Info(fmt.Sprintf("Generated wallet IDs: %v", walletIDs))
 
 	// Setup result listener
 	err := suite.mpcClient.OnWalletCreationResult(func(result event.KeygenResultEvent) {
+		logger.Info("On wallet creation result", "event", result)
 		t.Logf("Received keygen result for wallet %s: %s", result.WalletID, result.ResultType)
 		suite.keygenResults[result.WalletID] = &result
 
@@ -86,7 +100,7 @@ func testKeyGeneration(t *testing.T, suite *E2ETestSuite) {
 	require.NoError(t, err, "Failed to setup keygen result listener")
 
 	// Add a small delay to ensure the result listener is fully set up
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Trigger key generation for all wallets
 	for _, walletID := range walletIDs {

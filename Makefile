@@ -1,4 +1,4 @@
-.PHONY: all build clean mpcium mpc test test-verbose test-coverage e2e-test e2e-clean
+.PHONY: all build clean mpcium mpc test test-verbose test-coverage e2e-test e2e-clean cleanup-test-env
 
 BIN_DIR := bin
 
@@ -43,6 +43,11 @@ e2e-test-coverage: build
 e2e-clean:
 	@echo "Cleaning up E2E test artifacts..."
 	cd e2e && make clean
+
+# Comprehensive cleanup of test environment (kills processes, removes artifacts)
+cleanup-test-env:
+	@echo "Performing comprehensive test environment cleanup..."
+	cd e2e && ./cleanup_test_env.sh
 
 # Run all tests (unit + E2E)
 test-all: test e2e-test

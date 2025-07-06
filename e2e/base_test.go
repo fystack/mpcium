@@ -2,10 +2,12 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -45,26 +47,28 @@ type TestConfig struct {
 }
 
 type E2ETestSuite struct {
-	ctx             context.Context
-	consulClient    *api.Client
-	natsConn        *nats.Conn
-	mpcClient       client.MPCClient
-	testDir         string
-	walletIDs       []string
-	mpciumProcesses []*exec.Cmd
-	keygenResults   map[string]*event.KeygenResultEvent
-	signingResults  map[string]*event.SigningResultEvent
-	config          TestConfig
+	ctx              context.Context
+	consulClient     *api.Client
+	natsConn         *nats.Conn
+	mpcClient        client.MPCClient
+	testDir          string
+	walletIDs        []string
+	mpciumProcesses  []*exec.Cmd
+	keygenResults    map[string]*event.KeygenResultEvent
+	signingResults   map[string]*event.SigningResultEvent
+	resharingResults map[string]*event.ResharingResultEvent
+	config           TestConfig
 }
 
 func NewE2ETestSuite(testDir string) *E2ETestSuite {
 	ctx, _ := context.WithCancel(context.Background())
 	return &E2ETestSuite{
-		ctx:            ctx,
-		testDir:        testDir,
-		walletIDs:      make([]string, 0),
-		keygenResults:  make(map[string]*event.KeygenResultEvent),
-		signingResults: make(map[string]*event.SigningResultEvent),
+		ctx:              ctx,
+		testDir:          testDir,
+		walletIDs:        make([]string, 0),
+		keygenResults:    make(map[string]*event.KeygenResultEvent),
+		signingResults:   make(map[string]*event.SigningResultEvent),
+		resharingResults: make(map[string]*event.ResharingResultEvent),
 	}
 }
 
@@ -86,6 +90,27 @@ func (s *E2ETestSuite) RunMakeClean() error {
 		return fmt.Errorf("make clean failed: %v, output: %s", err, string(output))
 	}
 	return nil
+}
+
+// GetNodeIDs reads the node IDs from the peers.json file
+func (s *E2ETestSuite) GetNodeIDs() ([]string, error) {
+	peersPath := filepath.Join(s.testDir, "test_node0", "peers.json")
+	data, err := os.ReadFile(peersPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read peers.json: %w", err)
+	}
+
+	var peers map[string]string
+	if err := json.Unmarshal(data, &peers); err != nil {
+		return nil, fmt.Errorf("failed to parse peers.json: %w", err)
+	}
+
+	var nodeIDs []string
+	for _, id := range peers {
+		nodeIDs = append(nodeIDs, id)
+	}
+
+	return nodeIDs, nil
 }
 
 func (s *E2ETestSuite) SetupInfrastructure(t *testing.T) {
@@ -378,7 +403,7 @@ func (s *E2ETestSuite) isNodeReady(nodeName string) bool {
 
 	logContent := string(data)
 	// Check for the specific log message that indicates the node is ready
-	return strings.Contains(logContent, "ALL PEERS ARE READY! Starting to accept MPC requests")
+	return strings.Contains(logContent, "[READY] Node is ready")
 }
 
 func (s *E2ETestSuite) StopNode(t *testing.T, nodeIndex int) {
@@ -390,35 +415,18 @@ func (s *E2ETestSuite) StopNode(t *testing.T, nodeIndex int) {
 	cmd := s.mpciumProcesses[nodeIndex]
 	nodeName := fmt.Sprintf("test_node%d", nodeIndex)
 
-	t.Logf("Stopping node %s (PID: %d)", nodeName, cmd.Process.Pid)
+	t.Logf("Killing node %s (PID: %d)", nodeName, cmd.Process.Pid)
 
-	// Send SIGTERM for graceful shutdown
-	err := cmd.Process.Signal(syscall.SIGTERM)
+	// Force kill the process immediately
+	err := cmd.Process.Kill()
 	if err != nil {
-		t.Logf("Failed to send SIGTERM to node %s: %v", nodeName, err)
-	}
-
-	// Wait for graceful shutdown with timeout
-	gracefulTimeout := 10 * time.Second
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case <-time.After(gracefulTimeout):
-		t.Logf("Node %s didn't stop gracefully, force killing", nodeName)
-		err := cmd.Process.Kill()
-		if err != nil {
-			t.Logf("Failed to kill node %s: %v", nodeName, err)
-		}
-		<-done // Wait for process to be cleaned up
-	case err := <-done:
-		if err != nil {
-			t.Logf("Node %s stopped with error: %v", nodeName, err)
-		} else {
-			t.Logf("Node %s stopped gracefully", nodeName)
-		}
+		t.Logf("Failed to kill node %s: %v", nodeName, err)
+	} else {
+		// Wait for process cleanup
+		go func() {
+			_ = cmd.Wait()
+			t.Logf("Node %s killed", nodeName)
+		}()
 	}
 
 	s.mpciumProcesses[nodeIndex] = nil
@@ -432,78 +440,27 @@ func (s *E2ETestSuite) StopNodes(t *testing.T) {
 		return
 	}
 
-	// Step 1: Send SIGTERM to all processes for graceful shutdown
-	t.Log("Sending SIGTERM to all nodes for graceful shutdown...")
+	// Force kill all processes immediately
 	for i, cmd := range s.mpciumProcesses {
 		if cmd != nil && cmd.Process != nil {
-			t.Logf("Sending SIGTERM to node %d (PID: %d)", i, cmd.Process.Pid)
-			err := cmd.Process.Signal(syscall.SIGTERM)
+			t.Logf("Force killing node %d (PID: %d)", i, cmd.Process.Pid)
+			err := cmd.Process.Kill()
 			if err != nil {
-				t.Logf("Failed to send SIGTERM to node %d: %v", i, err)
+				t.Logf("Failed to kill node %d: %v", i, err)
+			} else {
+				// Wait for the process to be cleaned up
+				go func(idx int, process *exec.Cmd) {
+					_ = process.Wait()
+					t.Logf("Node %d killed", idx)
+				}(i, cmd)
 			}
+			s.mpciumProcesses[i] = nil
 		}
 	}
 
-	// Step 2: Wait for graceful shutdown with timeout
-	t.Log("Waiting for graceful shutdown...")
-	gracefulTimeout := 10 * time.Second
-	deadline := time.Now().Add(gracefulTimeout)
-
-	for time.Now().Before(deadline) {
-		allStopped := true
-
-		for i, cmd := range s.mpciumProcesses {
-			if cmd != nil && cmd.Process != nil {
-				// Check if process is still running
-				err := cmd.Process.Signal(syscall.Signal(0))
-				if err == nil {
-					// Process is still running
-					allStopped = false
-				} else {
-					// Process has stopped, wait for it to clean up
-					go func(idx int, process *exec.Cmd) {
-						_ = process.Wait() // Clean up zombie process
-						t.Logf("Node %d stopped gracefully", idx)
-					}(i, cmd)
-					s.mpciumProcesses[i] = nil // Mark as stopped
-				}
-			}
-		}
-
-		if allStopped {
-			t.Log("All nodes stopped gracefully")
-			return
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	// Step 3: Force kill any remaining processes
-	t.Log("Some nodes didn't stop gracefully, force killing remaining processes...")
-	for i, cmd := range s.mpciumProcesses {
-		if cmd != nil && cmd.Process != nil {
-			err := cmd.Process.Signal(syscall.Signal(0))
-			if err == nil {
-				t.Logf("Force killing node %d (PID: %d)", i, cmd.Process.Pid)
-				err := cmd.Process.Kill()
-				if err != nil {
-					t.Logf("Failed to kill node %d: %v", i, err)
-				} else {
-					// Wait for the process to be cleaned up
-					go func(idx int, process *exec.Cmd) {
-						_ = process.Wait()
-						t.Logf("Node %d force killed", idx)
-					}(i, cmd)
-				}
-			}
-		}
-	}
-
-	// Wait for final cleanup
-	t.Log("Waiting for final cleanup...")
-	time.Sleep(2 * time.Second)
-
-	t.Log("Node shutdown process completed")
+	// Brief wait for cleanup
+	time.Sleep(1 * time.Second)
+	t.Log("All nodes stopped")
 }
 
 func (s *E2ETestSuite) CheckKeyInAllNodes(t *testing.T, walletID, keyType, keyName string) {
@@ -627,4 +584,80 @@ func (s *E2ETestSuite) Cleanup(t *testing.T) {
 	os.Remove(filepath.Join(s.testDir, "test_event_initiator.key"))
 
 	t.Log("Cleanup completed")
+}
+
+// KillAllMPCProcesses kills any existing MPC processes that might be running
+func (s *E2ETestSuite) KillAllMPCProcesses(t *testing.T) {
+	t.Log("Checking for existing MPC processes...")
+
+	// Find all mpcium processes
+	cmd := exec.Command("pgrep", "-f", "mpcium")
+	output, err := cmd.Output()
+	if err != nil {
+		// pgrep returns exit code 1 if no processes found, which is fine
+		t.Log("No existing MPC processes found")
+		return
+	}
+
+	pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(pids) == 0 || (len(pids) == 1 && pids[0] == "") {
+		t.Log("No existing MPC processes found")
+		return
+	}
+
+	t.Logf("Found %d existing MPC processes, killing them...", len(pids))
+
+	// Force kill all processes immediately
+	for _, pidStr := range pids {
+		if pidStr == "" {
+			continue
+		}
+
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			t.Logf("Invalid PID: %s", pidStr)
+			continue
+		}
+
+		// Kill the process
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Logf("Could not find process %d: %v", pid, err)
+			continue
+		}
+
+		err = process.Signal(syscall.SIGKILL)
+		if err != nil {
+			t.Logf("Failed to kill process %d: %v", pid, err)
+		} else {
+			t.Logf("Killed process %d", pid)
+		}
+	}
+
+	// Brief wait for cleanup
+	time.Sleep(1 * time.Second)
+	t.Log("MPC process cleanup completed")
+}
+
+// CleanupTestEnvironment performs comprehensive cleanup of test environment
+func (s *E2ETestSuite) CleanupTestEnvironment(t *testing.T) {
+	t.Log("Performing comprehensive test environment cleanup...")
+
+	// 1. Kill any existing MPC processes
+	s.KillAllMPCProcesses(t)
+
+	// 2. Stop any running Docker containers
+	t.Log("Stopping Docker containers...")
+	cmd := exec.Command("docker", "compose", "-f", "docker-compose.test.yaml", "down", "-v", "--remove-orphans")
+	cmd.Dir = s.testDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Docker compose down failed (this might be expected): %v", err)
+	}
+	t.Logf("Docker compose down output: %s", string(output))
+
+	// 3. Wait for system to settle
+	time.Sleep(2 * time.Second)
+
+	t.Log("Test environment cleanup completed")
 }

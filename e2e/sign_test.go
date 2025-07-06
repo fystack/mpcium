@@ -57,6 +57,16 @@ func TestSigning(t *testing.T) {
 	suite := NewE2ETestSuite(".")
 	logger.Init("dev", true)
 
+	// Comprehensive cleanup before starting tests
+	t.Log("Performing pre-test cleanup...")
+	suite.CleanupTestEnvironment(t)
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Log("Performing post-test cleanup...")
+		suite.Cleanup(t)
+	}()
+
 	// Setup infrastructure
 	t.Run("Setup", func(t *testing.T) {
 		// Run make clean first to ensure a clean build
@@ -64,10 +74,6 @@ func TestSigning(t *testing.T) {
 		err := suite.RunMakeClean()
 		require.NoError(t, err, "Failed to run make clean")
 		t.Log("make clean completed")
-
-		// Clean up any existing test artifacts first
-		t.Log("Cleaning up any existing test artifacts...")
-		suite.Cleanup(t)
 
 		t.Log("Starting setupInfrastructure...")
 		suite.SetupInfrastructure(t)
@@ -108,11 +114,6 @@ func TestSigning(t *testing.T) {
 	// t.Run("SigningOneNodeOffline", func(t *testing.T) {
 	// 	testSigningOneNodeOffline(t, suite)
 	// })
-
-	// Cleanup
-	t.Run("Cleanup", func(t *testing.T) {
-		suite.Cleanup(t)
-	})
 }
 
 func testKeyGenerationForSigning(t *testing.T, suite *E2ETestSuite) {
