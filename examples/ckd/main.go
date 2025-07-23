@@ -39,9 +39,9 @@ func main() {
 	dummyTx := []byte("deadbeef") // replace with real transaction bytes
 
 	txMsg := &types.SignTxMessage{
-		KeyType:             types.KeyTypeEd25519,
+		KeyType:             types.KeyTypeSecp256k1, // now only supports ECDSA
 		WalletID:            "739c2f58-8385-4c40-a642-9a8a1e0d336f",
-		NetworkInternalCode: "solana-devnet",
+		NetworkInternalCode: "sepolia-testnet",
 		TxID:                txID,
 		Tx:                  dummyTx,
 		DerivationPath:      []uint32{1, 2, 3},
