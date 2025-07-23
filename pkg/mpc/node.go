@@ -1,6 +1,7 @@
 package mpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -37,8 +38,15 @@ type Node struct {
 	keyinfoStore   keyinfo.Store
 	ecdsaPreParams []*keygen.LocalPreParams
 	identityStore  identity.Store
+	peerRegistry   PeerRegistry
+}
 
-	peerRegistry PeerRegistry
+func PartyIDToRoutingDest(partyID *tss.PartyID) string {
+	return string(partyID.KeyInt().Bytes())
+}
+
+func ComparePartyIDs(x, y *tss.PartyID) bool {
+	return bytes.Equal(x.KeyInt().Bytes(), y.KeyInt().Bytes())
 }
 
 func NewNode(
