@@ -29,7 +29,10 @@ func NewCKD() *CKD {
 	ckd := &CKD{
 		Store: infra.GetConsulClient("development").KV(),
 	}
-	ckd.initializeChainCode()
+	err := ckd.initializeChainCode()
+	if err != nil {
+		logger.Fatal("Failed to initialize chain code", err)
+	}
 	return ckd
 }
 
