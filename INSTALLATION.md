@@ -287,7 +287,7 @@ mpcium start -n node2
 
 ---
 
-## Apendix
+## Appendix
 
 ### Decrypt initiator private key with age
 
