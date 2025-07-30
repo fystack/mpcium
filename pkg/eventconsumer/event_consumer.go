@@ -329,7 +329,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 				msg.TxID,
 				msg.NetworkInternalCode,
 				duplicateErr,
-				"Duplicate signing request detected",
+				"Duplicate session",
 				natMsg,
 			)
 			return
