@@ -5,7 +5,7 @@
 Mpcium implements a threshold signature scheme with industry-standard security practices to protect cryptographic operations:
 
 1. **Distributed Trust**: No single entity possesses complete private keys
-2. **Threshold Cryptography**: Requires t+1 nodes to participate in signing operations
+2. **Threshold Cryptography**: Requires t-out-of-n nodes to participate in signing operations
 3. **End-to-End Verification**: All communications are signed and verified
 4. **Defense in Depth**: Multiple layers of encryption and verification
 
