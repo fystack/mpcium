@@ -512,7 +512,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		var msg types.ResharingMessage
 		if err := json.Unmarshal(natMsg.Data, &msg); err != nil {
 			logger.Error("Failed to unmarshal resharing message", err)
-			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to unmarshal resharing message")
+			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to unmarshal resharing message", natMsg)
 			return
 		}
 
@@ -523,13 +523,14 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				msg.NewThreshold,
 				errors.New("validation: session ID is empty"),
 				"Session ID is empty",
+				natMsg,
 			)
 			return
 		}
 
 		if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 			logger.Error("Failed to verify initiator message", err)
-			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to verify initiator message")
+			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to verify initiator message", natMsg)
 			return
 		}
 
@@ -539,7 +540,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		sessionType, err := sessionTypeFromKeyType(keyType)
 		if err != nil {
 			logger.Error("Failed to get session type", err)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to get session type")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to get session type", natMsg)
 			return
 		}
 
@@ -558,13 +559,13 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		oldSession, err := createSession(false)
 		if err != nil {
 			logger.Error("Failed to create old reshare session", err, "walletID", walletID)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create old reshare session")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create old reshare session", natMsg)
 			return
 		}
 		newSession, err := createSession(true)
 		if err != nil {
 			logger.Error("Failed to create new reshare session", err, "walletID", walletID)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create new reshare session")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create new reshare session", natMsg)
 			return
 		}
 
@@ -600,7 +601,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					case err := <-oldSession.ErrChan():
 						logger.Error("Old reshare session error", err)
-						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Old reshare session error")
+						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Old reshare session error", natMsg)
 						doneOld() // Cancel the context to stop this session
 						return
 					}
@@ -624,7 +625,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					case err := <-newSession.ErrChan():
 						logger.Error("New reshare session error", err)
-						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "New reshare session error")
+						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "New reshare session error", natMsg)
 						doneNew() // Cancel the context to stop this session
 						return
 					}
@@ -640,7 +641,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			successBytes, err := json.Marshal(successEvent)
 			if err != nil {
 				logger.Error("Failed to marshal reshare success event", err)
-				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to marshal reshare success event")
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to marshal reshare success event", natMsg)
 				return
 			}
 
@@ -649,11 +650,11 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				key,
 				successBytes,
 				&messaging.EnqueueOptions{
-					IdempotententKey: key,
+					IdempotententKey: composeReshareIdempotentKey(msg.SessionID, natMsg),
 				})
 			if err != nil {
 				logger.Error("Failed to publish reshare success message", err)
-				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to publish reshare success message")
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to publish reshare success message", natMsg)
 				return
 			}
 			logger.Info("[COMPLETED RESHARE] Successfully published", "walletID", walletID)
@@ -673,6 +674,7 @@ func (ec *eventConsumer) handleReshareSessionError(
 	newThreshold int,
 	err error,
 	contextMsg string,
+	natMsg *nats.Msg,
 ) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
@@ -705,7 +707,7 @@ func (ec *eventConsumer) handleReshareSessionError(
 
 	key := fmt.Sprintf(mpc.TypeReshareWalletResultFmt, walletID)
 	err = ec.reshareResultQueue.Enqueue(key, reshareResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: key,
+		IdempotententKey: composeReshareIdempotentKey(walletID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue reshare result event", err,
@@ -802,24 +804,26 @@ func sessionTypeFromKeyType(keyType types.KeyType) (mpc.SessionType, error) {
 	}
 }
 
-func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
+// composeIdempotentKey creates an idempotent key for different MPC operation types
+func composeIdempotentKey(baseID string, natMsg *nats.Msg, formatTemplate string) string {
 	var uniqueKey string
 	sid := natMsg.Header.Get("SessionID")
 	if sid != "" {
-		uniqueKey = fmt.Sprintf("%s:%s", walletID, sid)
+		uniqueKey = fmt.Sprintf("%s:%s", baseID, sid)
 	} else {
-		uniqueKey = walletID
+		uniqueKey = baseID
 	}
-	return fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, uniqueKey)
+	return fmt.Sprintf(formatTemplate, uniqueKey)
+}
+
+func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
+	return composeIdempotentKey(walletID, natMsg, mpc.TypeGenerateWalletResultFmt)
 }
 
 func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {
-	var uniqueKey string
-	sid := natMsg.Header.Get("SessionID")
-	if sid != "" {
-		uniqueKey = fmt.Sprintf("%s:%s", txID, sid)
-	} else {
-		uniqueKey = txID
-	}
-	return fmt.Sprintf(mpc.TypeSigningResultFmt, uniqueKey)
+	return composeIdempotentKey(txID, natMsg, mpc.TypeSigningResultFmt)
+}
+
+func composeReshareIdempotentKey(sessionID string, natMsg *nats.Msg) string {
+	return composeIdempotentKey(sessionID, natMsg, mpc.TypeReshareWalletResultFmt)
 }
