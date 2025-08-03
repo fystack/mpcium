@@ -336,6 +336,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 		}
 
 		var session mpc.SigningSession
+		idempotentKey := composeSigningIdempotentKey(msg.TxID, natMsg)
 		switch msg.KeyType {
 		case types.KeyTypeSecp256k1:
 			session, err = ec.node.CreateSigningSession(
@@ -344,6 +345,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 				msg.TxID,
 				msg.NetworkInternalCode,
 				ec.signingResultQueue,
+				idempotentKey,
 			)
 		case types.KeyTypeEd25519:
 			session, err = ec.node.CreateSigningSession(
@@ -352,6 +354,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 				msg.TxID,
 				msg.NetworkInternalCode,
 				ec.signingResultQueue,
+				idempotentKey,
 			)
 
 		}
@@ -477,7 +480,7 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkIntern
 		return
 	}
 	err = ec.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: txID,
+		IdempotententKey: composeSigningIdempotentKey(txID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue signing result event", err,
@@ -808,4 +811,12 @@ func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
 		uniqueKey = walletID
 	}
 	return fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, uniqueKey)
+}
+
+func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {
+	sid := natMsg.Header.Get("SessionID")
+	if sid != "" {
+		return fmt.Sprintf("%s:%s", txID, sid)
+	}
+	return txID
 }
