@@ -814,9 +814,12 @@ func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
 }
 
 func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {
+	var uniqueKey string
 	sid := natMsg.Header.Get("SessionID")
 	if sid != "" {
-		return fmt.Sprintf("%s:%s", txID, sid)
+		uniqueKey = fmt.Sprintf("%s:%s", txID, sid)
+	} else {
+		uniqueKey = txID
 	}
-	return txID
+	return fmt.Sprintf(mpc.TypeSigningResultFmt, uniqueKey)
 }
