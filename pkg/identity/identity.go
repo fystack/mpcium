@@ -37,6 +37,10 @@ type Store interface {
 	VerifyInitiatorMessage(msg types.InitiatorMessage) error
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
+
+
+	SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error)
+	VerifySignature(msg *types.ECDHMessage) error
 }
 
 // fileStore implements the Store interface using the filesystem
@@ -219,6 +223,7 @@ func (s *fileStore) GetPublicKey(nodeID string) ([]byte, error) {
 	return nil, fmt.Errorf("public key not found for node ID: %s", nodeID)
 }
 
+//TODO: EncryptSign each message
 func (s *fileStore) SignMessage(msg *types.TssMessage) ([]byte, error) {
 	// Get deterministic bytes for signing
 	msgBytes, err := msg.MarshalForSigning()
@@ -230,6 +235,7 @@ func (s *fileStore) SignMessage(msg *types.TssMessage) ([]byte, error) {
 	return signature, nil
 }
 
+//TODO: P2p message should be kept secret to the NATs server
 // VerifyMessage verifies a TSS message's signature using the sender's public key
 func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 	if msg.Signature == nil {
@@ -253,6 +259,44 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 
 	// Verify the signature
 	if !ed25519.Verify(publicKey, msgBytes, msg.Signature) {
+		return fmt.Errorf("invalid signature")
+	}
+
+	return nil
+}
+
+//Sign ECDH key exchange message
+func (s *fileStore) SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error) {
+	// Get deterministic bytes for signing
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message for signing: %w", err)
+	}
+
+	signature := ed25519.Sign(s.privateKey, msgBytes)
+	return signature, nil
+}
+
+//Verify ECDH key exchange message
+func (s *fileStore) VerifySignature(msg *types.ECDHMessage) error {
+	if msg.Signature == nil {
+		return fmt.Errorf("ECDH message has no signature")
+	}
+
+	// Get the sender's public key
+	senderPk, err := s.GetPublicKey(msg.From)
+	if err != nil {
+		return fmt.Errorf("failed to get sender's public key: %w", err)
+	}
+
+	// Get deterministic bytes for verification
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return fmt.Errorf("failed to marshal message for verification: %w", err)
+	}
+
+	// Verify the signature
+	if !ed25519.Verify(senderPk, msgBytes, msg.Signature) {
 		return fmt.Errorf("invalid signature")
 	}
 

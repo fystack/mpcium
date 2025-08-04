@@ -88,6 +88,7 @@ func (s *session) PartyCount() int {
 	return len(s.partyIDs)
 }
 
+//TODO: Does AEAD encryption for each message so NATs server learns nothing
 func (s *session) handleTssMessage(keyshare tss.Message) {
 	data, routing, err := keyshare.WireBytes()
 	if err != nil {
@@ -133,6 +134,7 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 	}
 }
 
+//TODO: the logic of receiving message should be modified
 func (s *session) receiveTssMessage(rawMsg []byte) {
 	msg, err := types.UnmarshalTssMessage(rawMsg)
 	if err != nil {

@@ -176,6 +176,10 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	)
 	defer mpcNode.Close()
 
+	
+
+
+
 	eventConsumer := eventconsumer.NewEventConsumer(
 		mpcNode,
 		pubsub,
@@ -219,6 +223,24 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			logger.Error("Failed to close signing consumer", err)
 		}
 	}()
+
+
+
+
+	//Start---negotiate p2p secret symmetric key via DH Key Exchange session
+	dhSession := mpc.NewECDHSession(nodeID, peerNodeIDs, pubsub, directMessaging, identityStore)
+	if err := dhSession.StartKeyExchange(); err != nil {
+		logger.Fatal("Failed to start DH key exchange", err)
+	}
+	if err := dhSession.WaitForCompletion(); err != nil {
+		logger.Fatal("DH key exchange failed", err)
+	}
+	logger.Info("DH key exchange completed successfully")
+	//End---negotiate p2p secret symmetric key via DH Key Exchange session
+
+
+
+	
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
