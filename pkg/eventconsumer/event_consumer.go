@@ -323,6 +323,15 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 
 		// Check for duplicate session and track if new
 		if ec.checkDuplicateSession(msg.WalletID, msg.TxID) {
+			duplicateErr := fmt.Errorf("duplicate signing request detected for walletID=%s txID=%s", msg.WalletID, msg.TxID)
+			ec.handleSigningSessionError(
+				msg.WalletID,
+				msg.TxID,
+				msg.NetworkInternalCode,
+				duplicateErr,
+				"Duplicate session",
+				natMsg,
+			)
 			return
 		}
 

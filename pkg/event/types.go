@@ -137,6 +137,8 @@ func GetErrorCodeFromError(err error) ErrorCode {
 		return ErrorCodeContextCancelled
 	case contains(errStr, "invalid signature from initiator"):
 		return ErrorCodeInvalidInitiatorSignature
+	case contains(errStr, "duplicate"):
+		return ErrorCodeSessionDuplicate
 	default:
 		return ErrorCodeUnknown
 	}
