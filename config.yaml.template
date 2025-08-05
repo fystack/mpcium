@@ -12,3 +12,6 @@ db_path: "."
 backup_enabled: true
 backup_period_seconds: 300 # 5 minutes
 backup_dir: backups
+max_concurrent_keygen: 2
+max_concurrent_signing: 10
+session_warm_up_delay_ms: 100
