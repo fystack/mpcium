@@ -381,9 +381,10 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 
 	var session mpc.SigningSession
 	idempotentKey := composeSigningIdempotentKey(msg.TxID, natMsg)
+	var sessionErr error
 	switch msg.KeyType {
 	case types.KeyTypeSecp256k1:
-		session, err = ec.node.CreateSigningSession(
+		session, sessionErr = ec.node.CreateSigningSession(
 			mpc.SessionTypeECDSA,
 			msg.WalletID,
 			msg.TxID,
@@ -392,7 +393,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			idempotentKey,
 		)
 	case types.KeyTypeEd25519:
-		session, err = ec.node.CreateSigningSession(
+		session, sessionErr = ec.node.CreateSigningSession(
 			mpc.SessionTypeEDDSA,
 			msg.WalletID,
 			msg.TxID,
@@ -401,41 +402,42 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			idempotentKey,
 		)
 
-		if err != nil {
-			if errors.Is(err, mpc.ErrNotEnoughParticipants) {
-				logger.Info(
-					"RETRY LATER: Not enough participants to sign",
-					"walletID", msg.WalletID,
-					"txID", msg.TxID,
-					"nodeID", ec.node.ID(),
-				)
-				//Return for retry later
-				return
-			}
-
-			ec.handleSigningSessionError(
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				err,
-				"Failed to create signing session",
-				natMsg,
+	}
+	if sessionErr != nil {
+		if errors.Is(sessionErr, mpc.ErrNotEnoughParticipants) {
+			logger.Info(
+				"RETRY LATER: Not enough participants to sign",
+				"walletID", msg.WalletID,
+				"txID", msg.TxID,
+				"nodeID", ec.node.ID(),
 			)
+			//Return for retry later
 			return
 		}
 
-		txBigInt := new(big.Int).SetBytes(msg.Tx)
-		err = session.Init(txBigInt)
-		if err != nil {
-			ec.handleSigningSessionError(
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				err,
-				"Failed to init signing session",
-				natMsg,
-			)
-		}
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			sessionErr,
+			"Failed to create signing session",
+			natMsg,
+		)
+		return
+	}
+
+	txBigInt := new(big.Int).SetBytes(msg.Tx)
+	err = session.Init(txBigInt)
+	if err != nil {
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to init signing session",
+			natMsg,
+		)
+		return
 	}
 
 	// Mark session as already processed
