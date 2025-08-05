@@ -27,7 +27,7 @@ const (
 
 	DefaultConcurrentKeygen   = 2
 	DefaultConcurrentSigning  = 20
-	DefaultSessionWarmUpDelay = 50
+	DefaultSessionWarmUpDelay = 200
 
 	KeyGenTimeOut = 30 * time.Second
 )
@@ -118,7 +118,7 @@ func NewEventConsumer(
 	}
 
 	go ec.startKeyGenEventWorker()
-	go ec.startSigningEventWorker() // Add signing worker
+	go ec.startSigningEventWorker()
 	// Start background cleanup goroutine
 	go ec.sessionCleanupRoutine()
 
@@ -402,6 +402,17 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		)
 
 		if err != nil {
+			if errors.Is(err, mpc.ErrNotEnoughParticipants) {
+				logger.Info(
+					"RETRY LATER: Not enough participants to sign",
+					"walletID", msg.WalletID,
+					"txID", msg.TxID,
+					"nodeID", ec.node.ID(),
+				)
+				//Return for retry later
+				return
+			}
+
 			ec.handleSigningSessionError(
 				msg.WalletID,
 				msg.TxID,
