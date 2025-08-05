@@ -415,6 +415,16 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			return
 		}
 
+		if errors.Is(sessionErr, mpc.ErrNotInParticipantList) {
+			logger.Info("Node is not in participant list for this wallet, skipping signing",
+				"walletID", msg.WalletID,
+				"txID", msg.TxID,
+				"nodeID", ec.node.ID(),
+			)
+			// Skip signing instead of treating as error
+			return
+		}
+
 		ec.handleSigningSessionError(
 			msg.WalletID,
 			msg.TxID,
