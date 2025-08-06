@@ -4,8 +4,10 @@ consul:
 db_path: ./test_db
 environment: development
 event_initiator_pubkey: "{{.EventInitiatorPubkey}}"
-max_concurrent_keygen: 1
 mpc_threshold: 1
 mpcium_version: 1.0.0
 nats:
   url: nats://localhost:4223 
+max_concurrent_keygen: 1
+max_concurrent_signing: 10
+session_warm_up_delay_ms: 500

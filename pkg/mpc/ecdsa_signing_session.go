@@ -52,6 +52,7 @@ func newECDSASigningSession(
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
+	idempotentKey string,
 ) *ecdsaSigningSession {
 	return &ecdsaSigningSession{
 		session: session{
@@ -81,6 +82,7 @@ func newECDSASigningSession(
 			getRoundFunc:  GetEcdsaMsgRound,
 			resultQueue:   resultQueue,
 			identityStore: identityStore,
+			idempotentKey: idempotentKey,
 		},
 		endCh:               make(chan *common.SignatureData),
 		txID:                txID,
@@ -178,7 +180,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 			}
 
 			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
-				IdempotententKey: s.txID,
+				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {
 				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
