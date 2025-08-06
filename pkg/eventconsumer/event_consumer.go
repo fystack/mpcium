@@ -25,8 +25,9 @@ const (
 	MPCSignEvent     = "mpc:sign"
 	MPCReshareEvent  = "mpc:reshare"
 
-	DefaultConcurrentKeygen    = 2
-	DefaultSessionStartupDelay = 500
+	DefaultConcurrentKeygen   = 2
+	DefaultConcurrentSigning  = 20
+	DefaultSessionWarmUpDelay = 200
 
 	KeyGenTimeOut = 30 * time.Second
 )
@@ -50,8 +51,11 @@ type eventConsumer struct {
 	reshareSub       messaging.Subscription
 	identityStore    identity.Store
 
-	msgBuffer           chan *nats.Msg
-	maxConcurrentKeygen int
+	keygenMsgBuffer      chan *nats.Msg
+	signingMsgBuffer     chan *nats.Msg
+	maxConcurrentKeygen  int
+	maxConcurrentSigning int
+	sessionWarmUpDelayMs int
 
 	// Track active sessions with timestamps for cleanup
 	activeSessions  map[string]time.Time // Maps "walletID-txID" to creation time
@@ -74,23 +78,47 @@ func NewEventConsumer(
 		maxConcurrentKeygen = DefaultConcurrentKeygen
 	}
 
+	maxConcurrentSigning := viper.GetInt("max_concurrent_signing")
+	if maxConcurrentSigning == 0 {
+		maxConcurrentSigning = DefaultConcurrentSigning
+	}
+
+	sessionWarmUpDelayMs := viper.GetInt("session_warm_up_delay_ms")
+	if sessionWarmUpDelayMs == 0 {
+		sessionWarmUpDelayMs = DefaultSessionWarmUpDelay
+	}
+
+	logger.Info(
+		"Initializing event consumer",
+		"max_concurrent_keygen",
+		maxConcurrentKeygen,
+		"max_concurrent_signing",
+		maxConcurrentSigning,
+		"session_warm_up_delay_ms",
+		sessionWarmUpDelayMs,
+	)
+
 	ec := &eventConsumer{
-		node:                node,
-		pubsub:              pubsub,
-		genKeyResultQueue:   genKeyResultQueue,
-		signingResultQueue:  signingResultQueue,
-		reshareResultQueue:  reshareResultQueue,
-		activeSessions:      make(map[string]time.Time),
-		cleanupInterval:     5 * time.Minute,  // Run cleanup every 5 minutes
-		sessionTimeout:      30 * time.Minute, // Consider sessions older than 30 minutes stale
-		cleanupStopChan:     make(chan struct{}),
-		mpcThreshold:        viper.GetInt("mpc_threshold"),
-		maxConcurrentKeygen: maxConcurrentKeygen,
-		identityStore:       identityStore,
-		msgBuffer:           make(chan *nats.Msg, 100),
+		node:                 node,
+		pubsub:               pubsub,
+		genKeyResultQueue:    genKeyResultQueue,
+		signingResultQueue:   signingResultQueue,
+		reshareResultQueue:   reshareResultQueue,
+		activeSessions:       make(map[string]time.Time),
+		cleanupInterval:      5 * time.Minute,  // Run cleanup every 5 minutes
+		sessionTimeout:       30 * time.Minute, // Consider sessions older than 30 minutes stale
+		cleanupStopChan:      make(chan struct{}),
+		mpcThreshold:         viper.GetInt("mpc_threshold"),
+		maxConcurrentKeygen:  maxConcurrentKeygen,
+		maxConcurrentSigning: maxConcurrentSigning,
+		identityStore:        identityStore,
+		keygenMsgBuffer:      make(chan *nats.Msg, 100),
+		signingMsgBuffer:     make(chan *nats.Msg, 200), // Larger buffer for signing
+		sessionWarmUpDelayMs: sessionWarmUpDelayMs,
 	}
 
 	go ec.startKeyGenEventWorker()
+	go ec.startSigningEventWorker()
 	// Start background cleanup goroutine
 	go ec.sessionCleanupRoutine()
 
@@ -114,6 +142,10 @@ func (ec *eventConsumer) Run() {
 	}
 
 	logger.Info("MPC Event consumer started...!")
+}
+
+func (ec *eventConsumer) warmUpSession() {
+	time.Sleep(time.Duration(ec.sessionWarmUpDelayMs) * time.Millisecond)
 }
 
 func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
@@ -187,7 +219,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	eddsaSession.ListenToIncomingMessageAsync()
 
 	// Temporary delay for peer setup
-	time.Sleep(DefaultSessionStartupDelay * time.Millisecond)
+	ec.warmUpSession()
 	go ecdsaSession.GenerateKey(doneEcdsa)
 	go eddsaSession.GenerateKey(doneEddsa)
 
@@ -272,7 +304,7 @@ func (ec *eventConsumer) startKeyGenEventWorker() {
 	// semaphore to limit concurrency
 	semaphore := make(chan struct{}, ec.maxConcurrentKeygen)
 
-	for natMsg := range ec.msgBuffer {
+	for natMsg := range ec.keygenMsgBuffer {
 		semaphore <- struct{}{} // acquire a slot
 		go func(msg *nats.Msg) {
 			defer func() { <-semaphore }() // release the slot when done
@@ -281,9 +313,22 @@ func (ec *eventConsumer) startKeyGenEventWorker() {
 	}
 }
 
+func (ec *eventConsumer) startSigningEventWorker() {
+	// semaphore to limit concurrency
+	semaphore := make(chan struct{}, ec.maxConcurrentSigning)
+
+	for natMsg := range ec.signingMsgBuffer {
+		semaphore <- struct{}{} // acquire a slot
+		go func(msg *nats.Msg) {
+			defer func() { <-semaphore }() // release the slot when done
+			ec.handleSigningEvent(msg)
+		}(natMsg)
+	}
+}
+
 func (ec *eventConsumer) consumeKeyGenerationEvent() error {
 	sub, err := ec.pubsub.Subscribe(MPCGenerateEvent, func(natMsg *nats.Msg) {
-		ec.msgBuffer <- natMsg
+		ec.keygenMsgBuffer <- natMsg
 	})
 
 	ec.keyGenerationSub = sub
@@ -293,150 +338,163 @@ func (ec *eventConsumer) consumeKeyGenerationEvent() error {
 	return nil
 }
 
-func (ec *eventConsumer) consumeTxSigningEvent() error {
-	sub, err := ec.pubsub.Subscribe(MPCSignEvent, func(natMsg *nats.Msg) {
-		raw := natMsg.Data
-		var msg types.SignTxMessage
-		err := json.Unmarshal(raw, &msg)
-		if err != nil {
-			logger.Error("Failed to unmarshal signing message", err)
-			return
-		}
+func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
+	raw := natMsg.Data
+	var msg types.SignTxMessage
+	err := json.Unmarshal(raw, &msg)
+	if err != nil {
+		logger.Error("Failed to unmarshal signing message", err)
+		return
+	}
 
-		err = ec.identityStore.VerifyInitiatorMessage(&msg)
-		if err != nil {
-			logger.Error("Failed to verify initiator message", err)
-			return
-		}
+	err = ec.identityStore.VerifyInitiatorMessage(&msg)
+	if err != nil {
+		logger.Error("Failed to verify initiator message", err)
+		return
+	}
 
-		logger.Info(
-			"Received signing event",
-			"waleltID",
+	logger.Info(
+		"Received signing event",
+		"waleltID",
+		msg.WalletID,
+		"type",
+		msg.KeyType,
+		"tx",
+		msg.TxID,
+		"Id",
+		ec.node.ID(),
+	)
+
+	// Check for duplicate session and track if new
+	if ec.checkDuplicateSession(msg.WalletID, msg.TxID) {
+		duplicateErr := fmt.Errorf("duplicate signing request detected for walletID=%s txID=%s", msg.WalletID, msg.TxID)
+		ec.handleSigningSessionError(
 			msg.WalletID,
-			"type",
-			msg.KeyType,
-			"tx",
 			msg.TxID,
-			"Id",
-			ec.node.ID(),
+			msg.NetworkInternalCode,
+			duplicateErr,
+			"Duplicate session",
+			natMsg,
+		)
+		return
+	}
+
+	var session mpc.SigningSession
+	idempotentKey := composeSigningIdempotentKey(msg.TxID, natMsg)
+	var sessionErr error
+	switch msg.KeyType {
+	case types.KeyTypeSecp256k1:
+		session, sessionErr = ec.node.CreateSigningSession(
+			mpc.SessionTypeECDSA,
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			ec.signingResultQueue,
+			idempotentKey,
+		)
+	case types.KeyTypeEd25519:
+		session, sessionErr = ec.node.CreateSigningSession(
+			mpc.SessionTypeEDDSA,
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			ec.signingResultQueue,
+			idempotentKey,
 		)
 
-		// Check for duplicate session and track if new
-		if ec.checkDuplicateSession(msg.WalletID, msg.TxID) {
-			duplicateErr := fmt.Errorf("duplicate signing request detected for walletID=%s txID=%s", msg.WalletID, msg.TxID)
-			ec.handleSigningSessionError(
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				duplicateErr,
-				"Duplicate session",
-				natMsg,
+	}
+	if sessionErr != nil {
+		if errors.Is(sessionErr, mpc.ErrNotEnoughParticipants) {
+			logger.Info(
+				"RETRY LATER: Not enough participants to sign",
+				"walletID", msg.WalletID,
+				"txID", msg.TxID,
+				"nodeID", ec.node.ID(),
 			)
+			//Return for retry later
 			return
 		}
 
-		var session mpc.SigningSession
-		switch msg.KeyType {
-		case types.KeyTypeSecp256k1:
-			session, err = ec.node.CreateSigningSession(
-				mpc.SessionTypeECDSA,
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				ec.signingResultQueue,
+		if errors.Is(sessionErr, mpc.ErrNotInParticipantList) {
+			logger.Info("Node is not in participant list for this wallet, skipping signing",
+				"walletID", msg.WalletID,
+				"txID", msg.TxID,
+				"nodeID", ec.node.ID(),
 			)
-		case types.KeyTypeEd25519:
-			session, err = ec.node.CreateSigningSession(
-				mpc.SessionTypeEDDSA,
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				ec.signingResultQueue,
-			)
-
-		}
-		if err != nil {
-			// Check if the error is due to node not being in participant list
-			if errors.Is(err, mpc.ErrNotInParticipantList) {
-				logger.Info("Node is not in participant list for this wallet, skipping signing",
-					"walletID", msg.WalletID,
-					"txID", msg.TxID,
-					"nodeID", ec.node.ID(),
-				)
-				return // Skip signing instead of treating as error
-			}
-
-			logger.Error("Failed to create signing session", err)
-			ec.handleSigningSessionError(
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				err,
-				"Failed to create signing session",
-				natMsg,
-			)
+			// Skip signing instead of treating as error
 			return
 		}
 
-		txBigInt := new(big.Int).SetBytes(msg.Tx)
-		err = session.Init(txBigInt)
-		if err != nil {
-			if errors.Is(err, mpc.ErrNotEnoughParticipants) {
-				logger.Info("RETRY LATER: Not enough participants to sign")
-				//Return for retry later
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			sessionErr,
+			"Failed to create signing session",
+			natMsg,
+		)
+		return
+	}
+
+	txBigInt := new(big.Int).SetBytes(msg.Tx)
+	err = session.Init(txBigInt)
+	if err != nil {
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to init signing session",
+			natMsg,
+		)
+		return
+	}
+
+	// Mark session as already processed
+	ec.addSession(msg.WalletID, msg.TxID)
+
+	ctx, done := context.WithCancel(context.Background())
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-			ec.handleSigningSessionError(
-				msg.WalletID,
-				msg.TxID,
-				msg.NetworkInternalCode,
-				err,
-				"Failed to init signing session",
-				natMsg,
-			)
-			return
-		}
-
-		// Mark session as already processed
-		ec.addSession(msg.WalletID, msg.TxID)
-
-		ctx, done := context.WithCancel(context.Background())
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
+			case err := <-session.ErrChan():
+				if err != nil {
+					ec.handleSigningSessionError(
+						msg.WalletID,
+						msg.TxID,
+						msg.NetworkInternalCode,
+						err,
+						"Failed to sign tx",
+						natMsg,
+					)
 					return
-				case err := <-session.ErrChan():
-					if err != nil {
-						ec.handleSigningSessionError(
-							msg.WalletID,
-							msg.TxID,
-							msg.NetworkInternalCode,
-							err,
-							"Failed to sign tx",
-							natMsg,
-						)
-						return
-					}
 				}
 			}
-		}()
-
-		session.ListenToIncomingMessageAsync()
-		// TODO: use consul distributed lock here, only sign after all nodes has already completed listing to incoming message async
-		// The purpose of the sleep is to be ensuring that the node has properly set up its message listeners
-		// before it starts the signing process. If the signing process starts sending messages before other nodes
-		// have set up their listeners, those messages might be missed, potentially causing the signing process to fail.
-		// One solution:
-		// The messaging includes mechanisms for direct point-to-point communication (in point2point.go).
-		// The nodes could explicitly coordinate through request-response patterns before starting signing
-		time.Sleep(DefaultSessionStartupDelay * time.Millisecond)
-
-		onSuccess := func(data []byte) {
-			done()
-			ec.sendReplyToRemoveMsg(natMsg)
 		}
-		go session.Sign(onSuccess)
+	}()
+
+	session.ListenToIncomingMessageAsync()
+	// TODO: use consul distributed lock here, only sign after all nodes has already completed listing to incoming message async
+	// The purpose of the sleep is to be ensuring that the node has properly set up its message listeners
+	// before it starts the signing process. If the signing process starts sending messages before other nodes
+	// have set up their listeners, those messages might be missed, potentially causing the signing process to fail.
+	// One solution:
+	// The messaging includes mechanisms for direct point-to-point communication (in point2point.go).
+	// The nodes could explicitly coordinate through request-response patterns before starting signing
+	ec.warmUpSession()
+
+	onSuccess := func(data []byte) {
+		done()
+		ec.sendReplyToRemoveMsg(natMsg)
+	}
+	go session.Sign(onSuccess)
+}
+
+func (ec *eventConsumer) consumeTxSigningEvent() error {
+	sub, err := ec.pubsub.Subscribe(MPCSignEvent, func(natMsg *nats.Msg) {
+		ec.signingMsgBuffer <- natMsg // Send to worker instead of processing directly
 	})
 
 	ec.signingSub = sub
@@ -477,7 +535,7 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkIntern
 		return
 	}
 	err = ec.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: txID,
+		IdempotententKey: composeSigningIdempotentKey(txID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue signing result event", err,
@@ -509,7 +567,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		var msg types.ResharingMessage
 		if err := json.Unmarshal(natMsg.Data, &msg); err != nil {
 			logger.Error("Failed to unmarshal resharing message", err)
-			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to unmarshal resharing message")
+			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to unmarshal resharing message", natMsg)
 			return
 		}
 
@@ -520,13 +578,14 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				msg.NewThreshold,
 				errors.New("validation: session ID is empty"),
 				"Session ID is empty",
+				natMsg,
 			)
 			return
 		}
 
 		if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 			logger.Error("Failed to verify initiator message", err)
-			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to verify initiator message")
+			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to verify initiator message", natMsg)
 			return
 		}
 
@@ -536,7 +595,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		sessionType, err := sessionTypeFromKeyType(keyType)
 		if err != nil {
 			logger.Error("Failed to get session type", err)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to get session type")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to get session type", natMsg)
 			return
 		}
 
@@ -555,13 +614,13 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		oldSession, err := createSession(false)
 		if err != nil {
 			logger.Error("Failed to create old reshare session", err, "walletID", walletID)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create old reshare session")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create old reshare session", natMsg)
 			return
 		}
 		newSession, err := createSession(true)
 		if err != nil {
 			logger.Error("Failed to create new reshare session", err, "walletID", walletID)
-			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create new reshare session")
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to create new reshare session", natMsg)
 			return
 		}
 
@@ -580,7 +639,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		var wg sync.WaitGroup
 		ctx := context.Background()
 
-		time.Sleep(DefaultSessionStartupDelay * time.Millisecond)
+		ec.warmUpSession()
 
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
@@ -597,7 +656,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					case err := <-oldSession.ErrChan():
 						logger.Error("Old reshare session error", err)
-						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Old reshare session error")
+						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Old reshare session error", natMsg)
 						doneOld() // Cancel the context to stop this session
 						return
 					}
@@ -621,7 +680,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					case err := <-newSession.ErrChan():
 						logger.Error("New reshare session error", err)
-						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "New reshare session error")
+						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "New reshare session error", natMsg)
 						doneNew() // Cancel the context to stop this session
 						return
 					}
@@ -637,7 +696,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			successBytes, err := json.Marshal(successEvent)
 			if err != nil {
 				logger.Error("Failed to marshal reshare success event", err)
-				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to marshal reshare success event")
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to marshal reshare success event", natMsg)
 				return
 			}
 
@@ -646,11 +705,11 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				key,
 				successBytes,
 				&messaging.EnqueueOptions{
-					IdempotententKey: key,
+					IdempotententKey: composeReshareIdempotentKey(msg.SessionID, natMsg),
 				})
 			if err != nil {
 				logger.Error("Failed to publish reshare success message", err)
-				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to publish reshare success message")
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to publish reshare success message", natMsg)
 				return
 			}
 			logger.Info("[COMPLETED RESHARE] Successfully published", "walletID", walletID)
@@ -670,6 +729,7 @@ func (ec *eventConsumer) handleReshareSessionError(
 	newThreshold int,
 	err error,
 	contextMsg string,
+	natMsg *nats.Msg,
 ) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
@@ -702,7 +762,7 @@ func (ec *eventConsumer) handleReshareSessionError(
 
 	key := fmt.Sprintf(mpc.TypeReshareWalletResultFmt, walletID)
 	err = ec.reshareResultQueue.Enqueue(key, reshareResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: key,
+		IdempotententKey: composeReshareIdempotentKey(walletID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue reshare result event", err,
@@ -771,6 +831,10 @@ func (ec *eventConsumer) Close() error {
 	// Signal cleanup routine to stop
 	close(ec.cleanupStopChan)
 
+	// Close message buffers to stop workers
+	close(ec.keygenMsgBuffer)
+	close(ec.signingMsgBuffer)
+
 	err := ec.keyGenerationSub.Unsubscribe()
 	if err != nil {
 		return err
@@ -799,13 +863,26 @@ func sessionTypeFromKeyType(keyType types.KeyType) (mpc.SessionType, error) {
 	}
 }
 
-func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
+// composeIdempotentKey creates an idempotent key for different MPC operation types
+func composeIdempotentKey(baseID string, natMsg *nats.Msg, formatTemplate string) string {
 	var uniqueKey string
 	sid := natMsg.Header.Get("SessionID")
 	if sid != "" {
-		uniqueKey = fmt.Sprintf("%s:%s", walletID, sid)
+		uniqueKey = fmt.Sprintf("%s:%s", baseID, sid)
 	} else {
-		uniqueKey = walletID
+		uniqueKey = baseID
 	}
-	return fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, uniqueKey)
+	return fmt.Sprintf(formatTemplate, uniqueKey)
+}
+
+func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
+	return composeIdempotentKey(walletID, natMsg, mpc.TypeGenerateWalletResultFmt)
+}
+
+func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {
+	return composeIdempotentKey(txID, natMsg, mpc.TypeSigningResultFmt)
+}
+
+func composeReshareIdempotentKey(sessionID string, natMsg *nats.Msg) string {
+	return composeIdempotentKey(sessionID, natMsg, mpc.TypeReshareWalletResultFmt)
 }

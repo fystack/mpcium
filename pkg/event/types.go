@@ -115,7 +115,7 @@ func GetErrorCodeFromError(err error) ErrorCode {
 		return ErrorCodeInsufficientParticipants
 	case contains(errStr, "incompatible"):
 		return ErrorCodeIncompatiblePeerIDs
-	case contains(errStr, "key not found", "no such key"):
+	case contains(errStr, "not found", "no such key"):
 		return ErrorCodeKeyNotFound
 	case contains(errStr, "exists"):
 		return ErrorCodeKeyAlreadyExists

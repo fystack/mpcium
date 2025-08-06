@@ -23,6 +23,7 @@ type SessionType string
 const (
 	TypeGenerateWalletResultFmt = "mpc.mpc_keygen_result.%s"
 	TypeReshareWalletResultFmt  = "mpc.mpc_reshare_result.%s"
+	TypeSigningResultFmt        = "mpc.mpc_signing_result.%s"
 
 	SessionTypeECDSA SessionType = "session_ecdsa"
 	SessionTypeEDDSA SessionType = "session_eddsa"
@@ -75,8 +76,9 @@ type session struct {
 	getRoundFunc  GetRoundFunc
 	mu            sync.Mutex
 	// After the session is done, the key will be stored pubkeyBytes
-	pubkeyBytes []byte
-	sessionType SessionType
+	pubkeyBytes   []byte
+	sessionType   SessionType
+	idempotentKey string
 }
 
 func (s *session) PartyID() *tss.PartyID {

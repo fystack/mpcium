@@ -13,3 +13,7 @@ mpc_threshold: 2
 environment: production # Set to production for production environment
 backup_enabled: true
 backup_period_seconds: 300 # Seconds
+backup_dir: backups
+max_concurrent_keygen: 2
+max_concurrent_signing: 10
+session_warm_up_delay_ms: 100

@@ -184,6 +184,7 @@ func (p *Node) CreateSigningSession(
 	txID string,
 	networkInternalCode string,
 	resultQueue messaging.MessageQueue,
+	idempotentKey string,
 ) (SigningSession, error) {
 	version := p.getVersion(sessionType, walletID)
 	keyInfo, err := p.getKeyInfo(sessionType, walletID)
@@ -230,6 +231,7 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			idempotentKey,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -247,6 +249,7 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			idempotentKey,
 		), nil
 	}
 
