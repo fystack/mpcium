@@ -159,7 +159,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
 
-	logger.Info("Node is running", "peerID", nodeID, "name", nodeName)
+	logger.Info("Node is running", "id", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())
@@ -175,10 +175,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		identityStore,
 	)
 	defer mpcNode.Close()
-
-	
-
-
 
 	eventConsumer := eventconsumer.NewEventConsumer(
 		mpcNode,
@@ -207,7 +203,8 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
-	// Setup signal handling to cancel context on termination signals.
+
+	//Setup signal handling to cancel context on termination signals.
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -223,24 +220,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			logger.Error("Failed to close signing consumer", err)
 		}
 	}()
-
-
-
-
-	//Start---negotiate p2p secret symmetric key via DH Key Exchange session
-	dhSession := mpc.NewECDHSession(nodeID, peerNodeIDs, pubsub, directMessaging, identityStore)
-	if err := dhSession.StartKeyExchange(); err != nil {
-		logger.Fatal("Failed to start DH key exchange", err)
-	}
-	if err := dhSession.WaitForCompletion(); err != nil {
-		logger.Fatal("DH key exchange failed", err)
-	}
-	logger.Info("DH key exchange completed successfully")
-	//End---negotiate p2p secret symmetric key via DH Key Exchange session
-
-
-
-	
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
@@ -272,7 +251,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Info("All consumers have finished")
 		close(errChan)
 	}()
-
 	for err := range errChan {
 		if err != nil {
 			logger.Error("Consumer error received", err)
@@ -280,6 +258,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return err
 		}
 	}
+
 	return nil
 }
 

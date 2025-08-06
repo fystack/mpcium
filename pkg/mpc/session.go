@@ -3,6 +3,7 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
@@ -34,7 +35,7 @@ var (
 
 type TopicComposer struct {
 	ComposeBroadcastTopic func() string
-	ComposeDirectTopic    func(nodeID string) string
+	ComposeDirectTopic    func(fromRouteID string, toRouteID string) string
 }
 
 type KeyComposerFn func(id string) string
@@ -45,9 +46,10 @@ type Session interface {
 }
 
 type session struct {
-	walletID           string
-	pubSub             messaging.PubSub
-	direct             messaging.DirectMessaging
+	walletID string
+	pubSub   messaging.PubSub
+	direct   messaging.DirectMessaging
+
 	threshold          int
 	participantPeerIDs []string
 	selfPartyID        *tss.PartyID
@@ -59,11 +61,12 @@ type session struct {
 	version  int
 
 	// preParams is nil for EDDSA session
-	preParams     *keygen.LocalPreParams
-	kvstore       kvstore.KVStore
-	keyinfoStore  keyinfo.Store
-	broadcastSub  messaging.Subscription
-	directSub     messaging.Subscription
+	preParams    *keygen.LocalPreParams
+	kvstore      kvstore.KVStore
+	keyinfoStore keyinfo.Store
+	broadcastSub messaging.Subscription
+	directSubs   []messaging.Subscription
+
 	resultQueue   messaging.MessageQueue
 	identityStore identity.Store
 
@@ -88,7 +91,7 @@ func (s *session) PartyCount() int {
 	return len(s.partyIDs)
 }
 
-//TODO: Does AEAD encryption for each message so NATs server learns nothing
+// update: use AEAD encryption for each message so NATs server learns nothing
 func (s *session) handleTssMessage(keyshare tss.Message) {
 	data, routing, err := keyshare.WireBytes()
 	if err != nil {
@@ -97,56 +100,100 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 	}
 
 	tssMsg := types.NewTssMessage(s.walletID, data, routing.IsBroadcast, routing.From, routing.To)
-	signature, err := s.identityStore.SignMessage(&tssMsg)
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to sign message: %w", err)
-		return
-	}
-	tssMsg.Signature = signature
-	msg, err := types.MarshalTssMessage(&tssMsg)
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
-		return
-	}
+
 	toIDs := make([]string, len(routing.To))
 	for i, id := range routing.To {
 		toIDs[i] = id.String()
 	}
 	logger.Debug(fmt.Sprintf("%s Sending message", s.sessionType), "from", s.selfPartyID.String(), "to", toIDs, "isBroadcast", routing.IsBroadcast)
+
+	//Note: Differentiate broadcast and p2p messages
+
+	//Broadcast message
 	if routing.IsBroadcast && len(routing.To) == 0 {
-		err := s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
+		//attach signature
+		signature, err := s.identityStore.SignMessage(&tssMsg)
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to sign message: %w", err)
+			return
+		}
+		tssMsg.Signature = signature
+		msg, err := types.MarshalTssMessage(&tssMsg)
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+			return
+		}
+
+		err = s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
 		if err != nil {
 			s.ErrCh <- err
 			return
 		}
-	} else {
-		for _, to := range routing.To {
-			nodeID := PartyIDToRoutingDest(to)
-			topic := s.topicComposer.ComposeDirectTopic(nodeID)
-			err := s.direct.Send(topic, msg)
-			if err != nil {
-				logger.Error("Failed to send direct message to", err, "topic", topic)
-				s.ErrCh <- fmt.Errorf("Failed to send direct message to %s", topic)
-			}
-
+	} else { //p2p message
+		//without signature
+		msg, err := types.MarshalTssMessage(&tssMsg)
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+			return
 		}
 
+		fromRouteID := PartyIDToRoutingDest(s.selfPartyID)
+
+		for _, to := range routing.To {
+			toRouteID := PartyIDToRoutingDest(to)
+
+			cipher, err := s.identityStore.EncryptMessage(msg, PartyIDToNodeID(to))
+			if err != nil {
+				logger.Error("AuthEncrypt Error: %w", err)
+			}
+			topic := s.topicComposer.ComposeDirectTopic(fromRouteID, toRouteID)
+			err = s.direct.Send(topic, cipher)
+			if err != nil {
+				logger.Error("Failed to send direct message to", err, "topic", topic)
+				s.ErrCh <- fmt.Errorf("failed to send direct message to %s", topic)
+			}
+		}
 	}
 }
 
-//TODO: the logic of receiving message should be modified
-func (s *session) receiveTssMessage(rawMsg []byte) {
-	msg, err := types.UnmarshalTssMessage(rawMsg)
+func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
+	senderID := extractSenderIdFromDirectTopic(topic)
+
+	plaintext, err := s.identityStore.DecryptMessage(cipher, senderID)
+
 	if err != nil {
-		s.ErrCh <- fmt.Errorf("Failed to unmarshal message: %w", err)
+		s.ErrCh <- fmt.Errorf("failed to decrypt message: %w, tampered message", err)
 		return
 	}
+
+	msg, err := types.UnmarshalTssMessage(plaintext)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		return
+	}
+
+	s.receiveTssMessage(msg)
+}
+
+func (s *session) receiveBroadcastTssMessage(rawMsg []byte) {
+
+	msg, err := types.UnmarshalTssMessage(rawMsg)
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		return
+	}
+
 	err = s.identityStore.VerifyMessage(msg)
 	if err != nil {
 		s.ErrCh <- fmt.Errorf("Failed to verify message: %w, tampered message", err)
 		return
 	}
 
+	s.receiveTssMessage(msg)
+}
+
+// update: the logic of receiving message should be modified
+func (s *session) receiveTssMessage(msg *types.TssMessage) {
 	toIDs := make([]string, len(msg.To))
 	for i, id := range msg.To {
 		toIDs[i] = id.String()
@@ -175,7 +222,6 @@ func (s *session) receiveTssMessage(rawMsg []byte) {
 			logger.Error("Failed to update party", err, "walletID", s.walletID)
 			return
 		}
-
 	}
 }
 
@@ -183,7 +229,7 @@ func (s *session) ListenToIncomingMessageAsync() {
 	go func() {
 		sub, err := s.pubSub.Subscribe(s.topicComposer.ComposeBroadcastTopic(), func(natMsg *nats.Msg) {
 			msg := natMsg.Data
-			s.receiveTssMessage(msg)
+			s.receiveBroadcastTssMessage(msg)
 		})
 
 		if err != nil {
@@ -194,16 +240,23 @@ func (s *session) ListenToIncomingMessageAsync() {
 		s.broadcastSub = sub
 	}()
 
-	nodeID := PartyIDToRoutingDest(s.selfPartyID)
-	targetID := s.topicComposer.ComposeDirectTopic(nodeID)
-	sub, err := s.direct.Listen(targetID, func(msg []byte) {
-		go s.receiveTssMessage(msg) // async for avoid timeout
-	})
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", targetID, err)
-	}
-	s.directSub = sub
+	//subscribe all possible p2p messages from all other potential nodes
+	for _, fromId := range s.partyIDs {
+		if fromId != s.selfPartyID {
+			fromRouteID := PartyIDToRoutingDest(fromId)
+			toRouteID := PartyIDToRoutingDest(s.selfPartyID)
 
+			topic := s.topicComposer.ComposeDirectTopic(fromRouteID, toRouteID)
+			//Note: need to pass send's id into the listening handler
+			sub, err := s.direct.Listen(topic, func(cipher []byte) {
+				go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
+			})
+			if err != nil {
+				s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
+			}
+			s.directSubs = append(s.directSubs, sub)
+		}
+	}
 }
 
 func (s *session) Close() error {
@@ -211,10 +264,14 @@ func (s *session) Close() error {
 	if err != nil {
 		return err
 	}
-	err = s.directSub.Unsubscribe()
-	if err != nil {
-		return err
+
+	for _, sub := range s.directSubs {
+		err = sub.Unsubscribe()
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -266,4 +323,9 @@ func walletIDWithVersion(walletID string, version int) string {
 		return fmt.Sprintf("%s_v%d", walletID, version)
 	}
 	return walletID
+}
+
+// according to current format of a topic, this is how we could extract the node ID of the sender
+func extractSenderIdFromDirectTopic(topic string) string {
+	return strings.Split(topic, ":")[3]
 }

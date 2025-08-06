@@ -51,8 +51,7 @@ func (n *natsPubSub) PublishWithReply(topic, reply string, data []byte, headers 
 }
 
 func (n *natsPubSub) Subscribe(topic string, handler func(msg *nats.Msg)) (Subscription, error) {
-	// TODO: Handle subscription
-	// handle more fields in msg
+	//Handle subscription: handle more fields in msg
 	sub, err := n.natsConn.Subscribe(topic, func(msg *nats.Msg) {
 		handler(msg)
 	})

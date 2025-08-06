@@ -19,7 +19,7 @@ const (
 type PeerRegistry interface {
 	Ready() error
 	ArePeersReady() bool
-	WatchPeersReady()
+	WatchPeersReady(callback func())
 	// Resign is called by the node when it is going to shutdown
 	Resign() error
 	GetReadyPeersCount() int64
@@ -66,7 +66,7 @@ func (r *registry) readyKey(nodeID string) string {
 	return fmt.Sprintf("ready/%s", nodeID)
 }
 
-func (r *registry) registerReadyPairs(peerIDs []string) {
+func (r *registry) registerReadyPairs(peerIDs []string, callback func()) {
 	for _, peerID := range peerIDs {
 		ready, exist := r.readyMap[peerID]
 		if !exist {
@@ -85,6 +85,8 @@ func (r *registry) registerReadyPairs(peerIDs []string) {
 		r.ready = true
 		r.mu.Unlock()
 		logger.Info("ALL PEERS ARE READY! Starting to accept MPC requests")
+
+		time.AfterFunc(10*time.Second, callback)
 	}
 
 }
@@ -107,7 +109,7 @@ func (r *registry) Ready() error {
 	return nil
 }
 
-func (r *registry) WatchPeersReady() {
+func (r *registry) WatchPeersReady(callback func()) {
 	ticker := time.NewTicker(ReadinessCheckPeriod)
 	go r.logReadyStatus()
 	// first tick is executed immediately
@@ -141,7 +143,7 @@ func (r *registry) WatchPeersReady() {
 			}
 
 		}
-		r.registerReadyPairs(newReadyPeerIDs)
+		r.registerReadyPairs(newReadyPeerIDs, callback)
 	}
 
 }
