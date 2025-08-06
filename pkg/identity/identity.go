@@ -309,6 +309,14 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 	return nil
 }
 
+func generateNonce(nonceSize int) ([]byte, error) {
+	nonce := make([]byte, nonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return nonce, nil
+}
+
 // encryptAEAD encrypts plaintext using AES-GCM with authentication.
 func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 	// Create AES cipher block
@@ -318,8 +326,10 @@ func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 	}
 
 	// Generate a random 12-byte nonce (not hardcoded, populated by crypto/rand)
-	nonce := make([]byte, 12)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+	// nonce := make([]byte, 12)
+
+	nonce, err := generateNonce(12)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
@@ -329,7 +339,6 @@ func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Encrypt with no additional data (nil)
 	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
 
 	// Prepend nonce to ciphertext for decryption
