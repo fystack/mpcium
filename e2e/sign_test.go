@@ -150,7 +150,7 @@ func testKeyGenerationForSigning(t *testing.T, suite *E2ETestSuite) {
 	require.NoError(t, err, "Failed to setup keygen result listener")
 
 	// Add a small delay to ensure the result listener is fully set up
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Trigger key generation for all wallets
 	for _, walletID := range walletIDs {
