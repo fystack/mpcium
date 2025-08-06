@@ -317,7 +317,7 @@ func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Generate a random 12-byte nonce
+	// Generate a random 12-byte nonce (not hardcoded, populated by crypto/rand)
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
