@@ -7,7 +7,6 @@ mpc_threshold: 2
 environment: development
 badger_password: "your_badger_password"
 event_initiator_pubkey: "event_initiator_pubkey"
-max_concurrent_keygen: 2
 db_path: "."  
 backup_enabled: true
 backup_period_seconds: 300 # 5 minutes
