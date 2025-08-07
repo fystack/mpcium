@@ -340,8 +340,10 @@ func (p *Node) CreateReshareSession(
 		return nil, fmt.Errorf("not enough peers to create resharing session! expected %d, got %d", oldKeyInfo.Threshold+1, len(readyOldParticipantIDs))
 	}
 
-	if err := p.ensureNodeIsParticipant(oldKeyInfo); err != nil {
-		return nil, err
+	if !isNewPeer {
+		if err := p.ensureNodeIsParticipant(oldKeyInfo); err != nil {
+			return nil, err
+		}
 	}
 
 	// 5. Generate party IDs
