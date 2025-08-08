@@ -137,6 +137,60 @@ The application uses a YAML configuration file (`config.yaml`) with the followin
 
 For full installation and run instructions, see [INSTALLATION.md](./INSTALLATION.md).
 
+## Quick Start
+
+Get up and running with MPCIUM in minutes using our automated setup:
+
+### 1. Generate Node Configurations
+
+```bash
+# Generate all node configurations, identities, and Docker setup
+make gen-configs
+```
+
+This command will:
+
+- Generate 3 MPC nodes with 2-of-3 threshold
+- Create all necessary identity files and configurations
+- Set up Docker Compose files for easy deployment
+
+### 2. Start Development Environment
+
+```bash
+# Start all services (NATS, Consul, and MPC nodes)
+make start-dev
+```
+
+This will launch:
+
+- NATS messaging server
+- Consul for service discovery
+- 3 MPC nodes (node0, node1, node2)
+- Automatic peer registration
+
+### 3. Stop Development Environment
+
+```bash
+# Stop all services
+make stop-dev
+```
+
+### 4. View Logs
+
+```bash
+# View logs from all services
+docker-compose -f ./deployments/dev/docker-compose.yaml logs -f
+
+# View logs from a specific node
+docker-compose -f ./deployments/dev/docker-compose.yaml logs -f mpcium-node0
+```
+
+### 5. Test the Setup
+
+Once all nodes are running, you can test the MPC cluster using the client examples in the `examples/` directory.
+
+**That's it!** Your MPCIUM cluster is now ready for secure wallet generation and signing operations.
+
 ## Preview usage
 
 ### Start nodes

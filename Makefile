@@ -59,3 +59,13 @@ clean:
 
 # Full clean (including E2E artifacts)
 clean-all: clean e2e-clean
+
+gen-configs:
+	chmod +x ./deployments/base/node-configs/setup-nodes.sh
+	./deployments/base/node-configs/setup-nodes.sh
+
+run-dev:
+	docker compose -f ./deployments/dev/docker-compose.yaml up -d
+
+stop-dev:
+	docker compose -f ./deployments/dev/docker-compose.yaml down
