@@ -9,8 +9,8 @@ import (
 )
 
 type DirectMessaging interface {
-	Listen(target string, handler func(data []byte)) (Subscription, error)
-	Send(target string, data []byte) error
+	Listen(topic string, handler func(data []byte)) (Subscription, error)
+	Send(topic string, data []byte) error
 }
 
 type natsDirectMessaging struct {
@@ -23,11 +23,11 @@ func NewNatsDirectMessaging(natsConn *nats.Conn) DirectMessaging {
 	}
 }
 
-func (d *natsDirectMessaging) Send(id string, message []byte) error {
+func (d *natsDirectMessaging) Send(topic string, message []byte) error {
 	var retryCount = 0
 	err := retry.Do(
 		func() error {
-			_, err := d.natsConn.Request(id, message, 3*time.Second)
+			_, err := d.natsConn.Request(topic, message, 3*time.Second)
 			if err != nil {
 				return err
 			}
@@ -44,8 +44,8 @@ func (d *natsDirectMessaging) Send(id string, message []byte) error {
 	return err
 }
 
-func (d *natsDirectMessaging) Listen(id string, handler func(data []byte)) (Subscription, error) {
-	sub, err := d.natsConn.Subscribe(id, func(m *nats.Msg) {
+func (d *natsDirectMessaging) Listen(topic string, handler func(data []byte)) (Subscription, error) {
+	sub, err := d.natsConn.Subscribe(topic, func(m *nats.Msg) {
 		handler(m.Data)
 		if err := m.Respond([]byte("OK")); err != nil {
 			logger.Error("Failed to respond to message", err)

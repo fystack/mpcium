@@ -5,7 +5,7 @@ consul:
 
 mpc_threshold: 2
 environment: development
-badger_password: "your_badger_password"
+badger_password: "F))ysJp?E]ol&I;^"
 event_initiator_pubkey: "event_initiator_pubkey"
 db_path: "."  
 backup_enabled: true

@@ -68,8 +68,8 @@ func NewECDSAReshareSession(
 			ComposeBroadcastTopic: func() string {
 				return fmt.Sprintf("resharing:broadcast:ecdsa:%s", walletID)
 			},
-			ComposeDirectTopic: func(nodeID string) string {
-				return fmt.Sprintf("resharing:direct:ecdsa:%s:%s", nodeID, walletID)
+			ComposeDirectTopic: func(fromRouteID string, toRouteID string) string {
+				return fmt.Sprintf("resharing:direct:ecdsa:%s:%s:%s", fromRouteID, toRouteID, walletID)
 			},
 		},
 		composeKey: func(walletID string) string {

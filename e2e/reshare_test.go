@@ -92,7 +92,7 @@ func testKeyGenerationForResharing(t *testing.T, suite *E2ETestSuite) {
 	require.NoError(t, err, "Failed to setup keygen result listener")
 
 	// Add a small delay to ensure the result listener is fully set up
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Trigger key generation for all wallets
 	for _, walletID := range walletIDs {
@@ -179,7 +179,7 @@ func testResharingAllNodes(t *testing.T, suite *E2ETestSuite) {
 	require.NoError(t, err, "Failed to setup resharing result listener")
 
 	// Wait for listener setup
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Test resharing for both key types
 	for i, walletID := range suite.walletIDs {
@@ -360,7 +360,7 @@ func testSigningAfterResharing(t *testing.T, suite *E2ETestSuite) {
 	require.NoError(t, err, "Failed to setup signing result listener")
 
 	// Wait for listener setup
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// Test messages to sign
 	testMessages := []string{

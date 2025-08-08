@@ -159,7 +159,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
 
-	logger.Info("Node is running", "peerID", nodeID, "name", nodeName)
+	logger.Info("Node is running", "id", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())
@@ -203,7 +203,8 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
-	// Setup signal handling to cancel context on termination signals.
+
+	//Setup signal handling to cancel context on termination signals.
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -250,7 +251,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Info("All consumers have finished")
 		close(errChan)
 	}()
-
 	for err := range errChan {
 		if err != nil {
 			logger.Error("Consumer error received", err)
@@ -258,6 +258,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return err
 		}
 	}
+
 	return nil
 }
 

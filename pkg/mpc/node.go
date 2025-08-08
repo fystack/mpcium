@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
@@ -43,10 +44,15 @@ type Node struct {
 	identityStore  identity.Store
 
 	peerRegistry PeerRegistry
+	dhSession    *ECDHSession
 }
 
 func PartyIDToRoutingDest(partyID *tss.PartyID) string {
 	return string(partyID.KeyInt().Bytes())
+}
+
+func PartyIDToNodeID(partyID *tss.PartyID) string {
+	return strings.Split(string(partyID.KeyInt().Bytes()), ":")[0]
 }
 
 func ComparePartyIDs(x, y *tss.PartyID) bool {
@@ -71,6 +77,12 @@ func NewNode(
 	elapsed := time.Since(start)
 	logger.Info("Starting new node, preparams is generated successfully!", "elapsed", elapsed.Milliseconds())
 
+	//each node initiates the DH key exchange listener at the beginning and invoke message sending when all peers are ready
+	dhSession := NewECDHSession(nodeID, peerIDs, pubSub, identityStore)
+	if err := dhSession.StartKeyExchange(); err != nil {
+		logger.Fatal("Failed to start DH key exchange", err)
+	}
+
 	node := &Node{
 		nodeID:        nodeID,
 		peerIDs:       peerIDs,
@@ -80,10 +92,17 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
+		dhSession:     dhSession,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
-	go peerRegistry.WatchPeersReady()
+	initTasks := func() {
+		if err := dhSession.BroadcastPublicKey(); err != nil {
+			logger.Fatal("DH key broadcast failed", err)
+		}
+	}
+
+	go peerRegistry.WatchPeersReady(initTasks)
 	return node
 }
 

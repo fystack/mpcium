@@ -1,7 +1,10 @@
 package identity
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -37,6 +40,16 @@ type Store interface {
 	VerifyInitiatorMessage(msg types.InitiatorMessage) error
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
+
+	// New ECDH methods
+	SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error)
+	VerifySignature(msg *types.ECDHMessage) error
+
+	SetSymmetricKey(peerID string, key []byte)
+	GetSymmetricKey(peerID string) ([]byte, error)
+
+	EncryptMessage(plaintext []byte, peerID string) ([]byte, error)
+	DecryptMessage(cipher []byte, peerID string) ([]byte, error)
 }
 
 // fileStore implements the Store interface using the filesystem
@@ -51,7 +64,23 @@ type fileStore struct {
 	// Cached private key
 	privateKey      []byte
 	initiatorPubKey []byte
+
+	//Cached ecdh symmetric key
+	symmetricKeys map[string][]byte
 }
+
+// ECDHStore implements the Store interface with ECDH
+// type ECDHStore struct {
+// 	symmetricKeys map[string][]byte
+// 	mu            sync.RWMutex
+// }
+
+// // initializes a new ECDHStore.
+// func NewECDHStore() *ECDHStore {
+// 	return &ECDHStore{
+// 		symmetricKeys: make(map[string][]byte),
+// 	}
+// }
 
 // NewFileStore creates a new identity store
 func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error) {
@@ -97,6 +126,8 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 		publicKeys:      make(map[string][]byte),
 		privateKey:      privateKey,
 		initiatorPubKey: initiatorPubKey,
+
+		symmetricKeys: make(map[string][]byte),
 	}
 
 	// Check that each node in peers.json has an identity file
@@ -207,6 +238,25 @@ func loadPrivateKey(identityDir, nodeName string, decrypt bool) (string, error) 
 	}
 }
 
+// Set SymmetricKey: adds or updates a symmetric key for a given peer ID.
+func (s *fileStore) SetSymmetricKey(peerID string, key []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.symmetricKeys[peerID] = key
+}
+
+// Get SymmetricKey: retrieves a peer node's dh symmetric-key by its ID
+func (s *fileStore) GetSymmetricKey(peerID string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if key, exists := s.symmetricKeys[peerID]; exists {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("SymmetricKey key not found for node ID: %s", peerID)
+}
+
 // GetPublicKey retrieves a node's public key by its ID
 func (s *fileStore) GetPublicKey(nodeID string) ([]byte, error) {
 	s.mu.RLock()
@@ -253,6 +303,126 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 
 	// Verify the signature
 	if !ed25519.Verify(publicKey, msgBytes, msg.Signature) {
+		return fmt.Errorf("invalid signature")
+	}
+
+	return nil
+}
+
+func generateNonce(nonceSize int) ([]byte, error) {
+	nonce := make([]byte, nonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return nonce, nil
+}
+
+// encryptAEAD encrypts plaintext using AES-GCM with authentication.
+func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
+	// Create AES cipher block
+	block, err := aes.NewCipher(symmetricKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	// Generate a random 12-byte nonce (not hardcoded, populated by crypto/rand)
+	// nonce := make([]byte, 12)
+
+	nonce, err := generateNonce(12)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	// Create AES-GCM cipher
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
+
+	// Prepend nonce to ciphertext for decryption
+	return append(nonce, ciphertext...), nil
+}
+
+// decryptAEAD decrypts ciphertext using AES-GCM with authentication.
+func decryptAEAD(symmetricKey []byte, ciphertext []byte) ([]byte, error) {
+	// Create AES cipher block
+	block, err := aes.NewCipher(symmetricKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	// Create AES-GCM cipher
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Extract nonce (first 12 bytes) and ciphertext
+	if len(ciphertext) < 12 {
+		return nil, errors.New("ciphertext too short")
+	}
+	nonce := ciphertext[:12]
+	ciphertext = ciphertext[12:]
+
+	// Decrypt with no additional data (nil)
+	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+func (s *fileStore) EncryptMessage(plaintext []byte, peerID string) ([]byte, error) {
+	key, err := s.GetSymmetricKey(peerID)
+	if err != nil || key == nil {
+		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
+	}
+	return encryptAEAD(key, plaintext)
+}
+
+func (s *fileStore) DecryptMessage(cipher []byte, peerID string) ([]byte, error) {
+	key, err := s.GetSymmetricKey(peerID)
+	if err != nil || key == nil {
+		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
+	}
+	return decryptAEAD(key, cipher)
+}
+
+// Sign ECDH key exchange message
+func (s *fileStore) SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error) {
+	// Get deterministic bytes for signing
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message for signing: %w", err)
+	}
+
+	signature := ed25519.Sign(s.privateKey, msgBytes)
+	return signature, nil
+}
+
+// Verify ECDH key exchange message
+func (s *fileStore) VerifySignature(msg *types.ECDHMessage) error {
+	if msg.Signature == nil {
+		return fmt.Errorf("ECDH message has no signature")
+	}
+
+	// Get the sender's public key
+	senderPk, err := s.GetPublicKey(msg.From)
+	if err != nil {
+		return fmt.Errorf("failed to get sender's public key: %w", err)
+	}
+
+	// Get deterministic bytes for verification
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return fmt.Errorf("failed to marshal message for verification: %w", err)
+	}
+
+	// Verify the signature
+	if !ed25519.Verify(senderPk, msgBytes, msg.Signature) {
 		return fmt.Errorf("invalid signature")
 	}
 
