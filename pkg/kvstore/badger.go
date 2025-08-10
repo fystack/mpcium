@@ -40,8 +40,8 @@ func NewBadgerKVStore(config BadgerConfig) (*BadgerKVStore, error) {
 	opts := badger.DefaultOptions(config.DBPath).
 		WithCompression(options.ZSTD).
 		WithEncryptionKey(config.EncryptionKey).
-		WithIndexCacheSize(128 << 20).
-		WithBlockCacheSize(256 << 20).
+		WithIndexCacheSize(16 << 20).
+		WithBlockCacheSize(32 << 20).
 		WithSyncWrites(true).
 		WithVerifyValueChecksum(true). // validate every value-log entry's checksum on read, surfacing corruption instead of masking it
 		WithCompactL0OnClose(true).    // compacts level-0 SSTables on shutdown, reducing startup work and avoiding stalls on open

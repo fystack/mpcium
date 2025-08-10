@@ -23,7 +23,7 @@ type Identity struct {
 	NodeName  string `json:"node_name"`
 	NodeID    string `json:"node_id"`
 	PublicKey string `json:"public_key"` // Hex-encoded
-	CreatedAt string `djson:"created_at"`
+	CreatedAt string `json:"created_at"`
 }
 
 // requestPassword prompts for password, confirms it, validates strength, and reminds to back it up

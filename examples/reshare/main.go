@@ -49,10 +49,10 @@ func main() {
 
 	resharingMsg := &types.ResharingMessage{
 		SessionID: uuid.NewString(),
-		WalletID:  "bf2cc849-8e55-47e4-ab73-e17fb1eb690c",
-		NodeIDs:   []string{"d926fa75-72c7-4538-9052-4a064a84981d", "7b1090cd-ffe3-46ff-8375-594dd3204169"}, // new peer IDs
+		WalletID:  "506d2d40-483a-49f1-93c8-27dd4fe9740c",
+		NodeIDs:   []string{"c95c340e-5a18-472d-b9b0-5ac68218213a", "ac37e85f-caca-4bee-8a3a-49a0fe35abff"}, // new peer IDs
 
-		NewThreshold: 2, // t+1 <= len(NodeIDs)
+		NewThreshold: 1, // t+1 <= len(NodeIDs)
 		KeyType:      types.KeyTypeEd25519,
 	}
 	err = mpcClient.Resharing(resharingMsg)

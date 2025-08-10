@@ -629,6 +629,9 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			return
 		}
 
+		ctx := context.Background()
+		var wg sync.WaitGroup
+
 		successEvent := &event.ResharingResultEvent{
 			WalletID:     walletID,
 			NewThreshold: msg.NewThreshold,
@@ -652,9 +655,6 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		}
 
 		ec.warmUpSession()
-
-		var wg sync.WaitGroup
-		ctx := context.Background()
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
 			go oldSession.Reshare(doneOld)
@@ -669,14 +669,12 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 					case err := <-oldSession.ErrChan():
 						logger.Error("Old reshare session error", err)
 						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Old reshare session error", natMsg)
-						doneOld() // Cancel the context to stop this session
+						doneOld()
 						return
 					}
 				}
 			}()
 		}
-
-		logger.Info("Start new resharing session", "walletID", walletID)
 
 		if newSession != nil {
 			ctxNew, doneNew := context.WithCancel(ctx)
@@ -692,7 +690,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 					case err := <-newSession.ErrChan():
 						logger.Error("New reshare session error", err)
 						ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "New reshare session error", natMsg)
-						doneNew() // Cancel the context to stop this session
+						doneNew()
 						return
 					}
 				}
@@ -700,7 +698,6 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		}
 
 		wg.Wait()
-
 		logger.Info("Reshare session finished", "walletID", walletID, "pubKey", fmt.Sprintf("%x", successEvent.PubKey))
 
 		if newSession != nil {

@@ -218,7 +218,7 @@ func (s *E2ETestSuite) RegisterPeers(t *testing.T) {
 	// Use mpcium register-peers command instead of manual registration
 	t.Log("Running mpcium-cli register-peers...")
 	nodeDir := filepath.Join(s.testDir, "test_node0")
-	cmd := exec.Command("mpcium-cli", "register-peers")
+	cmd := exec.Command("/home/nan/go/bin/mpcium-cli", "register-peers")
 	cmd.Dir = nodeDir
 	cmd.Env = append(os.Environ(), "MPCIUM_CONFIG=config.yaml")
 
@@ -274,7 +274,7 @@ func (s *E2ETestSuite) StartNodes(t *testing.T) {
 		nodeDir := filepath.Join(s.testDir, nodeName)
 
 		// Start node process
-		cmd := exec.Command("mpcium", "start", "-n", nodeName)
+		cmd := exec.Command("/home/nan/go/bin/mpcium", "start", "-n", nodeName)
 		cmd.Dir = nodeDir
 		cmd.Env = append(os.Environ(), "MPCIUM_CONFIG=config.yaml")
 

@@ -2,7 +2,7 @@
 
 # E2E Test Identity Setup Script
 # This script sets up identities for testing with separate test database paths
-
+export PATH=$PATH:/home/nan/go/bin/
 set -e
 
 # Number of test nodes
