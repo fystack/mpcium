@@ -5,7 +5,7 @@ package types
 import (
 	"encoding/json"
 	"sort"
-    "time"
+	"time"
 
 	"github.com/bnb-chain/tss-lib/v2/tss"
 )
@@ -24,12 +24,10 @@ type TssMessage struct {
 }
 
 type ECDHMessage struct {
-    From      string    `json:"from"`
-    To        string    `json:"to"`
-
-    PublicKey []byte    `json:"public_key"`
-    Timestamp time.Time `json:"timestamp"`
-    Signature []byte    `json:"signature"`
+	From      string    `json:"from"`
+	PublicKey []byte    `json:"public_key"`
+	Timestamp time.Time `json:"timestamp"`
+	Signature []byte    `json:"signature"`
 }
 
 func NewTssMessage(
@@ -120,21 +118,18 @@ func UnmarshalStartMessage(msgBytes []byte) (*StartMessage, error) {
 	return msg, nil
 }
 
-
 // MarshalForSigning returns the deterministic JSON bytes for signing
 func (msg *ECDHMessage) MarshalForSigning() ([]byte, error) {
 	// Create a map with ordered keys
 	signingData := map[string]interface{}{
-		"From":              msg.From,
-		"To":                msg.To,
-		"PublicKey":         msg.PublicKey,
-		"Timestamp":         msg.Timestamp,
+		"From":      msg.From,
+		"PublicKey": msg.PublicKey,
+		"Timestamp": msg.Timestamp,
 	}
 
 	// Use json.Marshal with sorted keys
 	return json.Marshal(signingData)
 }
-
 
 // MarshalForSigning returns the deterministic JSON bytes for signing
 func (msg *TssMessage) MarshalForSigning() ([]byte, error) {

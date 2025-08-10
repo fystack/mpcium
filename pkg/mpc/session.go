@@ -36,13 +36,14 @@ var (
 
 type TopicComposer struct {
 	ComposeBroadcastTopic func() string
-	ComposeDirectTopic    func(fromRouteID string, toRouteID string) string
+	ComposeDirectTopic    func(fromID string, toID string) string
 }
 
 type KeyComposerFn func(id string) string
 
 type Session interface {
 	ListenToIncomingMessageAsync()
+	ListenAsyncWithExtra(extraIDs []string)
 	ErrChan() <-chan error
 }
 
@@ -139,16 +140,14 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 			return
 		}
 
-		fromRouteID := PartyIDToRoutingDest(s.selfPartyID)
-
+		fromID := PartyIDToNodeID(s.selfPartyID)
 		for _, to := range routing.To {
-			toRouteID := PartyIDToRoutingDest(to)
-
-			cipher, err := s.identityStore.EncryptMessage(msg, PartyIDToNodeID(to))
+			toNodeID := PartyIDToNodeID(to)
+			cipher, err := s.identityStore.EncryptMessage(msg, toNodeID)
 			if err != nil {
 				logger.Error("AuthEncrypt Error: %w", err)
 			}
-			topic := s.topicComposer.ComposeDirectTopic(fromRouteID, toRouteID)
+			topic := s.topicComposer.ComposeDirectTopic(fromID, toNodeID)
 			err = s.direct.Send(topic, cipher)
 			if err != nil {
 				logger.Error("Failed to send direct message to", err, "topic", topic)
@@ -161,6 +160,12 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
 	senderID := extractSenderIdFromDirectTopic(topic)
 
+	if senderID == "" {
+		s.ErrCh <- fmt.Errorf("failed to extract senderID from direct topic: the direct topic format is wrong")
+		return
+	}
+
+	// logger.Info("Debug werid crash message", "topic: ", topic)
 	plaintext, err := s.identityStore.DecryptMessage(cipher, senderID)
 
 	if err != nil {
@@ -242,22 +247,35 @@ func (s *session) ListenToIncomingMessageAsync() {
 		s.broadcastSub = sub
 	}()
 
-	//subscribe all possible p2p messages from all other potential nodes
-	for _, fromId := range s.partyIDs {
-		if fromId != s.selfPartyID {
-			fromRouteID := PartyIDToRoutingDest(fromId)
-			toRouteID := PartyIDToRoutingDest(s.selfPartyID)
-
-			topic := s.topicComposer.ComposeDirectTopic(fromRouteID, toRouteID)
-			//Note: need to pass send's id into the listening handler
-			sub, err := s.direct.Listen(topic, func(cipher []byte) {
-				go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
-			})
-			if err != nil {
-				s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
-			}
-			s.directSubs = append(s.directSubs, sub)
+	//subscribe all possible p2p messages from all nodes, due to the nature of tss-lib, this even includes oneself
+	toID := PartyIDToNodeID(s.selfPartyID)
+	for _, fromPartyId := range s.partyIDs {
+		fromID := PartyIDToNodeID(fromPartyId)
+		logger.Info("Check-listening", "id", fromID)
+		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
+		sub, err := s.direct.Listen(topic, func(cipher []byte) {
+			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
+		})
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
 		}
+
+		s.directSubs = append(s.directSubs, sub)
+	}
+}
+
+func (s *session) ListenAsyncWithExtra(extraIDs []string) {
+	//subscribe potential p2p messages from addtional nodes (just for resharing)
+	toID := PartyIDToNodeID(s.selfPartyID)
+	for _, fromId := range extraIDs {
+		topic := s.topicComposer.ComposeDirectTopic(fromId, toID)
+		sub, err := s.direct.Listen(topic, func(cipher []byte) {
+			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
+		})
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
+		}
+		s.directSubs = append(s.directSubs, sub)
 	}
 }
 
@@ -327,7 +345,13 @@ func walletIDWithVersion(walletID string, version int) string {
 	return walletID
 }
 
-// according to current format of a topic, this is how we could extract the node ID of the sender
 func extractSenderIdFromDirectTopic(topic string) string {
-	return strings.Split(topic, ":")[3]
+	strs := strings.Split(topic, ":")
+
+	// according to direct topic format, there will be 6 slices, senderId is the 4th one
+	if len(strs) == 6 {
+		return strs[3]
+	}
+
+	return ""
 }

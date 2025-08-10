@@ -1,4 +1,3 @@
-// pkg/mpc/ecdh_session.go
 package mpc
 
 import (
@@ -21,20 +20,19 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-type ECDHSession struct {
-	nodeID  string
-	peerIDs []string
+type ECDHSession interface {
+	StartKeyExchange() error
+	BroadcastPublicKey() error
+}
 
-	pubSub messaging.PubSub
-
-	ecdhSub messaging.Subscription
-
-	identityStore identity.Store
-	symmetricKeys map[string][]byte // peerID -> symmetric key
-
-	privateKey *ecdh.PrivateKey
-	publicKey  *ecdh.PublicKey
-
+type ecdhSession struct {
+	nodeID           string
+	peerIDs          []string
+	pubSub           messaging.PubSub
+	ecdhSub          messaging.Subscription
+	identityStore    identity.Store
+	privateKey       *ecdh.PrivateKey
+	publicKey        *ecdh.PublicKey
 	exchangeComplete chan struct{}
 	errCh            chan error
 }
@@ -44,19 +42,18 @@ func NewECDHSession(
 	peerIDs []string,
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
-) *ECDHSession {
-	return &ECDHSession{
-		nodeID:        nodeID,
-		peerIDs:       peerIDs,
-		pubSub:        pubSub,
-		identityStore: identityStore,
-		// symmetricKeys:    make(map[string][]byte),
+) *ecdhSession {
+	return &ecdhSession{
+		nodeID:           nodeID,
+		peerIDs:          peerIDs,
+		pubSub:           pubSub,
+		identityStore:    identityStore,
 		exchangeComplete: make(chan struct{}),
 		errCh:            make(chan error),
 	}
 }
 
-func (e *ECDHSession) StartKeyExchange() error {
+func (e *ecdhSession) StartKeyExchange() error {
 	// Generate an ephemeral ECDH key pair
 	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
@@ -66,10 +63,14 @@ func (e *ECDHSession) StartKeyExchange() error {
 	e.privateKey = privateKey
 	e.publicKey = privateKey.PublicKey()
 
-	//Subscribe to ECDH messages
-	sub, err := e.pubSub.Subscribe(fmt.Sprintf("ecdh:exchange:%s", e.nodeID), func(natMsg *nats.Msg) {
+	// Subscribe to ECDH broadcast
+	sub, err := e.pubSub.Subscribe("ecdh:exchange", func(natMsg *nats.Msg) {
 		var ecdhMsg types.ECDHMessage
 		if err := json.Unmarshal(natMsg.Data, &ecdhMsg); err != nil {
+			return
+		}
+
+		if ecdhMsg.From == e.nodeID {
 			return
 		}
 
@@ -97,12 +98,12 @@ func (e *ECDHSession) StartKeyExchange() error {
 		symmetricKey := e.deriveSymmetricKey(sharedSecret, ecdhMsg.From)
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
 
-		//Check if exchange is complete
-		// if len(e.identityStore.symmetricKeys) == len(e.peerIDs)-1 {
-		// 	logger.Info("Finished ECDH Key Exchange")
-		// 	close(e.exchangeComplete)
-		// 	return
-		// }
+		requiredKeyCount := len(e.peerIDs)
+
+		if e.identityStore.CheckSymmetricKeyComplete(requiredKeyCount) {
+			logger.Info("Completed ECDH!", "symmetricKeyAmount", requiredKeyCount)
+			logger.Info("PEER IS READY! Starting to accept MPC requests")
+		}
 	})
 	e.ecdhSub = sub
 
@@ -112,60 +113,56 @@ func (e *ECDHSession) StartKeyExchange() error {
 	return nil
 }
 
-func (e *ECDHSession) BroadcastPublicKey() error {
+func (e *ecdhSession) BroadcastPublicKey() error {
 	publicKeyBytes := e.publicKey.Bytes()
-	for _, peerID := range e.peerIDs {
-		if peerID != e.nodeID {
-			msg := types.ECDHMessage{
-				From:      e.nodeID,
-				To:        peerID,
-				PublicKey: publicKeyBytes,
-				Timestamp: time.Now(),
-			}
-			//Sign the message using existing identity store
-			signature, err := e.identityStore.SignEcdhMessage(&msg)
-			if err != nil {
-				return fmt.Errorf("failed to sign ECDH message: %w", err)
-			}
-			msg.Signature = signature
-			signedMsgBytes, _ := json.Marshal(msg)
 
-			if err := e.pubSub.Publish(fmt.Sprintf("ecdh:exchange:%s", peerID), signedMsgBytes); err != nil {
-				return fmt.Errorf("failed to send public DH message to %s: %w", peerID, err)
-			}
-		}
+	msg := types.ECDHMessage{
+		From:      e.nodeID,
+		PublicKey: publicKeyBytes,
+		Timestamp: time.Now(),
 	}
+	//Sign the message using existing identity store
+	signature, err := e.identityStore.SignEcdhMessage(&msg)
+	if err != nil {
+		return fmt.Errorf("failed to sign ECDH message: %w", err)
+	}
+	msg.Signature = signature
+	signedMsgBytes, _ := json.Marshal(msg)
+
+	logger.Info("Starting to broadcast DH key")
+
+	if err := e.pubSub.Publish("ecdh:exchange", signedMsgBytes); err != nil {
+		return fmt.Errorf("%s failed to publish DH message because %w", e.nodeID, err)
+	}
+
 	return nil
 }
 
-func (e *ECDHSession) GetSymmetricKey(peerID string) ([]byte, bool) {
-	key, exists := e.symmetricKeys[peerID]
-	return key, exists
+func deriveConsistentInfo(a, b string) []byte {
+	if a < b {
+		return []byte(a + b)
+	}
+	return []byte(b + a)
 }
 
 // derives a symmetric key from the shared secret and peer ID using HKDF.
-func (e *ECDHSession) deriveSymmetricKey(sharedSecret []byte, peerID string) []byte {
-	// Use SHA256 as the hash function for HKDF
+func (e *ecdhSession) deriveSymmetricKey(sharedSecret []byte, peerID string) []byte {
 	hash := sha256.New
-	// Info parameter can include context-specific data; here we use the peerID
-	var info []byte
-	if e.nodeID < peerID {
-		info = []byte(e.nodeID + peerID)
-	} else {
-		info = []byte(peerID + e.nodeID)
-	}
-	//TODO: Salt can be nil or a random value; here we use nil for simplicity
+
+	// Info parameter can include context-specific data; here we use a pair of party IDs
+	info := deriveConsistentInfo(e.nodeID, peerID)
+
+	// Salt can be nil or a random value; here we use nil
 	var salt []byte
 
-	// Create an HKDF instance
 	hkdf := hkdf.New(hash, sharedSecret, salt, info)
 
 	// Derive a 32-byte symmetric key (suitable for AES-256)
 	symmetricKey := make([]byte, 32)
 	_, err := hkdf.Read(symmetricKey)
 	if err != nil {
-		// In a production environment, handle this error appropriately
-		panic(err) // Simplified for example; replace with proper error handling
+		e.errCh <- err
+		return nil
 	}
 	return symmetricKey
 }

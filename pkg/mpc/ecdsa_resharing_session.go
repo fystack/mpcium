@@ -21,11 +21,13 @@ type ReshareSession interface {
 	Init()
 	Reshare(done func())
 	GetPubKeyResult() []byte
+	GetExtraPeerIDs() []string
 }
 
 type ecdsaReshareSession struct {
 	*session
 	isNewParty    bool
+	oldPeerIDs    []string
 	newPeerIDs    []string
 	reshareParams *tss.ReSharingParameters
 	endCh         chan *keygen.LocalPartySaveData
@@ -50,6 +52,12 @@ func NewECDSAReshareSession(
 	isNewParty bool,
 	version int,
 ) *ecdsaReshareSession {
+
+	realPartyIDs := oldPartyIDs
+	if isNewParty {
+		realPartyIDs = newPartyIDs
+	}
+
 	session := session{
 		walletID:           walletID,
 		pubSub:             pubSub,
@@ -57,7 +65,7 @@ func NewECDSAReshareSession(
 		threshold:          threshold,
 		participantPeerIDs: participantPeerIDs,
 		selfPartyID:        selfID,
-		partyIDs:           newPartyIDs,
+		partyIDs:           realPartyIDs,
 		outCh:              make(chan tss.Message),
 		ErrCh:              make(chan error),
 		preParams:          preParams,
@@ -68,8 +76,8 @@ func NewECDSAReshareSession(
 			ComposeBroadcastTopic: func() string {
 				return fmt.Sprintf("resharing:broadcast:ecdsa:%s", walletID)
 			},
-			ComposeDirectTopic: func(fromRouteID string, toRouteID string) string {
-				return fmt.Sprintf("resharing:direct:ecdsa:%s:%s:%s", fromRouteID, toRouteID, walletID)
+			ComposeDirectTopic: func(fromID string, toID string) string {
+				return fmt.Sprintf("resharing:direct:ecdsa:%s:%s:%s", fromID, toID, walletID)
 			},
 		},
 		composeKey: func(walletID string) string {
@@ -90,17 +98,43 @@ func NewECDSAReshareSession(
 		len(newPartyIDs),
 		newThreshold,
 	)
+
+	var oldPeerIDs []string
+	for _, partyId := range oldPartyIDs {
+		oldPeerIDs = append(oldPeerIDs, PartyIDToNodeID(partyId))
+	}
+
 	return &ecdsaReshareSession{
 		session:       &session,
 		reshareParams: reshareParams,
 		isNewParty:    isNewParty,
+		oldPeerIDs:    oldPeerIDs,
 		newPeerIDs:    newPeerIDs,
 		endCh:         make(chan *keygen.LocalPartySaveData),
 	}
 }
 
+func (s *ecdsaReshareSession) GetExtraPeerIDs() []string {
+	// difference returns elements in A that are not in B.
+	difference := func(A, B []string) []string {
+		seen := make(map[string]bool)
+		for _, b := range B {
+			seen[b] = true
+		}
+		var result []string
+		for _, a := range A {
+			if !seen[a] {
+				result = append(result, a)
+			}
+		}
+		return result
+	}
+
+	return difference(s.oldPeerIDs, s.newPeerIDs)
+}
+
 func (s *ecdsaReshareSession) Init() {
-	logger.Infof("Initializing resharing session with partyID: %s, newPartyIDs %s", s.selfPartyID, s.partyIDs)
+	logger.Infof("Initializing ecdsa resharing session with partyID: %s, newPartyIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 
 	if s.isNewParty {

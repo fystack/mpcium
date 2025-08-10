@@ -72,8 +72,8 @@ func newECDSASigningSession(
 				ComposeBroadcastTopic: func() string {
 					return fmt.Sprintf("sign:ecdsa:broadcast:%s:%s", walletID, txID)
 				},
-				ComposeDirectTopic: func(fromRouteID string, toRouteID string) string {
-					return fmt.Sprintf("sign:ecdsa:direct:%s:%s:%s", fromRouteID, toRouteID, txID)
+				ComposeDirectTopic: func(fromID string, toID string) string {
+					return fmt.Sprintf("sign:ecdsa:direct:%s:%s:%s", fromID, toID, txID)
 				},
 			},
 			composeKey: func(waleltID string) string {

@@ -44,7 +44,7 @@ type Node struct {
 	identityStore  identity.Store
 
 	peerRegistry PeerRegistry
-	dhSession    *ECDHSession
+	dhSession    *ecdhSession
 }
 
 func PartyIDToRoutingDest(partyID *tss.PartyID) string {
@@ -96,13 +96,13 @@ func NewNode(
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
-	initTasks := func() {
+	ecdhTask := func() {
 		if err := dhSession.BroadcastPublicKey(); err != nil {
 			logger.Fatal("DH key broadcast failed", err)
 		}
 	}
 
-	go peerRegistry.WatchPeersReady(initTasks)
+	go peerRegistry.WatchPeersReady(ecdhTask)
 	return node
 }
 

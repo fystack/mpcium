@@ -18,6 +18,7 @@ import (
 type eddsaReshareSession struct {
 	*session
 	isNewParty    bool
+	oldPeerIDs    []string
 	newPeerIDs    []string
 	reshareParams *tss.ReSharingParameters
 	endCh         chan *keygen.LocalPartySaveData
@@ -41,6 +42,12 @@ func NewEDDSAReshareSession(
 	isNewParty bool,
 	version int,
 ) *eddsaReshareSession {
+
+	realPartyIDs := oldPartyIDs
+	if isNewParty {
+		realPartyIDs = newPartyIDs
+	}
+
 	session := session{
 		walletID:           walletID,
 		pubSub:             pubSub,
@@ -49,7 +56,7 @@ func NewEDDSAReshareSession(
 		version:            version,
 		participantPeerIDs: participantPeerIDs,
 		selfPartyID:        selfID,
-		partyIDs:           newPartyIDs,
+		partyIDs:           realPartyIDs,
 		outCh:              make(chan tss.Message),
 		ErrCh:              make(chan error),
 		kvstore:            kvstore,
@@ -58,8 +65,8 @@ func NewEDDSAReshareSession(
 			ComposeBroadcastTopic: func() string {
 				return fmt.Sprintf("reshare:broadcast:eddsa:%s", walletID)
 			},
-			ComposeDirectTopic: func(fromRouteID string, toRouteID string) string {
-				return fmt.Sprintf("reshare:direct:eddsa:%s:%s:%s", fromRouteID, toRouteID, walletID)
+			ComposeDirectTopic: func(fromID string, toID string) string {
+				return fmt.Sprintf("reshare:direct:eddsa:%s:%s:%s", fromID, toID, walletID)
 			},
 		},
 		composeKey: func(walletID string) string {
@@ -82,17 +89,42 @@ func NewEDDSAReshareSession(
 		newThreshold,
 	)
 
+	var oldPeerIDs []string
+	for _, partyId := range oldPartyIDs {
+		oldPeerIDs = append(oldPeerIDs, PartyIDToNodeID(partyId))
+	}
+
 	return &eddsaReshareSession{
 		session:       &session,
 		reshareParams: reshareParams,
 		isNewParty:    isNewParty,
+		oldPeerIDs:    oldPeerIDs,
 		newPeerIDs:    newPeerIDs,
 		endCh:         make(chan *keygen.LocalPartySaveData),
 	}
 }
 
+func (s *eddsaReshareSession) GetExtraPeerIDs() []string {
+	// difference returns elements in A that are not in B.
+	difference := func(A, B []string) []string {
+		seen := make(map[string]bool)
+		for _, b := range B {
+			seen[b] = true
+		}
+		var result []string
+		for _, a := range A {
+			if !seen[a] {
+				result = append(result, a)
+			}
+		}
+		return result
+	}
+
+	return difference(s.oldPeerIDs, s.newPeerIDs)
+}
+
 func (s *eddsaReshareSession) Init() {
-	logger.Infof("Initializing resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
+	logger.Infof("Initializing eddsa resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 	if s.isNewParty {
 		// Initialize empty share data for new party
@@ -105,7 +137,7 @@ func (s *eddsaReshareSession) Init() {
 		}
 	}
 	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
-	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
+	logger.Infof("[INITIALIZED] Initialized eddsa resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.threshold, s.reshareParams.NewThreshold())
 }
 

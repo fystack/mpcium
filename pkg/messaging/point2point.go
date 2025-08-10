@@ -24,8 +24,7 @@ func NewNatsDirectMessaging(natsConn *nats.Conn) DirectMessaging {
 }
 
 func (d *natsDirectMessaging) Send(topic string, message []byte) error {
-	var retryCount = 0
-	err := retry.Do(
+	return retry.Do(
 		func() error {
 			_, err := d.natsConn.Request(topic, message, 3*time.Second)
 			if err != nil {
@@ -37,11 +36,9 @@ func (d *natsDirectMessaging) Send(topic string, message []byte) error {
 		retry.Delay(50*time.Millisecond),
 		retry.DelayType(retry.FixedDelay),
 		retry.OnRetry(func(n uint, err error) {
-			logger.Error("Failed to send direct message message", err, "retryCount", retryCount)
+			logger.Error("Failed to send direct message", err, "attempt", n+1, "topic", topic)
 		}),
 	)
-
-	return err
 }
 
 func (d *natsDirectMessaging) Listen(topic string, handler func(data []byte)) (Subscription, error) {

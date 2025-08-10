@@ -63,8 +63,8 @@ func newEDDSASigningSession(
 				ComposeBroadcastTopic: func() string {
 					return fmt.Sprintf("sign:eddsa:broadcast:%s:%s", walletID, txID)
 				},
-				ComposeDirectTopic: func(fromRouteID string, toRouteID string) string {
-					return fmt.Sprintf("sign:eddsa:direct:%s:%s:%s", fromRouteID, toRouteID, txID)
+				ComposeDirectTopic: func(fromID string, toID string) string {
+					return fmt.Sprintf("sign:eddsa:direct:%s:%s:%s", fromID, toID, txID)
 				},
 			},
 			composeKey: func(waleltID string) string {
@@ -73,7 +73,7 @@ func newEDDSASigningSession(
 			getRoundFunc:  GetEddsaMsgRound,
 			resultQueue:   resultQueue,
 			identityStore: identityStore,
-			idempotentKey:  idempotentKey,
+			idempotentKey: idempotentKey,
 		},
 		endCh:               make(chan *common.SignatureData),
 		txID:                txID,

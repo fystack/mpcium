@@ -221,6 +221,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		}
 	}()
 
+	//TODO: I think it makes more sense to start these consumers only after P2P channel were succesfully built
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
 

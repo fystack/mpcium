@@ -25,6 +25,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+const AES_GCM_Nonce_Size = 12
+const AES_SYMMETRICKEY_Size = 32
+
 // NodeIdentity represents a node's identity information
 type NodeIdentity struct {
 	NodeName  string `json:"node_name"`
@@ -41,12 +44,12 @@ type Store interface {
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
 
-	// New ECDH methods
 	SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error)
 	VerifySignature(msg *types.ECDHMessage) error
 
 	SetSymmetricKey(peerID string, key []byte)
 	GetSymmetricKey(peerID string) ([]byte, error)
+	CheckSymmetricKeyComplete(desired int) bool
 
 	EncryptMessage(plaintext []byte, peerID string) ([]byte, error)
 	DecryptMessage(cipher []byte, peerID string) ([]byte, error)
@@ -68,19 +71,6 @@ type fileStore struct {
 	//Cached ecdh symmetric key
 	symmetricKeys map[string][]byte
 }
-
-// ECDHStore implements the Store interface with ECDH
-// type ECDHStore struct {
-// 	symmetricKeys map[string][]byte
-// 	mu            sync.RWMutex
-// }
-
-// // initializes a new ECDHStore.
-// func NewECDHStore() *ECDHStore {
-// 	return &ECDHStore{
-// 		symmetricKeys: make(map[string][]byte),
-// 	}
-// }
 
 // NewFileStore creates a new identity store
 func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error) {
@@ -120,14 +110,26 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 		return nil, fmt.Errorf("failed to parse peers.json: %w", err)
 	}
 
+	mNodeId, exists := peers[nodeName]
+	if !exists {
+		return nil, fmt.Errorf("cannot find nodeID in peers.json for", nodeName)
+	}
+
+	initSymmetricKeys := make(map[string][]byte)
+	// Generate a random 32-byte symmetric key (suitable for AES-256)
+	tmpKey, err := generateRandom(AES_SYMMETRICKEY_Size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random symmetric key:", err)
+	}
+	initSymmetricKeys[mNodeId] = tmpKey
+
 	store := &fileStore{
 		identityDir:     identityDir,
 		currentNodeName: nodeName,
 		publicKeys:      make(map[string][]byte),
 		privateKey:      privateKey,
 		initiatorPubKey: initiatorPubKey,
-
-		symmetricKeys: make(map[string][]byte),
+		symmetricKeys:   initSymmetricKeys,
 	}
 
 	// Check that each node in peers.json has an identity file
@@ -257,6 +259,10 @@ func (s *fileStore) GetSymmetricKey(peerID string) ([]byte, error) {
 	return nil, fmt.Errorf("SymmetricKey key not found for node ID: %s", peerID)
 }
 
+func (s *fileStore) CheckSymmetricKeyComplete(desired int) bool {
+	return len(s.symmetricKeys) == desired
+}
+
 // GetPublicKey retrieves a node's public key by its ID
 func (s *fileStore) GetPublicKey(nodeID string) ([]byte, error) {
 	s.mu.RLock()
@@ -309,7 +315,7 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 	return nil
 }
 
-func generateNonce(nonceSize int) ([]byte, error) {
+func generateRandom(nonceSize int) ([]byte, error) {
 	nonce := make([]byte, nonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
@@ -325,15 +331,11 @@ func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Generate a random 12-byte nonce (not hardcoded, populated by crypto/rand)
-	// nonce := make([]byte, 12)
-
-	nonce, err := generateNonce(12)
+	nonce, err := generateRandom(AES_GCM_Nonce_Size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Create AES-GCM cipher
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
@@ -341,30 +343,26 @@ func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
 
 	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
 
-	// Prepend nonce to ciphertext for decryption
 	return append(nonce, ciphertext...), nil
 }
 
 // decryptAEAD decrypts ciphertext using AES-GCM with authentication.
 func decryptAEAD(symmetricKey []byte, ciphertext []byte) ([]byte, error) {
-	// Create AES cipher block
 	block, err := aes.NewCipher(symmetricKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Create AES-GCM cipher
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Extract nonce (first 12 bytes) and ciphertext
-	if len(ciphertext) < 12 {
+	if len(ciphertext) < AES_GCM_Nonce_Size {
 		return nil, errors.New("ciphertext too short")
 	}
-	nonce := ciphertext[:12]
-	ciphertext = ciphertext[12:]
+	nonce := ciphertext[:AES_GCM_Nonce_Size]
+	ciphertext = ciphertext[AES_GCM_Nonce_Size:]
 
 	// Decrypt with no additional data (nil)
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
@@ -377,17 +375,30 @@ func decryptAEAD(symmetricKey []byte, ciphertext []byte) ([]byte, error) {
 
 func (s *fileStore) EncryptMessage(plaintext []byte, peerID string) ([]byte, error) {
 	key, err := s.GetSymmetricKey(peerID)
-	if err != nil || key == nil {
+	if err != nil {
+		return nil, err
+	}
+
+	if key == nil {
 		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
 	}
+
 	return encryptAEAD(key, plaintext)
 }
 
 func (s *fileStore) DecryptMessage(cipher []byte, peerID string) ([]byte, error) {
 	key, err := s.GetSymmetricKey(peerID)
-	if err != nil || key == nil {
+
+	if err != nil {
+		return nil, err
+	}
+
+	if key == nil {
 		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
 	}
+
+	// logger.Info("check decryption key", "final", key)
+
 	return decryptAEAD(key, cipher)
 }
 
