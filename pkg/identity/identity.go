@@ -112,14 +112,14 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 
 	mNodeId, exists := peers[nodeName]
 	if !exists {
-		return nil, fmt.Errorf("cannot find nodeID in peers.json for", nodeName)
+		return nil, fmt.Errorf("cannot find nodeID %s in peers.json for", nodeName)
 	}
 
 	initSymmetricKeys := make(map[string][]byte)
 	// Generate a random 32-byte symmetric key (suitable for AES-256)
 	tmpKey, err := generateRandom(AES_SYMMETRICKEY_Size)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate random symmetric key:", err)
+		return nil, fmt.Errorf("failed to generate random symmetric key: %w", err)
 	}
 	initSymmetricKeys[mNodeId] = tmpKey
 
