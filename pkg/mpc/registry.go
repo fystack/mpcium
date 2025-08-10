@@ -84,8 +84,6 @@ func (r *registry) registerReadyPairs(peerIDs []string, callback func()) {
 		r.mu.Lock()
 		r.ready = true
 		r.mu.Unlock()
-		logger.Info("ALL PEERS ARE READY! Starting to accept MPC requests")
-
 		time.AfterFunc(5*time.Second, callback)
 	}
 

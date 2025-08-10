@@ -636,15 +636,27 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			ResultType:   event.ResultTypeSuccess,
 		}
 
-		var wg sync.WaitGroup
-		ctx := context.Background()
+		if oldSession != nil {
+			oldSession.Init()
+			logger.Info("Check-listening", "start", "oldSession")
+			oldSession.ListenToIncomingMessageAsync()
+		}
+
+		if newSession != nil {
+			newSession.Init()
+			logger.Info("Check-listening", "start", "newSession")
+			newSession.ListenToIncomingMessageAsync()
+
+			extraOldCommiteePeers := newSession.GetExtraPeerIDs()
+			newSession.ListenAsyncWithExtra(extraOldCommiteePeers)
+		}
 
 		ec.warmUpSession()
 
+		var wg sync.WaitGroup
+		ctx := context.Background()
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
-			oldSession.Init()
-			oldSession.ListenToIncomingMessageAsync()
 			go oldSession.Reshare(doneOld)
 
 			wg.Add(1)
@@ -664,12 +676,11 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			}()
 		}
 
+		logger.Info("Start new resharing session", "walletID", walletID)
+
 		if newSession != nil {
 			ctxNew, doneNew := context.WithCancel(ctx)
-			newSession.Init()
-			newSession.ListenToIncomingMessageAsync()
 			go newSession.Reshare(doneNew)
-
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
