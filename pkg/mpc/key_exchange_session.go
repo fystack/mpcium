@@ -98,7 +98,7 @@ func (e *ecdhSession) StartKeyExchange() error {
 		symmetricKey := e.deriveSymmetricKey(sharedSecret, ecdhMsg.From)
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
 
-		requiredKeyCount := len(e.peerIDs)
+		requiredKeyCount := len(e.peerIDs) - 1
 
 		if e.identityStore.CheckSymmetricKeyComplete(requiredKeyCount) {
 			logger.Info("Completed ECDH!", "symmetricKeyAmount", requiredKeyCount)

@@ -140,18 +140,27 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 			return
 		}
 
-		fromID := PartyIDToNodeID(s.selfPartyID)
+		selfID := PartyIDToNodeID(s.selfPartyID)
 		for _, to := range routing.To {
 			toNodeID := PartyIDToNodeID(to)
-			cipher, err := s.identityStore.EncryptMessage(msg, toNodeID)
-			if err != nil {
-				logger.Error("AuthEncrypt Error: %w", err)
-			}
-			topic := s.topicComposer.ComposeDirectTopic(fromID, toNodeID)
-			err = s.direct.Send(topic, cipher)
-			if err != nil {
-				logger.Error("Failed to send direct message to", err, "topic", topic)
-				s.ErrCh <- fmt.Errorf("failed to send direct message to %s", topic)
+			topic := s.topicComposer.ComposeDirectTopic(selfID, toNodeID)
+			if selfID == toNodeID {
+				logger.Debug("---------Detected toself p2p message---------")
+				err := s.direct.SendToSelf(topic, msg)
+				if err != nil {
+					logger.Error("Failed in SendToSelf direct message", err, "topic", topic)
+					s.ErrCh <- fmt.Errorf("failed to send direct message to %s", topic)
+				}
+			} else {
+				cipher, err := s.identityStore.EncryptMessage(msg, toNodeID)
+				if err != nil {
+					logger.Error("AuthEncrypt Error: %w", err)
+				}
+				err = s.direct.SendToOther(topic, cipher)
+				if err != nil {
+					logger.Error("Failed in SendToOther direct message", err, "topic", topic)
+					s.ErrCh <- fmt.Errorf("failed to send direct message to %s", topic)
+				}
 			}
 		}
 	}
@@ -165,12 +174,17 @@ func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
 		return
 	}
 
-	// logger.Info("Debug werid crash message", "topic: ", topic)
-	plaintext, err := s.identityStore.DecryptMessage(cipher, senderID)
+	var plaintext []byte
+	var err error
 
-	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to decrypt message: %w, tampered message", err)
-		return
+	if senderID == PartyIDToNodeID(s.selfPartyID) {
+		plaintext = cipher // to self, no decryption needed
+	} else {
+		plaintext, err = s.identityStore.DecryptMessage(cipher, senderID)
+		if err != nil {
+			s.ErrCh <- fmt.Errorf("failed to decrypt message: %w, tampered message", err)
+			return
+		}
 	}
 
 	msg, err := types.UnmarshalTssMessage(plaintext)
@@ -247,11 +261,10 @@ func (s *session) ListenToIncomingMessageAsync() {
 		s.broadcastSub = sub
 	}()
 
-	//subscribe all possible p2p messages from all nodes, due to the nature of tss-lib, this even includes oneself
+	//subscribe all possible p2p messages from all nodes, per the design of tss-lib, this includes oneself
 	toID := PartyIDToNodeID(s.selfPartyID)
 	for _, fromPartyId := range s.partyIDs {
 		fromID := PartyIDToNodeID(fromPartyId)
-		logger.Info("Check-listening", "id", fromID)
 		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
 		sub, err := s.direct.Listen(topic, func(cipher []byte) {
 			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout

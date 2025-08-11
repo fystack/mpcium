@@ -1,6 +1,8 @@
 package messaging
 
 import (
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -10,20 +12,41 @@ import (
 
 type DirectMessaging interface {
 	Listen(topic string, handler func(data []byte)) (Subscription, error)
-	Send(topic string, data []byte) error
+	SendToOther(topic string, data []byte) error
+	SendToSelf(topic string, data []byte) error
 }
 
 type natsDirectMessaging struct {
 	natsConn *nats.Conn
+	handlers map[string][]func([]byte)
+	mu       sync.Mutex
 }
 
 func NewNatsDirectMessaging(natsConn *nats.Conn) DirectMessaging {
 	return &natsDirectMessaging{
 		natsConn: natsConn,
+		handlers: make(map[string][]func([]byte)),
 	}
 }
 
-func (d *natsDirectMessaging) Send(topic string, message []byte) error {
+// SendToSelf locally sends a message to the same node, invoking all handlers for the topic, avoiding mediating through the message layer.
+func (d *natsDirectMessaging) SendToSelf(topic string, message []byte) error {
+	d.mu.Lock()
+	handlers, ok := d.handlers[topic]
+	d.mu.Unlock()
+
+	if !ok || len(handlers) == 0 {
+		return fmt.Errorf("no handlers found for topic %s", topic)
+	}
+
+	for _, handler := range handlers {
+		handler(message)
+	}
+
+	return nil
+}
+
+func (d *natsDirectMessaging) SendToOther(topic string, message []byte) error {
 	return retry.Do(
 		func() error {
 			_, err := d.natsConn.Request(topic, message, 3*time.Second)
@@ -51,6 +74,10 @@ func (d *natsDirectMessaging) Listen(topic string, handler func(data []byte)) (S
 	if err != nil {
 		return nil, err
 	}
+
+	d.mu.Lock()
+	d.handlers[topic] = append(d.handlers[topic], handler)
+	d.mu.Unlock()
 
 	return &natsSubscription{subscription: sub}, nil
 }
