@@ -103,22 +103,6 @@ func (sc *keygenConsumer) Run(ctx context.Context) error {
 	return sc.Close()
 }
 
-// The handleSigningEvent function in sign_consumer.go acts as a bridge between the JetStream-based event queue and the MPC (Multi-Party Computation) signing system
-// Creates a reply channel: It generates a unique inbox address using nats.NewInbox() to receive the signing response.
-// Sets up response handling: It creates a synchronous subscription to listen for replies on this inbox.
-// Forwards the signing request: It publishes the original signing event data to the MPCSigningEventTopic with the reply inbox attached, which triggers the MPC signing process.
-// Polls for completion: It enters a polling loop that checks for a reply message, continuing until either:
-// A reply is received (successful signing)
-// An error occurs (failed signing)
-// The timeout is reached (30 seconds)
-// Completes the transaction: It either acknowledges (Ack) the message if signing was successful or negatively acknowledges (Nak) it if there was a timeout or error.
-// MPC Session Interaction
-// The signing consumer doesn't directly interact with MPC sessions. Instead:
-// It publishes the signing request to the MPCSigningEventTopic, which is consumed by the eventconsumer.consumeTxSigningEvent handler.
-// This handler creates the appropriate signing session (SigningSession for ECDSA or EDDSASigningSession for EdDSA) via the MPC node's creation methods.
-// The MPC signing sessions manage the distributed cryptographic operations across multiple nodes, handling message routing, party updates, and signature verification.
-// When signing completes, the session publishes the result to a queue and calls the onSuccess callback, which sends a reply to the inbox that the KeygenConsumer is monitoring.
-// The reply signals completion, allowing the KeygenConsumer to acknowledge the original message.
 func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 
 	if !sc.peerRegistry.ArePeersReady() {
@@ -165,7 +149,7 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 			break
 		}
 		if replyMsg != nil {
-			logger.Info("KeygenConsumer: Completed signing event; reply received")
+			logger.Info("KeygenConsumer: Completed Keygen event; reply received")
 			if ackErr := msg.Ack(); ackErr != nil {
 				logger.Error("KeygenConsumer: ACK failed", ackErr)
 			}
@@ -173,7 +157,7 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		}
 	}
 
-	logger.Warn("KeygenConsumer: Timeout waiting for signing event response")
+	logger.Warn("KeygenConsumer: Timeout waiting for Keygen event response")
 	_ = msg.Nak()
 }
 
