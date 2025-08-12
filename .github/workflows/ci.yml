@@ -100,11 +100,11 @@ jobs:
           echo "Files in current directory:"
           ls -la
           govulncheck -format=sarif ./... > govulncheck-results.sarif
-          
+
           govulncheck -json ./... > vuln.json
           count=$(jq '[.[] | select(.finding != null and .finding.trace != null)] | length' vuln.json || echo 0)
           echo "Found $count vulnerabilities"
-          
+
           if [ "$count" -gt 0 ]; then
             echo "⚠️ Vulnerabilities found by govulncheck (see Security tab for details)"
           else
@@ -259,9 +259,10 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: Scan SBOM with Grype
+      # Keep SBOM generation & artifact upload as-is (no SARIF upload from SBOM)
+      - name: Grype SARIF (directory scan)
         run: |
-          grype sbom.spdx.json -o sarif --file grype-results.sarif
+          grype dir:. -o sarif --file grype-results.sarif
         continue-on-error: true
 
       - name: Upload Grype results to GitHub Security tab

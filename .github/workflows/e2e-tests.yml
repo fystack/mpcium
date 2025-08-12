@@ -6,329 +6,106 @@ on:
   pull_request:
     branches: [master]
 
+env:
+  GO_VERSION: "1.23"
+  CGO_ENABLED: 0
+  DOCKER_BUILDKIT: 1
+  GO_BUILD_FLAGS: -trimpath -ldflags="-s -w"
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  # Build job that creates the binaries needed by all E2E test jobs
   build:
     runs-on: ubuntu-latest
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
 
-      - name: Tidy Go modules
-        run: |
-          go mod tidy
-
-      - name: Generate cache key
-        id: cache-key
+      - id: cache-key
         run: echo "key=${{ runner.os }}-binaries-${{ hashFiles('**/go.sum', '**/*.go') }}" >> $GITHUB_OUTPUT
 
-      - name: Cache binaries
+      - uses: actions/cache@v4
         id: cache-binaries
-        uses: actions/cache@v3
         with:
           path: |
             ./mpcium
             ./mpcium-cli
           key: ${{ steps.cache-key.outputs.key }}
 
-      - name: Cache Go modules
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      - if: steps.cache-binaries.outputs.cache-hit != 'true'
+        run: cd e2e && go mod tidy
 
-      - name: Install dependencies
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
+      - if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          go mod download
-          cd e2e && go mod download
-
-      - name: Build binaries
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        run: |
-          go build -o mpcium ./cmd/mpcium
-          go build -o mpcium-cli ./cmd/mpcium-cli
+          go build ${{ env.GO_BUILD_FLAGS }} -o mpcium ./cmd/mpcium
+          go build ${{ env.GO_BUILD_FLAGS }} -o mpcium-cli ./cmd/mpcium-cli
           chmod +x mpcium mpcium-cli
 
-  # Key Generation E2E Tests
-  e2e-keygen:
+  e2e:
     runs-on: ubuntu-latest
     needs: build
-
+    strategy:
+      matrix:
+        testcase: [TestKeyGeneration, TestSigning, TestResharing]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
 
-      - name: Tidy Go modules
-        run: |
-          go mod tidy
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - run: docker --version && docker compose version
 
-      - name: Verify Docker Compose
-        run: |
-          docker --version
-          docker compose version
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Restore binaries
-        uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: |
             ./mpcium
             ./mpcium-cli
           key: ${{ needs.build.outputs.cache-key }}
 
-      - name: Install binaries
-        run: |
-          sudo mv mpcium /usr/local/bin/
-          sudo mv mpcium-cli /usr/local/bin/
+      - run: sudo mv mpcium /usr/local/bin/ && sudo mv mpcium-cli /usr/local/bin/
 
-      - name: Verify binaries are available
-        run: |
-          which mpcium
-          which mpcium-cli
-          mpcium --version || echo "mpcium binary ready"
-          mpcium-cli --version || echo "mpcium-cli binary ready"
+      - run: which mpcium && which mpcium-cli
 
-      - name: Install E2E dependencies
-        run: |
-          cd e2e && go mod tidy && go mod download
+      - run: cd e2e && go mod tidy
 
-      - name: Run Key Generation E2E tests
+      - name: Run ${{ matrix.testcase }} E2E tests
         run: |
           cd e2e
-          go test -v -timeout=1200s -run TestKeyGeneration
-        env:
-          DOCKER_BUILDKIT: 1
+          go test -v -timeout=1200s -run ${{ matrix.testcase }}
 
-      - name: Cleanup Docker containers
-        if: always()
-        run: |
-          cd e2e
-          docker compose -f docker-compose.test.yaml down -v || true
-          docker system prune -f || true
-
-      - name: Upload keygen test logs
+      - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-keygen-test-logs
+          name: e2e-${{ matrix.testcase }}-test-logs
           path: e2e/logs/
           retention-days: 7
 
-  # Signing E2E Tests
-  e2e-signing:
+  summary:
     runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.23"
-
-      - name: Tidy Go modules
-        run: |
-          go mod tidy
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Verify Docker Compose
-        run: |
-          docker --version
-          docker compose version
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Restore binaries
-        uses: actions/cache@v3
-        with:
-          path: |
-            ./mpcium
-            ./mpcium-cli
-          key: ${{ needs.build.outputs.cache-key }}
-
-      - name: Install binaries
-        run: |
-          sudo mv mpcium /usr/local/bin/
-          sudo mv mpcium-cli /usr/local/bin/
-
-      - name: Verify binaries are available
-        run: |
-          which mpcium
-          which mpcium-cli
-          mpcium --version || echo "mpcium binary ready"
-          mpcium-cli --version || echo "mpcium-cli binary ready"
-
-      - name: Install E2E dependencies
-        run: |
-          cd e2e && go mod tidy && go mod download
-
-      - name: Run Signing E2E tests
-        run: |
-          cd e2e
-          go test -v -timeout=1200s -run TestSigning
-        env:
-          DOCKER_BUILDKIT: 1
-
-      - name: Cleanup Docker containers
-        if: always()
-        run: |
-          cd e2e
-          docker compose -f docker-compose.test.yaml down -v || true
-          docker system prune -f || true
-
-      - name: Upload signing test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-signing-test-logs
-          path: e2e/logs/
-          retention-days: 7
-
-  # Resharing E2E Tests
-  e2e-resharing:
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.23"
-
-      - name: Tidy Go modules
-        run: |
-          go mod tidy
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Verify Docker Compose
-        run: |
-          docker --version
-          docker compose version
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Restore binaries
-        uses: actions/cache@v3
-        with:
-          path: |
-            ./mpcium
-            ./mpcium-cli
-          key: ${{ needs.build.outputs.cache-key }}
-
-      - name: Install binaries
-        run: |
-          sudo mv mpcium /usr/local/bin/
-          sudo mv mpcium-cli /usr/local/bin/
-
-      - name: Verify binaries are available
-        run: |
-          which mpcium
-          which mpcium-cli
-          mpcium --version || echo "mpcium binary ready"
-          mpcium-cli --version || echo "mpcium-cli binary ready"
-
-      - name: Install E2E dependencies
-        run: |
-          cd e2e && go mod tidy && go mod download
-
-      - name: Run Resharing E2E tests
-        run: |
-          cd e2e
-          go test -v -timeout=1200s -run TestResharing
-        env:
-          DOCKER_BUILDKIT: 1
-
-      - name: Cleanup Docker containers
-        if: always()
-        run: |
-          cd e2e
-          docker compose -f docker-compose.test.yaml down -v || true
-          docker system prune -f || true
-
-      - name: Upload resharing test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-resharing-test-logs
-          path: e2e/logs/
-          retention-days: 7
-
-  # Summary job that depends on all E2E tests
-  e2e-summary:
-    runs-on: ubuntu-latest
-    needs: [e2e-keygen, e2e-signing, e2e-resharing]
+    needs: e2e
     if: always()
-
     steps:
-      - name: Check E2E test results
-        run: |
+      - run: |
           echo "E2E Test Results Summary:"
           echo "========================="
-          echo "Key Generation Tests: ${{ needs.e2e-keygen.result }}"
-          echo "Signing Tests: ${{ needs.e2e-signing.result }}"
-          echo "Resharing Tests: ${{ needs.e2e-resharing.result }}"
-          echo ""
+          echo "Matrix job status: ${{ needs.e2e.result }}"
 
-          # Check if any tests failed
-          if [[ "${{ needs.e2e-keygen.result }}" != "success" || "${{ needs.e2e-signing.result }}" != "success" || "${{ needs.e2e-resharing.result }}" != "success" ]]; then
+          if [[ "${{ needs.e2e.result }}" == "success" ]]; then
+            echo "✅ All E2E tests passed successfully"
+          else
             echo "❌ One or more E2E tests failed"
             exit 1
-          else
-            echo "✅ All E2E tests passed successfully"
           fi

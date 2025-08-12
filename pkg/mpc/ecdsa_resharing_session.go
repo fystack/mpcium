@@ -18,7 +18,7 @@ import (
 
 type ReshareSession interface {
 	Session
-	Init()
+	Init() error
 	Reshare(done func())
 	GetPubKeyResult() []byte
 	GetExtraPeerIDs() []string
@@ -133,7 +133,7 @@ func (s *ecdsaReshareSession) GetExtraPeerIDs() []string {
 	return difference(s.oldPeerIDs, s.newPeerIDs)
 }
 
-func (s *ecdsaReshareSession) Init() {
+func (s *ecdsaReshareSession) Init() error {
 	logger.Infof("Initializing ecdsa resharing session with partyID: %s, newPartyIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 
@@ -144,8 +144,7 @@ func (s *ecdsaReshareSession) Init() {
 	} else {
 		err := s.loadOldShareDataGeneric(s.walletID, s.GetVersion(), &share)
 		if err != nil {
-			s.ErrCh <- err
-			return
+			return fmt.Errorf("failed to load old share data ecdsa: %w", err)
 		}
 	}
 
@@ -153,6 +152,7 @@ func (s *ecdsaReshareSession) Init() {
 
 	logger.Infof("[INITIALIZED] Initialized resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.threshold, s.reshareParams.NewThreshold())
+	return nil
 }
 
 func (s *ecdsaReshareSession) Reshare(done func()) {

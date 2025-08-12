@@ -291,7 +291,6 @@ func (p *Node) ensureNodeIsParticipant(keyInfo *keyinfo.KeyInfo) error {
 func (p *Node) CreateReshareSession(
 	sessionType SessionType,
 	walletID string,
-	oldThreshold int,
 	newThreshold int,
 	newPeerIDs []string,
 	isNewPeer bool,
@@ -353,6 +352,7 @@ func (p *Node) CreateReshareSession(
 		"ready count", len(readyOldParticipantIDs),
 		"min ready", oldKeyInfo.Threshold+1,
 		"version", oldKeyInfo.Version,
+		"isNewPeer", isNewPeer,
 	)
 
 	if len(readyOldParticipantIDs) < oldKeyInfo.Threshold+1 {
@@ -399,7 +399,7 @@ func (p *Node) CreateReshareSession(
 			selfPartyID,
 			oldAllPartyIDs,
 			newAllPartyIDs,
-			oldThreshold,
+			oldKeyInfo.Threshold,
 			newThreshold,
 			preParams,
 			p.kvstore,
@@ -420,7 +420,7 @@ func (p *Node) CreateReshareSession(
 			selfPartyID,
 			oldAllPartyIDs,
 			newAllPartyIDs,
-			oldThreshold,
+			oldKeyInfo.Threshold,
 			newThreshold,
 			p.kvstore,
 			p.keyinfoStore,

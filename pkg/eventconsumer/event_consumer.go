@@ -603,7 +603,6 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			return ec.node.CreateReshareSession(
 				sessionType,
 				walletID,
-				ec.mpcThreshold,
 				msg.NewThreshold,
 				msg.NodeIDs,
 				isNewPeer,
@@ -640,14 +639,20 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		}
 
 		if oldSession != nil {
-			oldSession.Init()
-			logger.Info("Check-listening", "start", "oldSession")
+			err := oldSession.Init()
+			if err != nil {
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to init old reshare session", natMsg)
+				return
+			}
 			oldSession.ListenToIncomingMessageAsync()
 		}
 
 		if newSession != nil {
-			newSession.Init()
-			logger.Info("Check-listening", "start", "newSession")
+			err := newSession.Init()
+			if err != nil {
+				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to init new reshare session", natMsg)
+				return
+			}
 			newSession.ListenToIncomingMessageAsync()
 
 			extraOldCommiteePeers := newSession.GetExtraPeerIDs()

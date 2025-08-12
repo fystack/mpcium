@@ -332,12 +332,18 @@ func (s *session) loadOldShareDataGeneric(walletID string, version int, dest int
 	if version > 0 {
 		key = s.composeKey(walletIDWithVersion(walletID, version))
 		keyData, err = s.kvstore.Get(key)
+		if err != nil {
+			return err
+		}
 	}
 
 	// If version == 0 or previous key not found, fall back to unversioned key
-	if err != nil || version == 0 {
+	if version == 0 {
 		key = s.composeKey(walletID)
 		keyData, err = s.kvstore.Get(key)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err != nil {

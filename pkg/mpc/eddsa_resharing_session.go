@@ -123,7 +123,7 @@ func (s *eddsaReshareSession) GetExtraPeerIDs() []string {
 	return difference(s.oldPeerIDs, s.newPeerIDs)
 }
 
-func (s *eddsaReshareSession) Init() {
+func (s *eddsaReshareSession) Init() error {
 	logger.Infof("Initializing eddsa resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 	if s.isNewParty {
@@ -132,13 +132,14 @@ func (s *eddsaReshareSession) Init() {
 	} else {
 		err := s.loadOldShareDataGeneric(s.walletID, s.GetVersion(), &share)
 		if err != nil {
-			s.ErrCh <- err
-			return
+			return fmt.Errorf("failed to load old share data eddsa: %w", err)
 		}
 	}
 	s.party = resharing.NewLocalParty(s.reshareParams, share, s.outCh, s.endCh)
 	logger.Infof("[INITIALIZED] Initialized eddsa resharing session successfully partyID: %s, peerIDs %s, walletID %s, oldThreshold = %d, newThreshold = %d",
 		s.selfPartyID, s.partyIDs, s.walletID, s.threshold, s.reshareParams.NewThreshold())
+
+	return nil
 }
 
 func (s *eddsaReshareSession) Reshare(done func()) {
