@@ -186,6 +186,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		singingResultQueue,
 		reshareResultQueue,
 		identityStore,
+		consulClient,
 	)
 	eventConsumer.Run()
 	defer eventConsumer.Close()

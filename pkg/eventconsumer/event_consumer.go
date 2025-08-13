@@ -16,6 +16,7 @@ import (
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/fystack/mpcium/pkg/types"
+	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
 )
@@ -41,6 +42,7 @@ type eventConsumer struct {
 	node         *mpc.Node
 	pubsub       messaging.PubSub
 	mpcThreshold int
+	consulClient *api.Client
 
 	genKeyResultQueue  messaging.MessageQueue
 	signingResultQueue messaging.MessageQueue
@@ -72,6 +74,7 @@ func NewEventConsumer(
 	signingResultQueue messaging.MessageQueue,
 	reshareResultQueue messaging.MessageQueue,
 	identityStore identity.Store,
+	consulClient *api.Client,
 ) EventConsumer {
 	maxConcurrentKeygen := viper.GetInt("max_concurrent_keygen")
 	if maxConcurrentKeygen == 0 {
@@ -115,6 +118,7 @@ func NewEventConsumer(
 		keygenMsgBuffer:      make(chan *nats.Msg, 100),
 		signingMsgBuffer:     make(chan *nats.Msg, 200), // Larger buffer for signing
 		sessionWarmUpDelayMs: sessionWarmUpDelayMs,
+		consulClient:         consulClient,
 	}
 
 	go ec.startKeyGenEventWorker()
@@ -599,6 +603,9 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			return
 		}
 
+		// Create coordinator for this reshare operation
+		coordinator := mpc.NewReshareCoordinator(ec.consulClient, walletID, ec.node.ID())
+
 		createSession := func(isNewPeer bool) (mpc.ReshareSession, error) {
 			return ec.node.CreateReshareSession(
 				sessionType,
@@ -661,7 +668,22 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			newSession.ListenToPeersAsync(extraOldCommiteePeers)
 		}
 
-		ec.warmUpSession()
+		// Signal ready and wait for all participants
+		if err := coordinator.SignalReady(); err != nil {
+			logger.Error("Failed to signal ready", err)
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to signal ready", natMsg)
+			return
+		}
+
+		logger.Info("Waiting for all participants to be ready", "walletID", walletID)
+		if err := coordinator.WaitForAll(msg.NodeIDs); err != nil {
+			logger.Error("Failed waiting for participants", err)
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed waiting for participants", natMsg)
+			return
+		}
+
+		logger.Info("All participants ready, starting reshare", "walletID", walletID)
+
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
 			go oldSession.Reshare(doneOld)
@@ -706,6 +728,11 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 
 		wg.Wait()
 		logger.Info("Reshare session finished", "walletID", walletID, "pubKey", fmt.Sprintf("%x", successEvent.PubKey))
+
+		// Cleanup coordination data
+		if err := coordinator.Cleanup(); err != nil {
+			logger.Error("Failed to cleanup coordination data", err)
+		}
 
 		if newSession != nil {
 			successBytes, err := json.Marshal(successEvent)
