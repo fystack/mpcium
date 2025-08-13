@@ -167,7 +167,7 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 }
 
 func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
-	senderID := extractSenderIdFromDirectTopic(topic)
+	senderID := extractSenderIDFromDirectTopic(topic)
 
 	if senderID == "" {
 		s.ErrCh <- fmt.Errorf("failed to extract senderID from direct topic: the direct topic format is wrong")
@@ -263,8 +263,8 @@ func (s *session) ListenToIncomingMessageAsync() {
 
 	//subscribe all possible p2p messages from all nodes, per the design of tss-lib, this includes oneself
 	toID := PartyIDToNodeID(s.selfPartyID)
-	for _, fromPartyId := range s.partyIDs {
-		fromID := PartyIDToNodeID(fromPartyId)
+	for _, fromPartyID := range s.partyIDs {
+		fromID := PartyIDToNodeID(fromPartyID)
 		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
 		sub, err := s.direct.Listen(topic, func(cipher []byte) {
 			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
@@ -280,8 +280,8 @@ func (s *session) ListenToIncomingMessageAsync() {
 func (s *session) ListenAsyncWithExtra(extraIDs []string) {
 	//subscribe potential p2p messages from addtional nodes (just for resharing)
 	toID := PartyIDToNodeID(s.selfPartyID)
-	for _, fromId := range extraIDs {
-		topic := s.topicComposer.ComposeDirectTopic(fromId, toID)
+	for _, fromID := range extraIDs {
+		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
 		sub, err := s.direct.Listen(topic, func(cipher []byte) {
 			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
 		})
@@ -364,10 +364,10 @@ func walletIDWithVersion(walletID string, version int) string {
 	return walletID
 }
 
-func extractSenderIdFromDirectTopic(topic string) string {
+func extractSenderIDFromDirectTopic(topic string) string {
 	strs := strings.Split(topic, ":")
 
-	// according to direct topic format, there will be 6 slices, senderId is the 4th one
+	// according to direct topic format, there will be 6 slices, senderID is the 4th one
 	if len(strs) == 6 {
 		return strs[3]
 	}
