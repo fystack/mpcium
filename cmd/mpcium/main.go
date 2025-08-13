@@ -159,7 +159,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
 
-	logger.Info("Node is running", "id", nodeID, "name", nodeName)
+	logger.Info("Node is running", "ID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())

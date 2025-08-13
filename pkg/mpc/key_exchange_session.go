@@ -73,9 +73,7 @@ func (e *ecdhSession) StartKeyExchange() error {
 		if ecdhMsg.From == e.nodeID {
 			return
 		}
-
 		logger.Info("Received ECDH message from", "node", ecdhMsg.From)
-
 		//TODO: consider how to avoid replay attack
 		if err := e.identityStore.VerifySignature(&ecdhMsg); err != nil {
 			e.errCh <- err
@@ -87,7 +85,6 @@ func (e *ecdhSession) StartKeyExchange() error {
 			e.errCh <- err
 			return
 		}
-		// Perform ECDH
 		sharedSecret, err := e.privateKey.ECDH(peerPublicKey)
 		if err != nil {
 			e.errCh <- err
@@ -99,9 +96,8 @@ func (e *ecdhSession) StartKeyExchange() error {
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
 
 		requiredKeyCount := len(e.peerIDs) - 1
-
 		if e.identityStore.CheckSymmetricKeyComplete(requiredKeyCount) {
-			logger.Info("Completed ECDH!", "symmetricKeyAmount", requiredKeyCount)
+			logger.Info("Completed ECDH!", "symmetricKeyCount", requiredKeyCount)
 			logger.Info("PEER IS READY! Starting to accept MPC requests")
 		}
 	})

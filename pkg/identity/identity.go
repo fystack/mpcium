@@ -383,9 +383,6 @@ func (s *fileStore) DecryptMessage(cipher []byte, peerID string) ([]byte, error)
 	if key == nil {
 		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
 	}
-
-	// logger.Info("check decryption key", "final", key)
-
 	return decryptAEAD(key, cipher)
 }
 

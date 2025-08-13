@@ -76,8 +76,7 @@ func NewNode(
 	start := time.Now()
 	elapsed := time.Since(start)
 	logger.Info("Starting new node, preparams is generated successfully!", "elapsed", elapsed.Milliseconds())
-
-	//each node initiates the DH key exchange listener at the beginning and invoke message sending when all peers are ready
+	// Each node initiates the DH key exchange listener at the beginning and invoke message sending when all peers are ready
 	dhSession := NewECDHSession(nodeID, peerIDs, pubSub, identityStore)
 	if err := dhSession.StartKeyExchange(); err != nil {
 		logger.Fatal("Failed to start DH key exchange", err)
