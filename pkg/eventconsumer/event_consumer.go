@@ -636,26 +636,107 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		}
 		ctx := context.Background()
 		var wg sync.WaitGroup
+
+		nodeID := ec.node.ID()
+		startTime := time.Now()
+
 		if oldSession != nil {
+			initStart := time.Now()
+			logger.Info("Starting old session init",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", initStart.Format("15:04:05.000"))
+
 			err := oldSession.Init()
 			if err != nil {
 				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to init old reshare session", natMsg)
 				return
 			}
+
+			initElapsed := time.Since(initStart)
+			logger.Info("Old session init completed",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"elapsedMs", initElapsed.Milliseconds(),
+				"exactTime", time.Now().Format("15:04:05.000"))
+
+			listenStart := time.Now()
+			logger.Info("Starting old session listen",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", listenStart.Format("15:04:05.000"))
+
 			oldSession.ListenToIncomingMessageAsync()
+
+			listenElapsed := time.Since(listenStart)
+			logger.Info("Old session listen completed",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"elapsedMs", listenElapsed.Milliseconds(),
+				"exactTime", time.Now().Format("15:04:05.000"))
 		}
+
 		if newSession != nil {
+			initStart := time.Now()
+			logger.Info("Starting new session init",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", initStart.Format("15:04:05.000"))
+
 			err := newSession.Init()
 			if err != nil {
 				ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to init new reshare session", natMsg)
 				return
 			}
+
+			initElapsed := time.Since(initStart)
+			logger.Info("New session init completed",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"elapsedMs", initElapsed.Milliseconds(),
+				"exactTime", time.Now().Format("15:04:05.000"))
+
+			listenStart := time.Now()
+			logger.Info("Starting new session listen",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", listenStart.Format("15:04:05.000"))
+
 			newSession.ListenToIncomingMessageAsync()
+
+			listenElapsed := time.Since(listenStart)
+			logger.Info("New session listen completed",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"elapsedMs", listenElapsed.Milliseconds(),
+				"exactTime", time.Now().Format("15:04:05.000"))
 		}
 
+		warmupStart := time.Now()
+		logger.Info("Starting warmup",
+			"walletID", walletID,
+			"nodeID", nodeID,
+			"exactTime", warmupStart.Format("15:04:05.000"))
+
 		ec.warmUpSession()
+
+		warmupElapsed := time.Since(warmupStart)
+		totalSetupElapsed := time.Since(startTime)
+		logger.Info("Warmup completed, starting reshare sessions",
+			"walletID", walletID,
+			"nodeID", nodeID,
+			"warmupMs", warmupElapsed.Milliseconds(),
+			"totalSetupMs", totalSetupElapsed.Milliseconds(),
+			"exactTime", time.Now().Format("15:04:05.000"))
+
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
+			reshareStart := time.Now()
+			logger.Info("Starting old session reshare",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", reshareStart.Format("15:04:05.000"))
+
 			go oldSession.Reshare(doneOld)
 			wg.Add(1)
 			go func() {
@@ -676,6 +757,12 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 
 		if newSession != nil {
 			ctxNew, doneNew := context.WithCancel(ctx)
+			reshareStart := time.Now()
+			logger.Info("Starting new session reshare",
+				"walletID", walletID,
+				"nodeID", nodeID,
+				"exactTime", reshareStart.Format("15:04:05.000"))
+
 			go newSession.Reshare(doneNew)
 			wg.Add(1)
 			go func() {
