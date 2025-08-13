@@ -8,8 +8,6 @@ import (
 	"fmt"
 )
 
-const AESGCMNonceSize = 12
-
 func EncryptAESGCM(plain, key []byte) (ciphertext, nonce []byte, err error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -51,7 +49,7 @@ func EncryptAESGCMWithNonceEmbed(plaintext, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	nonce := make([]byte, AESGCMNonceSize)
+	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
@@ -62,22 +60,22 @@ func EncryptAESGCMWithNonceEmbed(plaintext, key []byte) ([]byte, error) {
 
 // DecryptAESGCMWithNonceEmbed decrypts ciphertext where the nonce is embedded at the start of the slice.
 func DecryptAESGCMWithNonceEmbed(data, key []byte) ([]byte, error) {
-	if len(data) < AESGCMNonceSize {
-		return nil, errors.New("ciphertext too short")
-	}
-
-	nonce := data[:AESGCMNonceSize]
-	ciphertext := data[AESGCMNonceSize:]
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
-
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
+
+	nonceSize := aead.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+
+	nonce := data[:nonceSize]
+	ciphertext := data[nonceSize:]
 
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
