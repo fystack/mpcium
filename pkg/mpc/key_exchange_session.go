@@ -55,7 +55,7 @@ func NewECDHSession(
 
 func (e *ecdhSession) StartKeyExchange() error {
 	// Generate an ephemeral ECDH key pair
-	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
+	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return fmt.Errorf("failed to generate ECDH key pair: %w", err)
 	}
@@ -82,7 +82,7 @@ func (e *ecdhSession) StartKeyExchange() error {
 			return
 		}
 
-		peerPublicKey, err := ecdh.P256().NewPublicKey(ecdhMsg.PublicKey)
+		peerPublicKey, err := ecdh.X25519().NewPublicKey(ecdhMsg.PublicKey)
 		if err != nil {
 			e.errCh <- err
 			return
