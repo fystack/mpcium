@@ -482,6 +482,10 @@ func (p *Node) Close() {
 	}
 }
 
+func (p *Node) GetDHSession() ECDHSession {
+	return p.dhSession
+}
+
 func (p *Node) generatePreParams() []*keygen.LocalPreParams {
 	start := time.Now()
 	// Try to load from kvstore

@@ -202,8 +202,14 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Error("Failed to mark peer registry as ready", err)
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
-	appContext, cancel := context.WithCancel(context.Background())
 
+	logger.Info("Waiting for ECDH key exchange to complete...", "nodeID", nodeID)
+	if err := mpcNode.GetDHSession().WaitForExchangeComplete(); err != nil {
+		logger.Fatal("ECDH exchange failed", err)
+	}
+
+	logger.Info("ECDH key exchange completed successfully, starting consumers...", "nodeID", nodeID)
+	appContext, cancel := context.WithCancel(context.Background())
 	//Setup signal handling to cancel context on termination signals.
 	go func() {
 		sigChan := make(chan os.Signal, 1)
@@ -219,9 +225,12 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		if err := signingConsumer.Close(); err != nil {
 			logger.Error("Failed to close signing consumer", err)
 		}
+
+		if err := mpcNode.GetDHSession().Close(); err != nil {
+			logger.Error("Failed to close ECDH session", err)
+		}
 	}()
 
-	//TODO: I think it makes more sense to start these consumers only after P2P channel were succesfully built
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
 
