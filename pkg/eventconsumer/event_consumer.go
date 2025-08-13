@@ -657,8 +657,8 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 
 			// In resharing process, we need to ensure that the new session is aware of the old committee peers.
 			// Then new committee peers can start listening to the old committee peers, and thus enable receiving direct messages from them.
-			extraOldCommiteePeers := newSession.GetExtraPeerIDs()
-			newSession.ListenAsyncWithExtra(extraOldCommiteePeers)
+			legacyCommitteePeers := newSession.GetLegacyCommitteePeers()
+			newSession.ListenToPeersAsync(legacyCommitteePeers)
 		}
 
 		ec.warmUpSession()

@@ -43,7 +43,7 @@ type KeyComposerFn func(id string) string
 
 type Session interface {
 	ListenToIncomingMessageAsync()
-	ListenAsyncWithExtra(extraIDs []string)
+	ListenToPeersAsync(peerIDs []string)
 	ErrChan() <-chan error
 }
 
@@ -140,9 +140,9 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 			return
 		}
 
-		selfID := PartyIDToNodeID(s.selfPartyID)
+		selfID := partyIDToNodeID(s.selfPartyID)
 		for _, to := range routing.To {
-			toNodeID := PartyIDToNodeID(to)
+			toNodeID := partyIDToNodeID(to)
 			topic := s.topicComposer.ComposeDirectTopic(selfID, toNodeID)
 			if selfID == toNodeID {
 				logger.Debug("---------Detected toself p2p message---------")
@@ -177,7 +177,7 @@ func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
 	var plaintext []byte
 	var err error
 
-	if senderID == PartyIDToNodeID(s.selfPartyID) {
+	if senderID == partyIDToNodeID(s.selfPartyID) {
 		plaintext = cipher // to self, no decryption needed
 	} else {
 		plaintext, err = s.identityStore.DecryptMessage(cipher, senderID)
@@ -225,11 +225,23 @@ func (s *session) receiveTssMessage(msg *types.TssMessage) {
 		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")
 		return
 	}
-	logger.Debug("Received message", "round", round.RoundMsg, "isBroadcast", msg.IsBroadcast, "to", toIDs, "from", msg.From.String(), "self", s.selfPartyID.String())
+	logger.Debug(
+		"Received message",
+		"round",
+		round.RoundMsg,
+		"isBroadcast",
+		msg.IsBroadcast,
+		"to",
+		toIDs,
+		"from",
+		msg.From.String(),
+		"self",
+		s.selfPartyID.String(),
+	)
 	isBroadcast := msg.IsBroadcast && len(msg.To) == 0
 	var isToSelf bool
 	for _, to := range msg.To {
-		if ComparePartyIDs(to, s.selfPartyID) {
+		if comparePartyIDs(to, s.selfPartyID) {
 			isToSelf = true
 			break
 		}
@@ -246,50 +258,53 @@ func (s *session) receiveTssMessage(msg *types.TssMessage) {
 	}
 }
 
-func (s *session) ListenToIncomingMessageAsync() {
-	go func() {
-		sub, err := s.pubSub.Subscribe(s.topicComposer.ComposeBroadcastTopic(), func(natMsg *nats.Msg) {
-			msg := natMsg.Data
-			s.receiveBroadcastTssMessage(msg)
-		})
+func (s *session) subscribeDirectTopicAsync(topic string) error {
+	t := topic // avoid capturing the changing loop variable
+	sub, err := s.direct.Listen(t, func(cipher []byte) {
+		// async to avoid timeouts in handlers
+		go s.receiveP2PTssMessage(t, cipher)
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to subscribe to direct topic %s: %w", t, err)
+	}
+	s.directSubs = append(s.directSubs, sub)
+	return nil
+}
 
-		if err != nil {
-			s.ErrCh <- fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", s.topicComposer.ComposeBroadcastTopic(), err)
-			return
-		}
-
-		s.broadcastSub = sub
-	}()
-
-	//subscribe all possible p2p messages from all nodes, per the design of tss-lib, this includes oneself
-	toID := PartyIDToNodeID(s.selfPartyID)
-	for _, fromPartyID := range s.partyIDs {
-		fromID := PartyIDToNodeID(fromPartyID)
+func (s *session) subscribeFromPeersAsync(fromIDs []string) {
+	toID := partyIDToNodeID(s.selfPartyID)
+	for _, fromID := range fromIDs {
 		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
-		sub, err := s.direct.Listen(topic, func(cipher []byte) {
-			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
-		})
-		if err != nil {
-			s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
+		if err := s.subscribeDirectTopicAsync(topic); err != nil {
+			s.ErrCh <- err
 		}
-
-		s.directSubs = append(s.directSubs, sub)
 	}
 }
 
-func (s *session) ListenAsyncWithExtra(extraIDs []string) {
-	//subscribe potential p2p messages from addtional nodes (just for resharing)
-	toID := PartyIDToNodeID(s.selfPartyID)
-	for _, fromID := range extraIDs {
-		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
-		sub, err := s.direct.Listen(topic, func(cipher []byte) {
-			go s.receiveP2PTssMessage(topic, cipher) // async for avoid timeout
+func (s *session) subscribeBroadcastAsync() {
+	go func() {
+		topic := s.topicComposer.ComposeBroadcastTopic()
+		sub, err := s.pubSub.Subscribe(topic, func(natMsg *nats.Msg) {
+			s.receiveBroadcastTssMessage(natMsg.Data)
 		})
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("Failed to subscribe to direct topic %s: %w", topic, err)
+			s.ErrCh <- fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", topic, err)
+			return
 		}
-		s.directSubs = append(s.directSubs, sub)
-	}
+		s.broadcastSub = sub
+	}()
+}
+
+func (s *session) ListenToIncomingMessageAsync() {
+	// 1) broadcast
+	s.subscribeBroadcastAsync()
+
+	// 2) direct from peers in this session's partyIDs (includes self)
+	s.subscribeFromPeersAsync(partyIDsToNodeIDs(s.partyIDs))
+}
+
+func (s *session) ListenToPeersAsync(peerIDs []string) {
+	s.subscribeFromPeersAsync(peerIDs)
 }
 
 func (s *session) Close() error {

@@ -21,7 +21,7 @@ type ReshareSession interface {
 	Init() error
 	Reshare(done func())
 	GetPubKeyResult() []byte
-	GetExtraPeerIDs() []string
+	GetLegacyCommitteePeers() []string
 }
 
 type ecdsaReshareSession struct {
@@ -101,7 +101,7 @@ func NewECDSAReshareSession(
 
 	var oldPeerIDs []string
 	for _, partyId := range oldPartyIDs {
-		oldPeerIDs = append(oldPeerIDs, PartyIDToNodeID(partyId))
+		oldPeerIDs = append(oldPeerIDs, partyIDToNodeID(partyId))
 	}
 
 	return &ecdsaReshareSession{
@@ -114,8 +114,11 @@ func NewECDSAReshareSession(
 	}
 }
 
-func (s *ecdsaReshareSession) GetExtraPeerIDs() []string {
-	// difference returns elements in A that are not in B.
+// GetLegacyCommitteePeers returns peer IDs that were part of the old committee
+// but are NOT part of the new committee after resharing.
+// These peers are still relevant during resharing because
+// they must send final share data to the new committee.
+func (s *ecdsaReshareSession) GetLegacyCommitteePeers() []string {
 	difference := func(A, B []string) []string {
 		seen := make(map[string]bool)
 		for _, b := range B {
