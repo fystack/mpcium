@@ -1,8 +1,6 @@
 package identity
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
@@ -20,13 +18,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/fystack/mpcium/pkg/common/pathutil"
+	"github.com/fystack/mpcium/pkg/encryption"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/spf13/viper"
 )
-
-const AES_GCM_Nonce_Size = 12
-const AES_SYMMETRICKEY_Size = 32
 
 // NodeIdentity represents a node's identity information
 type NodeIdentity struct {
@@ -64,12 +60,9 @@ type fileStore struct {
 	publicKeys map[string][]byte
 	mu         sync.RWMutex
 
-	// Cached private key
 	privateKey      []byte
 	initiatorPubKey []byte
-
-	//Cached ecdh symmetric key
-	symmetricKeys map[string][]byte
+	symmetricKeys   map[string][]byte
 }
 
 // NewFileStore creates a new identity store
@@ -310,56 +303,6 @@ func generateRandom(nonceSize int) ([]byte, error) {
 	return nonce, nil
 }
 
-// encryptAEAD encrypts plaintext using AES-GCM with authentication.
-func encryptAEAD(symmetricKey []byte, plaintext []byte) ([]byte, error) {
-	// Create AES cipher block
-	block, err := aes.NewCipher(symmetricKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	nonce, err := generateRandom(AES_GCM_Nonce_Size)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
-
-	return append(nonce, ciphertext...), nil
-}
-
-// decryptAEAD decrypts ciphertext using AES-GCM with authentication.
-func decryptAEAD(symmetricKey []byte, ciphertext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(symmetricKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	if len(ciphertext) < AES_GCM_Nonce_Size {
-		return nil, errors.New("ciphertext too short")
-	}
-	nonce := ciphertext[:AES_GCM_Nonce_Size]
-	ciphertext = ciphertext[AES_GCM_Nonce_Size:]
-
-	// Decrypt with no additional data (nil)
-	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
-	}
-
-	return plaintext, nil
-}
-
 func (s *fileStore) EncryptMessage(plaintext []byte, peerID string) ([]byte, error) {
 	key, err := s.GetSymmetricKey(peerID)
 	if err != nil {
@@ -370,7 +313,7 @@ func (s *fileStore) EncryptMessage(plaintext []byte, peerID string) ([]byte, err
 		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
 	}
 
-	return encryptAEAD(key, plaintext)
+	return encryption.EncryptAESGCMWithNonceEmbed(plaintext, key)
 }
 
 func (s *fileStore) DecryptMessage(cipher []byte, peerID string) ([]byte, error) {
@@ -383,10 +326,7 @@ func (s *fileStore) DecryptMessage(cipher []byte, peerID string) ([]byte, error)
 	if key == nil {
 		return nil, fmt.Errorf("no symmetric key for peer %s", peerID)
 	}
-
-	// logger.Info("check decryption key", "final", key)
-
-	return decryptAEAD(key, cipher)
+	return encryption.DecryptAESGCMWithNonceEmbed(cipher, key)
 }
 
 // Sign ECDH key exchange message

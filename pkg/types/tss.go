@@ -1,11 +1,7 @@
-// The Licensed Work is (c) 2022 Sygma
-// SPDX-License-Identifier: LGPL-3.0-only
 package types
 
 import (
 	"encoding/json"
-	"sort"
-	"time"
 
 	"github.com/bnb-chain/tss-lib/v2/tss"
 )
@@ -21,13 +17,6 @@ type TssMessage struct {
 	IsToOldAndNewCommittees bool `json:"isToOldAndNewCommittees"`
 
 	Signature []byte `json:"signature"`
-}
-
-type ECDHMessage struct {
-	From      string    `json:"from"`
-	PublicKey []byte    `json:"public_key"`
-	Timestamp time.Time `json:"timestamp"`
-	Signature []byte    `json:"signature"`
 }
 
 func NewTssMessage(
@@ -119,19 +108,6 @@ func UnmarshalStartMessage(msgBytes []byte) (*StartMessage, error) {
 }
 
 // MarshalForSigning returns the deterministic JSON bytes for signing
-func (msg *ECDHMessage) MarshalForSigning() ([]byte, error) {
-	// Create a map with ordered keys
-	signingData := map[string]interface{}{
-		"From":      msg.From,
-		"PublicKey": msg.PublicKey,
-		"Timestamp": msg.Timestamp,
-	}
-
-	// Use json.Marshal with sorted keys
-	return json.Marshal(signingData)
-}
-
-// MarshalForSigning returns the deterministic JSON bytes for signing
 func (msg *TssMessage) MarshalForSigning() ([]byte, error) {
 	// Create a map with ordered keys
 	signingData := map[string]interface{}{
@@ -146,14 +122,4 @@ func (msg *TssMessage) MarshalForSigning() ([]byte, error) {
 
 	// Use json.Marshal with sorted keys
 	return json.Marshal(signingData)
-}
-
-// Helper function to get sorted party IDs
-func getPartyIDs(parties []*tss.PartyID) []string {
-	ids := make([]string, len(parties))
-	for i, party := range parties {
-		ids[i] = party.Id
-	}
-	sort.Strings(ids) // Ensure deterministic order
-	return ids
 }

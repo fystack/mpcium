@@ -149,7 +149,7 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 			break
 		}
 		if replyMsg != nil {
-			logger.Info("KeygenConsumer: Completed Keygen event; reply received")
+			logger.Info("KeygenConsumer: Completed keygen event; reply received")
 			if ackErr := msg.Ack(); ackErr != nil {
 				logger.Error("KeygenConsumer: ACK failed", ackErr)
 			}
@@ -157,7 +157,7 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		}
 	}
 
-	logger.Warn("KeygenConsumer: Timeout waiting for Keygen event response")
+	logger.Warn("KeygenConsumer: Timeout waiting for keygen event response")
 	_ = msg.Nak()
 }
 

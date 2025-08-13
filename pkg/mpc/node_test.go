@@ -6,12 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPartyIDToNodeID(t *testing.T) {
-	partyID := createPartyID("4d8cb873-dc86-4776-b6f6-cf5c668f6468", "keygen", 1)
-	nodeID := PartyIDToRoutingDest(partyID)
-	assert.Equal(t, nodeID, "4d8cb873-dc86-4776-b6f6-cf5c668f6468:1", "NodeID should be equal")
-}
-
 func TestCreatePartyID_Structure(t *testing.T) {
 	sessionID := "test-session-123"
 	keyType := "keygen"
@@ -46,29 +40,6 @@ func TestCreatePartyID_DifferentVersions(t *testing.T) {
 	assert.NotEqual(t, partyID0.Key, partyID1.Key)
 }
 
-func TestPartyIDToRoutingDest_BackwardCompatible(t *testing.T) {
-	sessionID := "test-session-789"
-	keyType := "signing"
-
-	partyID := createPartyID(sessionID, keyType, BackwardCompatibleVersion)
-	nodeID := PartyIDToRoutingDest(partyID)
-
-	// For backward compatible version, should just be the sessionID
-	assert.Equal(t, sessionID, nodeID)
-}
-
-func TestPartyIDToRoutingDest_DefaultVersion(t *testing.T) {
-	sessionID := "test-session-999"
-	keyType := "signing"
-
-	partyID := createPartyID(sessionID, keyType, DefaultVersion)
-	nodeID := PartyIDToRoutingDest(partyID)
-
-	// For default version, should include the version number
-	expected := sessionID + ":1"
-	assert.Equal(t, expected, nodeID)
-}
-
 func TestCreatePartyID_EmptyValues(t *testing.T) {
 	// Test with empty session ID
 	partyID := createPartyID("", "keygen", 0)
@@ -79,22 +50,6 @@ func TestCreatePartyID_EmptyValues(t *testing.T) {
 	partyID = createPartyID("session", "", 1)
 	assert.NotNil(t, partyID)
 	assert.Equal(t, "", partyID.Moniker)
-}
-
-func TestPartyIDToRoutingDest_Consistency(t *testing.T) {
-	sessionID := "consistent-session"
-	keyType := "keygen"
-	version := 3
-
-	// Create the same party ID multiple times
-	partyID1 := createPartyID(sessionID, keyType, version)
-	partyID2 := createPartyID(sessionID, keyType, version)
-
-	nodeID1 := PartyIDToRoutingDest(partyID1)
-	nodeID2 := PartyIDToRoutingDest(partyID2)
-
-	// Should produce consistent results based on sessionID and version
-	assert.Equal(t, nodeID1, nodeID2, "Same parameters should produce same routing destinations")
 }
 
 func TestCreatePartyID_UniqueIDs(t *testing.T) {

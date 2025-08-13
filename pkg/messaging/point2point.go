@@ -29,7 +29,8 @@ func NewNatsDirectMessaging(natsConn *nats.Conn) DirectMessaging {
 	}
 }
 
-// SendToSelf locally sends a message to the same node, invoking all handlers for the topic, avoiding mediating through the message layer.
+// SendToSelf locally sends a message to the same node, invoking all handlers for the topic
+// avoiding mediating through the message layer.
 func (d *natsDirectMessaging) SendToSelf(topic string, message []byte) error {
 	d.mu.Lock()
 	handlers, ok := d.handlers[topic]

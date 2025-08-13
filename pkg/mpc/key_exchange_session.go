@@ -17,12 +17,22 @@ import (
 
 	"encoding/json"
 
+	"sync"
+
 	"github.com/nats-io/nats.go"
+)
+
+const (
+	ECDHExchangeTopic   = "ecdh:exchange"
+	ECDHExchangeTimeout = 2 * time.Minute
 )
 
 type ECDHSession interface {
 	StartKeyExchange() error
 	BroadcastPublicKey() error
+	WaitForExchangeComplete() error
+	ErrChan() <-chan error
+	Close() error
 }
 
 type ecdhSession struct {
@@ -35,6 +45,8 @@ type ecdhSession struct {
 	publicKey        *ecdh.PublicKey
 	exchangeComplete chan struct{}
 	errCh            chan error
+	exchangeDone     bool
+	mu               sync.RWMutex
 }
 
 func NewECDHSession(
@@ -48,8 +60,8 @@ func NewECDHSession(
 		peerIDs:          peerIDs,
 		pubSub:           pubSub,
 		identityStore:    identityStore,
-		exchangeComplete: make(chan struct{}),
-		errCh:            make(chan error),
+		exchangeComplete: make(chan struct{}, 1),
+		errCh:            make(chan error, 1),
 	}
 }
 
@@ -64,7 +76,7 @@ func (e *ecdhSession) StartKeyExchange() error {
 	e.publicKey = privateKey.PublicKey()
 
 	// Subscribe to ECDH broadcast
-	sub, err := e.pubSub.Subscribe("ecdh:exchange", func(natMsg *nats.Msg) {
+	sub, err := e.pubSub.Subscribe(ECDHExchangeTopic, func(natMsg *nats.Msg) {
 		var ecdhMsg types.ECDHMessage
 		if err := json.Unmarshal(natMsg.Data, &ecdhMsg); err != nil {
 			return
@@ -73,9 +85,7 @@ func (e *ecdhSession) StartKeyExchange() error {
 		if ecdhMsg.From == e.nodeID {
 			return
 		}
-
 		logger.Info("Received ECDH message from", "node", ecdhMsg.From)
-
 		//TODO: consider how to avoid replay attack
 		if err := e.identityStore.VerifySignature(&ecdhMsg); err != nil {
 			e.errCh <- err
@@ -87,7 +97,6 @@ func (e *ecdhSession) StartKeyExchange() error {
 			e.errCh <- err
 			return
 		}
-		// Perform ECDH
 		sharedSecret, err := e.privateKey.ECDH(peerPublicKey)
 		if err != nil {
 			e.errCh <- err
@@ -99,23 +108,42 @@ func (e *ecdhSession) StartKeyExchange() error {
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
 
 		requiredKeyCount := len(e.peerIDs) - 1
+		logger.Info("ECDH progress", "peer", ecdhMsg.From, "required", requiredKeyCount)
 
 		if e.identityStore.CheckSymmetricKeyComplete(requiredKeyCount) {
-			logger.Info("Completed ECDH!", "symmetricKeyAmount", requiredKeyCount)
-			logger.Info("PEER IS READY! Starting to accept MPC requests")
+			logger.Info("Completed ECDH!", "symmetric key counts of peers", requiredKeyCount)
+			logger.Info("ALL PEERS ARE READY! Starting to accept MPC requests")
+
+			e.mu.Lock()
+			e.exchangeDone = true
+			e.mu.Unlock()
+
+			e.exchangeComplete <- struct{}{}
 		}
 	})
-	e.ecdhSub = sub
 
+	e.ecdhSub = sub
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to ECDH topic: %w", err)
 	}
 	return nil
 }
 
+func (s *ecdhSession) ErrChan() <-chan error {
+	return s.errCh
+}
+
+func (s *ecdhSession) Close() error {
+	err := s.ecdhSub.Unsubscribe()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (e *ecdhSession) BroadcastPublicKey() error {
 	publicKeyBytes := e.publicKey.Bytes()
-
 	msg := types.ECDHMessage{
 		From:      e.nodeID,
 		PublicKey: publicKeyBytes,
@@ -129,13 +157,30 @@ func (e *ecdhSession) BroadcastPublicKey() error {
 	msg.Signature = signature
 	signedMsgBytes, _ := json.Marshal(msg)
 
-	logger.Info("Starting to broadcast DH key")
-
-	if err := e.pubSub.Publish("ecdh:exchange", signedMsgBytes); err != nil {
+	logger.Info("Starting to broadcast DH key", "nodeID", e.nodeID)
+	if err := e.pubSub.Publish(ECDHExchangeTopic, signedMsgBytes); err != nil {
 		return fmt.Errorf("%s failed to publish DH message because %w", e.nodeID, err)
 	}
-
 	return nil
+}
+
+func (e *ecdhSession) WaitForExchangeComplete() error {
+	e.mu.RLock()
+	if e.exchangeDone {
+		e.mu.RUnlock()
+		return nil
+	}
+	e.mu.RUnlock()
+	timeout := time.After(ECDHExchangeTimeout) // 2 minutes timeout
+
+	select {
+	case <-e.exchangeComplete:
+		return nil
+	case err := <-e.errCh:
+		return err
+	case <-timeout:
+		return fmt.Errorf("ECDH exchange timeout!")
+	}
 }
 
 func deriveConsistentInfo(a, b string) []byte {

@@ -91,7 +91,7 @@ func NewEDDSAReshareSession(
 
 	var oldPeerIDs []string
 	for _, partyId := range oldPartyIDs {
-		oldPeerIDs = append(oldPeerIDs, PartyIDToNodeID(partyId))
+		oldPeerIDs = append(oldPeerIDs, partyIDToNodeID(partyId))
 	}
 
 	return &eddsaReshareSession{
@@ -104,8 +104,11 @@ func NewEDDSAReshareSession(
 	}
 }
 
-func (s *eddsaReshareSession) GetExtraPeerIDs() []string {
-	// difference returns elements in A that are not in B.
+// GetLegacyCommitteePeers returns peer IDs that were part of the old committee
+// but are NOT part of the new committee after resharing.
+// These peers are still relevant during resharing because
+// they must send final share data to the new committee.
+func (s *eddsaReshareSession) GetLegacyCommitteePeers() []string {
 	difference := func(A, B []string) []string {
 		seen := make(map[string]bool)
 		for _, b := range B {

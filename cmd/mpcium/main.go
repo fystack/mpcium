@@ -159,7 +159,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
 
-	logger.Info("Node is running", "id", nodeID, "name", nodeName)
+	logger.Info("Node is running", "ID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV())
@@ -175,6 +175,9 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		identityStore,
 	)
 	defer mpcNode.Close()
+
+	// ECDH session for DH key exchange
+	ecdhSession := mpcNode.GetECDHSession()
 
 	eventConsumer := eventconsumer.NewEventConsumer(
 		mpcNode,
@@ -202,8 +205,14 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Error("Failed to mark peer registry as ready", err)
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
-	appContext, cancel := context.WithCancel(context.Background())
 
+	logger.Info("Waiting for ECDH key exchange to complete...", "nodeID", nodeID)
+	if err := ecdhSession.WaitForExchangeComplete(); err != nil {
+		logger.Fatal("ECDH exchange failed", err)
+	}
+
+	logger.Info("ECDH key exchange completed successfully, starting consumers...", "nodeID", nodeID)
+	appContext, cancel := context.WithCancel(context.Background())
 	//Setup signal handling to cancel context on termination signals.
 	go func() {
 		sigChan := make(chan os.Signal, 1)
@@ -219,11 +228,14 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		if err := signingConsumer.Close(); err != nil {
 			logger.Error("Failed to close signing consumer", err)
 		}
+
+		if err := ecdhSession.Close(); err != nil {
+			logger.Error("Failed to close ECDH session", err)
+		}
 	}()
 
-	//TODO: I think it makes more sense to start these consumers only after P2P channel were succesfully built
 	var wg sync.WaitGroup
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 3)
 
 	wg.Add(1)
 	go func() {
@@ -245,6 +257,21 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return
 		}
 		logger.Info("Signing consumer finished successfully")
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-appContext.Done():
+				return
+			case err := <-ecdhSession.ErrChan():
+				if err != nil {
+					logger.Error("ECDH session error", err)
+					errChan <- fmt.Errorf("ecdh session error: %w", err)
+					return
+				}
+			}
+		}
 	}()
 
 	go func() {

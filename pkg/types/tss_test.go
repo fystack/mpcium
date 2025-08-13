@@ -170,27 +170,3 @@ func TestUnmarshalStartMessage_InvalidJSON(t *testing.T) {
 	_, err := UnmarshalStartMessage(invalidJSON)
 	assert.Error(t, err)
 }
-
-func TestGetPartyIDs(t *testing.T) {
-	parties := []*tss.PartyID{
-		{
-			MessageWrapper_PartyID: &tss.MessageWrapper_PartyID{
-				Id: "party3",
-			},
-		},
-		{
-			MessageWrapper_PartyID: &tss.MessageWrapper_PartyID{
-				Id: "party1",
-			},
-		},
-		{
-			MessageWrapper_PartyID: &tss.MessageWrapper_PartyID{
-				Id: "party2",
-			},
-		},
-	}
-
-	ids := getPartyIDs(parties)
-	expected := []string{"party1", "party2", "party3"}
-	assert.Equal(t, expected, ids)
-}
