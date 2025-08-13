@@ -31,6 +31,7 @@ type ECDHSession interface {
 	StartKeyExchange() error
 	BroadcastPublicKey() error
 	WaitForExchangeComplete() error
+	ErrChan() <-chan error
 	Close() error
 }
 
@@ -126,6 +127,10 @@ func (e *ecdhSession) StartKeyExchange() error {
 		return fmt.Errorf("failed to subscribe to ECDH topic: %w", err)
 	}
 	return nil
+}
+
+func (s *ecdhSession) ErrChan() <-chan error {
+	return s.errCh
 }
 
 func (s *ecdhSession) Close() error {

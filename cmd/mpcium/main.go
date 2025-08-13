@@ -176,6 +176,9 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	)
 	defer mpcNode.Close()
 
+	// ECDH session for DH key exchange
+	ecdhSession := mpcNode.GetECDHSession()
+
 	eventConsumer := eventconsumer.NewEventConsumer(
 		mpcNode,
 		pubsub,
@@ -204,7 +207,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 
 	logger.Info("Waiting for ECDH key exchange to complete...", "nodeID", nodeID)
-	if err := mpcNode.GetDHSession().WaitForExchangeComplete(); err != nil {
+	if err := ecdhSession.WaitForExchangeComplete(); err != nil {
 		logger.Fatal("ECDH exchange failed", err)
 	}
 
@@ -226,13 +229,13 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			logger.Error("Failed to close signing consumer", err)
 		}
 
-		if err := mpcNode.GetDHSession().Close(); err != nil {
+		if err := ecdhSession.Close(); err != nil {
 			logger.Error("Failed to close ECDH session", err)
 		}
 	}()
 
 	var wg sync.WaitGroup
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 3)
 
 	wg.Add(1)
 	go func() {
@@ -254,6 +257,21 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return
 		}
 		logger.Info("Signing consumer finished successfully")
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-appContext.Done():
+				return
+			case err := <-ecdhSession.ErrChan():
+				if err != nil {
+					logger.Error("ECDH session error", err)
+					errChan <- fmt.Errorf("ecdh session error: %w", err)
+					return
+				}
+			}
+		}
 	}()
 
 	go func() {

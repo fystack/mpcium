@@ -39,7 +39,7 @@ type Node struct {
 	identityStore  identity.Store
 
 	peerRegistry PeerRegistry
-	dhSession    ECDHSession
+	ecdhSession  ECDHSession
 }
 
 func NewNode(
@@ -70,7 +70,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
-		dhSession:     dhSession,
+		ecdhSession:   dhSession,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -425,8 +425,12 @@ func (p *Node) Close() {
 	}
 }
 
+func (p *Node) GetECDHSession() ECDHSession {
+	return p.ecdhSession
+}
+
 func (p *Node) GetDHSession() ECDHSession {
-	return p.dhSession
+	return p.ecdhSession
 }
 
 func (p *Node) generatePreParams() []*keygen.LocalPreParams {
