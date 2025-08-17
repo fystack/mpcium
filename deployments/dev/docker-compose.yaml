@@ -1,0 +1,120 @@
+services:
+  nats-server:
+    image: nats:latest
+    container_name: nats-server
+    command: -js --http_port 8222
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+      - "6222:6222"
+    tty: true
+    restart: always
+    networks:
+      - mpcium
+
+  consul:
+    image: consul:1.15.4
+    container_name: consul
+    ports:
+      - "8500:8500"
+      - "8601:8600/udp"
+    command: "agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0"
+    restart: always
+    networks:
+      - mpcium
+
+  init:
+    build:
+      context: ../..
+      dockerfile: deployments/base/mpcium-cli/Dockerfile
+    container_name: mpcium-init
+    volumes:
+      - ../base/node-configs/peers.json:/app/peers.json:ro
+      - ../base/node-configs/config.yaml:/app/config.yaml:ro
+    command: ["register-peers"]
+    depends_on:
+      - consul
+    restart: "no"
+    networks:
+      - mpcium
+
+  mpcium0:
+    build:
+      context: ../..
+      dockerfile: deployments/base/mpcium/Dockerfile
+    container_name: mpcium-node0
+    environment:
+      - NODE_NAME=node0
+    volumes:
+      - ../base/node-configs/node0/config.yaml:/app/config.yaml:ro
+      - ../base/node-configs/node0/peers.json:/app/peers.json:ro
+      - ../base/node-configs/node0/identity:/app/identity:ro
+      - mpcium-node0-db:/app/db
+      - mpcium-node0-backups:/app/backups
+    ports:
+      - "8080:8080"
+    depends_on:
+      - nats-server
+      - consul
+      - init
+    restart: unless-stopped
+    networks:
+      - mpcium
+
+  mpcium1:
+    build:
+      context: ../..
+      dockerfile: deployments/base/mpcium/Dockerfile
+    container_name: mpcium-node1
+    environment:
+      - NODE_NAME=node1
+    volumes:
+      - ../base/node-configs/node1/config.yaml:/app/config.yaml:ro
+      - ../base/node-configs/node1/peers.json:/app/peers.json:ro
+      - ../base/node-configs/node1/identity:/app/identity:ro
+      - mpcium-node1-db:/app/db
+      - mpcium-node1-backups:/app/backups
+    ports:
+      - "8081:8080"
+    depends_on:
+      - nats-server
+      - consul
+      - init
+    restart: unless-stopped
+    networks:
+      - mpcium
+
+  mpcium2:
+    build:
+      context: ../..
+      dockerfile: deployments/base/mpcium/Dockerfile
+    container_name: mpcium-node2
+    environment:
+      - NODE_NAME=node2
+    volumes:
+      - ../base/node-configs/node2/config.yaml:/app/config.yaml:ro
+      - ../base/node-configs/node2/peers.json:/app/peers.json:ro
+      - ../base/node-configs/node2/identity:/app/identity:ro
+      - mpcium-node2-db:/app/db
+      - mpcium-node2-backups:/app/backups
+    ports:
+      - "8082:8080"
+    depends_on:
+      - nats-server
+      - consul
+      - init
+    restart: unless-stopped
+    networks:
+      - mpcium
+
+volumes:
+  mpcium-node0-db:
+  mpcium-node0-backups:
+  mpcium-node1-db:
+  mpcium-node1-backups:
+  mpcium-node2-db:
+  mpcium-node2-backups:
+
+networks:
+  mpcium:
+    driver: bridge

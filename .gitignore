@@ -17,3 +17,9 @@ e2e/coverage.html
 e2e/logs/
 # Generated config file (template is tracked)
 e2e/config.test.yaml
+
+peers.json
+node0/
+node1/
+node2/
+config.yaml
