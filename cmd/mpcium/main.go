@@ -550,6 +550,7 @@ func GetNATSConnection(environment string, appConfig *config.AppConfig) (*nats.C
 	opts := []nats.Option{
 		nats.MaxReconnects(-1), // retry forever
 		nats.ReconnectWait(2 * time.Second),
+		nats.NoEcho(),
 		nats.DisconnectHandler(func(nc *nats.Conn) {
 			logger.Warn("Disconnected from NATS")
 		}),
