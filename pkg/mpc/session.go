@@ -228,7 +228,7 @@ func (s *session) receiveTssMessage(msg *types.TssMessage) {
 		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")
 		return
 	}
-	logger.Debug(
+	logger.Info(
 		"Received message",
 		"round",
 		round.RoundMsg,
