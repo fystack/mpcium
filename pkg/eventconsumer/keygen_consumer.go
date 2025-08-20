@@ -129,13 +129,14 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	if err != nil {
 		logger.Error("SigningConsumer: Failed to unmarshal keygen message", err)
 		sc.handleKeygenError(keygenMsg, event.ErrorCodeUnmarshalFailure, err, sessionID)
-		_ = msg.Nak()
+		msg.Ack()
 		return
 	}
 
 	if !sc.peerRegistry.ArePeersReady() {
 		logger.Warn("KeygenConsumer: Not all peers are ready to gen key, skipping message processing")
 		sc.handleKeygenError(keygenMsg, event.ErrorCodeClusterNotReady, errors.New("not all peers are ready"), sessionID)
+		msg.Ack()
 		return
 	}
 

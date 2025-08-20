@@ -149,7 +149,7 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	if err != nil {
 		logger.Error("SigningConsumer: Failed to unmarshal signing message", err)
 		sc.handleSigningError(signingMsg, event.ErrorCodeUnmarshalFailure, err, sessionID)
-		_ = msg.Nak()
+		msg.Ack()
 		return
 	}
 
@@ -157,6 +157,7 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 		requiredPeers := int64(sc.mpcThreshold + 1)
 		err := fmt.Errorf("not enough peers to process signing request: ready=%d, required=%d", sc.peerRegistry.GetReadyPeersCount(), requiredPeers)
 		sc.handleSigningError(signingMsg, event.ErrorCodeNotMajority, err, sessionID)
+		msg.Ack()
 		return
 	}
 	// Create a reply inbox to receive the signing event response.
