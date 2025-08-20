@@ -285,17 +285,15 @@ func (s *session) subscribeFromPeersAsync(fromIDs []string) {
 }
 
 func (s *session) subscribeBroadcastAsync() {
-	go func() {
-		topic := s.topicComposer.ComposeBroadcastTopic()
-		sub, err := s.pubSub.Subscribe(topic, func(natMsg *nats.Msg) {
-			s.receiveBroadcastTssMessage(natMsg.Data)
-		})
-		if err != nil {
-			s.ErrCh <- fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", topic, err)
-			return
-		}
-		s.broadcastSub = sub
-	}()
+	topic := s.topicComposer.ComposeBroadcastTopic()
+	sub, err := s.pubSub.Subscribe(topic, func(natMsg *nats.Msg) {
+		go s.receiveBroadcastTssMessage(natMsg.Data)
+	})
+	if err != nil {
+		s.ErrCh <- fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", topic, err)
+		return
+	}
+	s.broadcastSub = sub
 }
 
 func (s *session) ListenToIncomingMessageAsync() {
