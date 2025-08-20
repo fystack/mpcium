@@ -7,10 +7,6 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-type Subscription interface {
-	Unsubscribe() error
-}
-
 type PubSub interface {
 	Publish(topic string, message []byte) error
 	PublishWithReply(topic, reply string, data []byte, headers map[string]string) error
@@ -23,14 +19,6 @@ type natsPubSub struct {
 	mu       sync.Mutex
 }
 
-type natsSubscription struct {
-	subscription *nats.Subscription
-}
-
-func (ns *natsSubscription) Unsubscribe() error {
-	return ns.subscription.Unsubscribe()
-}
-
 func NewNATSPubSub(natsConn *nats.Conn) PubSub {
 	return &natsPubSub{
 		natsConn: natsConn,
@@ -41,7 +29,7 @@ func NewNATSPubSub(natsConn *nats.Conn) PubSub {
 func (n *natsPubSub) Publish(topic string, message []byte) error {
 	logger.Info("[NATS] Publishing message", "topic", topic)
 
-	// Invoke all handlers for the topic locally
+	// access local handlers for subscribed topics
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -50,17 +38,12 @@ func (n *natsPubSub) Publish(topic string, message []byte) error {
 		msgNats := &nats.Msg{
 			Subject: topic,   // Required: the topic to publish to
 			Data:    message, // The []byte payload
-			// Reply:   reply,       // Optional: reply subject for request-response
-			// Header:  make(nats.Header), // Optional: initialize headers if needed
 		}
 		for _, handler := range handlers {
 			handler(msgNats)
 		}
-	} else {
-		logger.Warn("[NATS] No handlers found for topic", "topic", topic)
 	}
 
-	// Publish the message to NATS with NoEcho option turned on
 	return n.natsConn.Publish(topic, message)
 }
 
@@ -74,6 +57,18 @@ func (n *natsPubSub) PublishWithReply(topic, reply string, data []byte, headers 
 	for k, v := range headers {
 		msg.Header.Set(k, v)
 	}
+
+	// access local handlers for subscribed topics
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	handlers, ok := n.handlers[topic]
+	if ok && len(handlers) != 0 {
+		for _, handler := range handlers {
+			handler(msg)
+		}
+	}
+
 	err := n.natsConn.PublishMsg(msg)
 	return err
 }
@@ -91,5 +86,11 @@ func (n *natsPubSub) Subscribe(topic string, handler func(*nats.Msg)) (Subscript
 	n.handlers[topic] = append(n.handlers[topic], handler)
 	n.mu.Unlock()
 
-	return &natsSubscription{subscription: sub}, nil
+	return &natsSubscription{subscription: sub, topic: topic, pubSub: n}, nil
+}
+
+func (n *natsPubSub) cleanupHandlers(topic string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.handlers, topic)
 }

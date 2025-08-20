@@ -152,7 +152,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	baseCtx, baseCancel := context.WithTimeout(context.Background(), KeyGenTimeOut)
 	defer baseCancel()
 
-	logger.Info("[KEY GEN] Key generation initiated")
+	logger.Info("[KEY GEN] Key generation result")
 
 	raw := natMsg.Data
 	var msg types.GenerateKeyMessage
@@ -170,7 +170,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 
 	walletID := msg.WalletID
 
-	logger.Info("[KEY GEN] Key generation initiated", "walletID", walletID)
+	logger.Info("[KEY GEN] Key generation result", "walletID", walletID)
 
 	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {

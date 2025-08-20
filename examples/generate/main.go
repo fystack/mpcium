@@ -29,7 +29,7 @@ func main() {
 	logger.Init(environment, false)
 
 	natsURL := viper.GetString("nats.url")
-	natsConn, err := nats.Connect(natsURL)
+	natsConn, err := nats.Connect(natsURL, nats.NoEcho())
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
