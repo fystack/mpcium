@@ -24,6 +24,20 @@ func TestGenerateKeyMessage_Raw(t *testing.T) {
 	assert.Equal(t, []byte("test-wallet-123"), raw)
 }
 
+func TestGenerateKeyMessage_Raw_IgnoresAuthorizerSigs(t *testing.T) {
+	msg := &GenerateKeyMessage{
+		WalletID:  "wallet-a",
+		Signature: []byte("sig"),
+		AuthorizerSignatures: []AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: []byte("s1")},
+		},
+	}
+
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	assert.Equal(t, []byte("wallet-a"), raw)
+}
+
 func TestGenerateKeyMessage_Sig(t *testing.T) {
 	signature := []byte("test-signature-bytes")
 	msg := &GenerateKeyMessage{
@@ -64,6 +78,24 @@ func TestSignTxMessage_Raw(t *testing.T) {
 	assert.Contains(t, string(raw), "secp256k1")
 	assert.Contains(t, string(raw), "BTC")
 	assert.Contains(t, string(raw), "tx-456")
+}
+
+func TestSignTxMessage_Raw_IgnoresAuthorizerSigs(t *testing.T) {
+	msg := &SignTxMessage{
+		KeyType:             KeyTypeSecp256k1,
+		WalletID:            "wallet-123",
+		NetworkInternalCode: "BTC",
+		TxID:                "tx-456",
+		Tx:                  []byte("transaction-data"),
+		Signature:           []byte("signature-data"),
+		AuthorizerSignatures: []AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: []byte("s1")},
+		},
+	}
+
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "s1")
 }
 
 func TestSignTxMessage_Sig(t *testing.T) {
@@ -127,6 +159,24 @@ func TestResharingMessage_Raw(t *testing.T) {
 	assert.Equal(t, expectedBytes, raw)
 }
 
+func TestResharingMessage_Raw_IgnoresAuthorizerSigs(t *testing.T) {
+	msg := &ResharingMessage{
+		SessionID:    "sess",
+		NodeIDs:      []string{"n1"},
+		NewThreshold: 1,
+		KeyType:      KeyTypeEd25519,
+		WalletID:     "w",
+		Signature:    []byte("reshare-signature"),
+		AuthorizerSignatures: []AuthorizerSignature{
+			{AuthorizerID: "auth2", Signature: []byte("s2")},
+		},
+	}
+
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "s2")
+}
+
 func TestResharingMessage_Sig(t *testing.T) {
 	signature := []byte("resharing-signature")
 	msg := &ResharingMessage{
@@ -178,6 +228,16 @@ func TestAllMessageTypesImplementInitiatorMessage(t *testing.T) {
 	var _ InitiatorMessage = &GenerateKeyMessage{}
 	var _ InitiatorMessage = &SignTxMessage{}
 	var _ InitiatorMessage = &ResharingMessage{}
+}
+
+func TestAuthorizerSigsAccessors(t *testing.T) {
+	g := &GenerateKeyMessage{AuthorizerSignatures: []AuthorizerSignature{{AuthorizerID: "a"}}}
+	s := &SignTxMessage{AuthorizerSignatures: []AuthorizerSignature{{AuthorizerID: "b"}}}
+	r := &ResharingMessage{AuthorizerSignatures: []AuthorizerSignature{{AuthorizerID: "c"}}}
+
+	assert.Equal(t, 1, len(g.AuthorizerSigs()))
+	assert.Equal(t, 1, len(s.AuthorizerSigs()))
+	assert.Equal(t, 1, len(r.AuthorizerSigs()))
 }
 
 func TestSignTxMessage_EmptyValues(t *testing.T) {

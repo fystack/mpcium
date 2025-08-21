@@ -129,7 +129,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
-	defer natsConn.Close()
 
 	pubsub := messaging.NewNATSPubSub(natsConn)
 	keygenBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.KeygenBrokerStream, []string{
@@ -162,7 +161,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	logger.Info("Node is running", "ID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
-	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging)
+	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
 
 	mpcNode := mpc.NewNode(
 		nodeID,
@@ -175,9 +174,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		identityStore,
 	)
 	defer mpcNode.Close()
-
-	// ECDH session for DH key exchange
-	ecdhSession := mpcNode.GetECDHSession()
 
 	eventConsumer := eventconsumer.NewEventConsumer(
 		mpcNode,
@@ -197,8 +193,8 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	timeoutConsumer.Run()
 	defer timeoutConsumer.Close()
-	keygenConsumer := eventconsumer.NewKeygenConsumer(natsConn, keygenBroker, pubsub, peerRegistry)
-	signingConsumer := eventconsumer.NewSigningConsumer(natsConn, signingBroker, pubsub, peerRegistry)
+	keygenConsumer := eventconsumer.NewKeygenConsumer(natsConn, keygenBroker, pubsub, peerRegistry, genKeyResultQueue)
+	signingConsumer := eventconsumer.NewSigningConsumer(natsConn, signingBroker, pubsub, peerRegistry, singingResultQueue)
 
 	// Make the node ready before starting the signing consumer
 	if err := peerRegistry.Ready(); err != nil {
@@ -206,12 +202,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 
-	logger.Info("Waiting for ECDH key exchange to complete...", "nodeID", nodeID)
-	if err := ecdhSession.WaitForExchangeComplete(); err != nil {
-		logger.Fatal("ECDH exchange failed", err)
-	}
-
-	logger.Info("ECDH key exchange completed successfully, starting consumers...", "nodeID", nodeID)
+	logger.Info("Starting consumers", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
 	//Setup signal handling to cancel context on termination signals.
 	go func() {
@@ -221,16 +212,17 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Warn("Shutdown signal received, canceling context...")
 		cancel()
 
+		// Resign from peer registry first (before closing NATS)
+		if err := peerRegistry.Resign(); err != nil {
+			logger.Error("Failed to resign from peer registry", err)
+		}
+
 		// Gracefully close consumers
 		if err := keygenConsumer.Close(); err != nil {
 			logger.Error("Failed to close keygen consumer", err)
 		}
 		if err := signingConsumer.Close(); err != nil {
 			logger.Error("Failed to close signing consumer", err)
-		}
-
-		if err := ecdhSession.Close(); err != nil {
-			logger.Error("Failed to close ECDH session", err)
 		}
 
 		err := natsConn.Drain()
@@ -262,21 +254,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return
 		}
 		logger.Info("Signing consumer finished successfully")
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-appContext.Done():
-				return
-			case err := <-ecdhSession.ErrChan():
-				if err != nil {
-					logger.Error("ECDH session error", err)
-					errChan <- fmt.Errorf("ecdh session error: %w", err)
-					return
-				}
-			}
-		}
 	}()
 
 	go func() {

@@ -36,6 +36,7 @@ type Store interface {
 	// GetPublicKey retrieves a node's public key by its ID
 	GetPublicKey(nodeID string) ([]byte, error)
 	VerifyInitiatorMessage(msg types.InitiatorMessage) error
+	AuthorizeInitiatorMessage(operation string, msg types.InitiatorMessage) error
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
 
@@ -44,6 +45,8 @@ type Store interface {
 
 	SetSymmetricKey(peerID string, key []byte)
 	GetSymmetricKey(peerID string) ([]byte, error)
+	RemoveSymmetricKey(peerID string)
+	GetSymetricKeyCount() int
 	CheckSymmetricKeyComplete(desired int) bool
 
 	EncryptMessage(plaintext []byte, peerID string) ([]byte, error)
@@ -62,6 +65,9 @@ type fileStore struct {
 	privateKey      []byte
 	initiatorPubKey []byte
 	symmetricKeys   map[string][]byte
+
+	// Cached authorizer public keys by authorizer ID
+	authorizerPubKeys map[string][]byte
 }
 
 // NewFileStore creates a new identity store
@@ -103,12 +109,12 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 	}
 
 	store := &fileStore{
-		identityDir:     identityDir,
-		currentNodeName: nodeName,
-		publicKeys:      make(map[string][]byte),
-		privateKey:      privateKey,
-		initiatorPubKey: initiatorPubKey,
-		symmetricKeys:   make(map[string][]byte),
+		identityDir:       identityDir,
+		currentNodeName:   nodeName,
+		publicKeys:        make(map[string][]byte),
+		privateKey:        privateKey,
+		initiatorPubKey:   initiatorPubKey,
+		authorizerPubKeys: make(map[string][]byte),
 	}
 
 	// Check that each node in peers.json has an identity file
@@ -141,6 +147,27 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 		}
 
 		store.publicKeys[identity.NodeID] = key
+	}
+
+	// Load authorizer public keys from configuration if present
+	authzAuthorizers := viper.GetStringMap("authorization.authorizers")
+	for id, v := range authzAuthorizers {
+		// v is expected to be a map with key "pubkey"
+		if entry, ok := v.(map[string]interface{}); ok {
+			if pubHexRaw, ok := entry["pubkey"]; ok {
+				pubHex, ok := pubHexRaw.(string)
+				if !ok || pubHex == "" {
+					logger.Warn("Invalid or empty pubkey for authorizer", "authorizerID", id)
+					continue
+				}
+				key, err := hex.DecodeString(pubHex)
+				if err != nil {
+					logger.Warn("Invalid hex pubkey for authorizer", "authorizerID", id, "error", err)
+					continue
+				}
+				store.authorizerPubKeys[id] = key
+			}
+		}
 	}
 
 	return store, nil
@@ -238,7 +265,21 @@ func (s *fileStore) GetSymmetricKey(peerID string) ([]byte, error) {
 	return nil, fmt.Errorf("SymmetricKey key not found for node ID: %s", peerID)
 }
 
+func (s *fileStore) RemoveSymmetricKey(peerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.symmetricKeys, peerID)
+}
+
+func (s *fileStore) GetSymetricKeyCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.symmetricKeys)
+}
+
 func (s *fileStore) CheckSymmetricKeyComplete(desired int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.symmetricKeys) == desired
 }
 
@@ -375,6 +416,98 @@ func (s *fileStore) VerifyInitiatorMessage(msg types.InitiatorMessage) error {
 	// Verify the signature using the initiator's public key
 	if !ed25519.Verify(s.initiatorPubKey, msgBytes, signature) {
 		return fmt.Errorf("invalid signature from initiator")
+	}
+
+	return nil
+}
+
+// AuthorizeInitiatorMessage verifies that a message has sufficient valid authorizer signatures
+// according to the configured authorization policy. If authorization is disabled or the
+// required threshold resolves to zero, this is a no-op.
+func (s *fileStore) AuthorizeInitiatorMessage(operation string, msg types.InitiatorMessage) error {
+	// If authorization is not enabled, allow
+	if !viper.GetBool("authorization.enabled") {
+		return nil
+	}
+
+	// Determine required threshold: operation-specific overrides default
+	defaultThreshold := viper.GetInt("authorization.default_threshold")
+	opPolicy := viper.GetStringMap("authorization.operation_policies." + operation)
+	required := 0
+	if val, ok := opPolicy["required_authorizers"]; ok {
+		switch t := val.(type) {
+		case int:
+			required = t
+		case int64:
+			required = int(t)
+		case float64:
+			required = int(t)
+		}
+	}
+	if required <= 0 {
+		required = defaultThreshold
+	}
+	if required <= 0 {
+		// No requirement; authorization effectively disabled
+		return nil
+	}
+
+	// Build allowed authorizer ID set
+	allowedIDs := map[string]struct{}{}
+	if idsVal, ok := opPolicy["authorizer_ids"]; ok {
+		switch ids := idsVal.(type) {
+		case []interface{}:
+			for _, idv := range ids {
+				if sId, ok := idv.(string); ok && sId != "" {
+					allowedIDs[sId] = struct{}{}
+				}
+			}
+		case []string:
+			for _, sId := range ids {
+				if sId != "" {
+					allowedIDs[sId] = struct{}{}
+				}
+			}
+		}
+	}
+	// If no explicit allowed IDs configured, allow any configured authorizer
+	if len(allowedIDs) == 0 {
+		for id := range s.authorizerPubKeys {
+			allowedIDs[id] = struct{}{}
+		}
+	}
+
+	// Prepare payload
+	msgBytes, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("authorization: failed to get raw payload: %w", err)
+	}
+
+	// Count valid signatures
+	seen := map[string]struct{}{}
+	validCount := 0
+	for _, sig := range msg.AuthorizerSigs() {
+		if sig.AuthorizerID == "" || len(sig.Signature) == 0 {
+			continue
+		}
+		if _, dup := seen[sig.AuthorizerID]; dup {
+			continue
+		}
+		if _, ok := allowedIDs[sig.AuthorizerID]; !ok {
+			continue
+		}
+		pub, ok := s.authorizerPubKeys[sig.AuthorizerID]
+		if !ok || len(pub) == 0 {
+			continue
+		}
+		if ed25519.Verify(pub, msgBytes, sig.Signature) {
+			seen[sig.AuthorizerID] = struct{}{}
+			validCount++
+		}
+	}
+
+	if validCount < required {
+		return fmt.Errorf("authorization failed for %s: %d/%d valid authorizer signatures", operation, validCount, required)
 	}
 
 	return nil

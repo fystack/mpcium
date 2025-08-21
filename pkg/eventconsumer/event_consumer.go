@@ -166,6 +166,13 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		return
 	}
 
+	// Optional multi-authorizer check for keygen
+	if err := ec.identityStore.AuthorizeInitiatorMessage("keygen", &msg); err != nil {
+		logger.Error("Authorization failed for keygen", err)
+		ec.handleKeygenSessionError(msg.WalletID, err, "Authorization failed for keygen", natMsg)
+		return
+	}
+
 	walletID := msg.WalletID
 	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {
@@ -350,6 +357,12 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 	err = ec.identityStore.VerifyInitiatorMessage(&msg)
 	if err != nil {
 		logger.Error("Failed to verify initiator message", err)
+		return
+	}
+
+	// Optional multi-authorizer check for signing
+	if err := ec.identityStore.AuthorizeInitiatorMessage("signing", &msg); err != nil {
+		logger.Error("Authorization failed for signing", err)
 		return
 	}
 
@@ -586,6 +599,13 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 			logger.Error("Failed to verify initiator message", err)
 			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to verify initiator message", natMsg)
+			return
+		}
+
+		// Optional multi-authorizer check for reshare
+		if err := ec.identityStore.AuthorizeInitiatorMessage("reshare", &msg); err != nil {
+			logger.Error("Authorization failed for reshare", err)
+			ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Authorization failed for reshare", natMsg)
 			return
 		}
 

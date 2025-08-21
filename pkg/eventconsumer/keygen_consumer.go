@@ -2,6 +2,8 @@ package eventconsumer
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/types"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -31,22 +34,30 @@ type KeygenConsumer interface {
 
 // keygenConsumer implements KeygenConsumer.
 type keygenConsumer struct {
-	natsConn     *nats.Conn
-	pubsub       messaging.PubSub
-	jsBroker     messaging.MessageBroker
-	peerRegistry mpc.PeerRegistry
+	natsConn          *nats.Conn
+	pubsub            messaging.PubSub
+	jsBroker          messaging.MessageBroker
+	peerRegistry      mpc.PeerRegistry
+	keygenResultQueue messaging.MessageQueue
 
 	// jsSub holds the JetStream subscription, so it can be cleaned up during Close().
 	jsSub messaging.MessageSubscription
 }
 
 // NewKeygenConsumer returns a new instance of KeygenConsumer.
-func NewKeygenConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, pubsub messaging.PubSub, peerRegistry mpc.PeerRegistry) KeygenConsumer {
+func NewKeygenConsumer(
+	natsConn *nats.Conn,
+	jsBroker messaging.MessageBroker,
+	pubsub messaging.PubSub,
+	peerRegistry mpc.PeerRegistry,
+	keygenResultQueue messaging.MessageQueue,
+) KeygenConsumer {
 	return &keygenConsumer{
-		natsConn:     natsConn,
-		pubsub:       pubsub,
-		jsBroker:     jsBroker,
-		peerRegistry: peerRegistry,
+		natsConn:          natsConn,
+		pubsub:            pubsub,
+		jsBroker:          jsBroker,
+		peerRegistry:      peerRegistry,
+		keygenResultQueue: keygenResultQueue,
 	}
 }
 
@@ -60,6 +71,9 @@ func (sc *keygenConsumer) waitForAllPeersReadyToGenKey(ctx context.Context) erro
 	for {
 		select {
 		case <-ctx.Done():
+			if ctx.Err() == context.Canceled {
+				return nil
+			}
 			return ctx.Err()
 		case <-ticker.C:
 			allPeersReady := sc.peerRegistry.ArePeersReady()
@@ -80,6 +94,9 @@ func (sc *keygenConsumer) waitForAllPeersReadyToGenKey(ctx context.Context) erro
 func (sc *keygenConsumer) Run(ctx context.Context) error {
 	// Wait for sufficient peers before starting to consume messages
 	if err := sc.waitForAllPeersReadyToGenKey(ctx); err != nil {
+		if err == context.Canceled {
+			return nil
+		}
 		return fmt.Errorf("failed to wait for sufficient peers: %w", err)
 	}
 
@@ -104,9 +121,22 @@ func (sc *keygenConsumer) Run(ctx context.Context) error {
 }
 
 func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
+	raw := msg.Data()
+	var keygenMsg types.GenerateKeyMessage
+	sessionID := msg.Headers().Get("SessionID")
+
+	err := json.Unmarshal(raw, &keygenMsg)
+	if err != nil {
+		logger.Error("SigningConsumer: Failed to unmarshal keygen message", err)
+		sc.handleKeygenError(keygenMsg, event.ErrorCodeUnmarshalFailure, err, sessionID)
+		_ = msg.Ack()
+		return
+	}
 
 	if !sc.peerRegistry.ArePeersReady() {
-		logger.Warn("KeygenConsumer: Not all peers are ready to sign, skipping message processing")
+		logger.Warn("KeygenConsumer: Not all peers are ready to gen key, skipping message processing")
+		sc.handleKeygenError(keygenMsg, event.ErrorCodeClusterNotReady, errors.New("not all peers are ready"), sessionID)
+		_ = msg.Ack()
 		return
 	}
 
@@ -159,6 +189,33 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 
 	logger.Warn("KeygenConsumer: Timeout waiting for keygen event response")
 	_ = msg.Nak()
+}
+
+func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, errorCode event.ErrorCode, err error, sessionID string) {
+	keygenResult := event.KeygenResultEvent{
+		ResultType:  event.ResultTypeError,
+		ErrorCode:   string(errorCode),
+		WalletID:    keygenMsg.WalletID,
+		ErrorReason: err.Error(),
+	}
+
+	keygenResultBytes, err := json.Marshal(keygenResult)
+	if err != nil {
+		logger.Error("Failed to marshal keygen result event", err,
+			"walletID", keygenResult.WalletID,
+		)
+		return
+	}
+
+	topic := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, keygenResult.WalletID)
+	err = sc.keygenResultQueue.Enqueue(topic, keygenResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: buildIdempotentKey(keygenMsg.WalletID, sessionID, mpc.TypeGenerateWalletResultFmt),
+	})
+	if err != nil {
+		logger.Error("Failed to enqueue keygen result event", err,
+			"walletID", keygenMsg.WalletID,
+		)
+	}
 }
 
 // Close unsubscribes from the JetStream subject and cleans up resources.
