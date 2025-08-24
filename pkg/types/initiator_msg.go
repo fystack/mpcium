@@ -7,6 +7,7 @@ type KeyType string
 const (
 	KeyTypeSecp256k1 KeyType = "secp256k1"
 	KeyTypeEd25519   KeyType = "ed25519"
+	KeyTypeP256      KeyType = "p256"
 )
 
 // InitiatorMessage is anything that carries a payload to verify and its signature.

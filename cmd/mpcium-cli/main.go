@@ -122,6 +122,12 @@ func main() {
 						Value:   false,
 						Usage:   "Overwrite identity files if they already exist",
 					},
+					&cli.StringFlag{
+						Name:    "algorithm",
+						Aliases: []string{"a"},
+						Value:   "ed25519",
+						Usage:   "Algorithm to use for key generation (ed25519,p256)",
+					},
 				},
 				Action: generateInitiatorIdentity,
 			},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/fystack/mpcium/pkg/client"
@@ -21,6 +22,26 @@ func main() {
 	config.InitViperConfig()
 	logger.Init(environment, true)
 
+	algorithm := viper.GetString("event_initiator_algorithm")
+	if algorithm == "" {
+		algorithm = string(types.KeyTypeEd25519)
+	}
+
+	// Validate algorithm
+	if !slices.Contains(
+		[]string{string(types.KeyTypeEd25519), string(types.KeyTypeP256)},
+		algorithm,
+	) {
+		logger.Fatal(
+			fmt.Sprintf(
+				"invalid algorithm: %s. Must be %s or %s",
+				algorithm,
+				types.KeyTypeEd25519,
+				types.KeyTypeP256,
+			),
+			nil,
+		)
+	}
 	natsURL := viper.GetString("nats.url")
 	natsConn, err := nats.Connect(natsURL)
 	if err != nil {
@@ -30,17 +51,29 @@ func main() {
 	defer natsConn.Close()
 
 	mpcClient := client.NewMPCClient(client.Options{
-		NatsConn: natsConn,
-		KeyPath:  "./event_initiator.key",
+		Algorithm: algorithm,
+		NatsConn:  natsConn,
+		KeyPath:   "./event_initiator.key",
 	})
 
 	// 2) Once wallet exists, immediately fire a SignTransaction
 	txID := uuid.New().String()
 	dummyTx := []byte("deadbeef") // replace with real transaction bytes
 
+	// Determine key type based on algorithm
+	var keyType types.KeyType
+	switch algorithm {
+	case string(types.KeyTypeEd25519):
+		keyType = types.KeyTypeEd25519
+	case string(types.KeyTypeP256):
+		keyType = types.KeyTypeP256
+	default:
+		logger.Fatal("Unsupported algorithm", nil)
+	}
+
 	txMsg := &types.SignTxMessage{
-		KeyType:             types.KeyTypeEd25519,
-		WalletID:            "c47cd6f4-8ef4-4d77-9d2b-37f9d062e615",
+		KeyType:             keyType,
+		WalletID:            "ad24f678-b04b-4149-bcf6-bf9c90df8e63", // Use the generated wallet ID
 		NetworkInternalCode: "solana-devnet",
 		TxID:                txID,
 		Tx:                  dummyTx,

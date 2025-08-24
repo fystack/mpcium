@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
+	"github.com/fystack/mpcium/pkg/encryption"
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/eventconsumer"
 	"github.com/fystack/mpcium/pkg/logger"
@@ -36,6 +38,12 @@ type MPCClient interface {
 	OnResharingResult(callback func(event event.ResharingResultEvent)) error
 }
 
+type InitiatorPrivKey struct {
+	Algorithm types.KeyType
+	Ed25519   ed25519.PrivateKey
+	P256      *ecdsa.PrivateKey
+}
+
 type mpcClient struct {
 	signingBroker       messaging.MessageBroker
 	keygenBroker        messaging.MessageBroker
@@ -43,7 +51,10 @@ type mpcClient struct {
 	genKeySuccessQueue  messaging.MessageQueue
 	signResultQueue     messaging.MessageQueue
 	reshareSuccessQueue messaging.MessageQueue
-	privKey             ed25519.PrivateKey
+	// privKey             ed25519.PrivateKey
+	// privKeyECDSA        *ecdsa.PrivateKey
+	initiatorPrivKey *InitiatorPrivKey
+	algorithm        string
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -57,15 +68,23 @@ type Options struct {
 	// Encryption options
 	Encrypted bool   // Whether the key is encrypted
 	Password  string // Password for encrypted key
+
+	// Algorithm for key type
+	Algorithm string // Either "ed25519" or "p256" (default: "ed25519")
 }
 
 // NewMPCClient creates a new MPC client using the provided options.
-// It reads the Ed25519 private key from disk and sets up messaging connections.
+// It reads the Ed25519 or P256 private key from disk and sets up messaging connections.
 // If the key is encrypted (.age file), decryption options must be provided in the config.
 func NewMPCClient(opts Options) MPCClient {
 	// Set default paths if not provided
 	if opts.KeyPath == "" {
 		opts.KeyPath = filepath.Join(".", "event_initiator.key")
+	}
+
+	// Set default algorithm if not provided
+	if opts.Algorithm == "" {
+		opts.Algorithm = "ed25519"
 	}
 
 	if strings.HasSuffix(opts.KeyPath, ".age") {
@@ -105,27 +124,49 @@ func NewMPCClient(opts Options) MPCClient {
 		logger.Fatal("No private key file found", nil)
 	}
 
-	privHex := string(privHexBytes)
-	// Decode private key from hex
-	privSeed, err := hex.DecodeString(privHex)
-	if err != nil {
-		fmt.Println("Failed to decode private key hex:", err)
-		os.Exit(1)
+	var priv ed25519.PrivateKey
+	var privECDSA *ecdsa.PrivateKey
+
+	if opts.Algorithm == "p256" {
+		// Parse P256 key
+		privECDSA, err = encryption.ParseP256PrivateKey(privHexBytes)
+		if err != nil {
+			logger.Fatal("Failed to parse P256 private key", err)
+		}
+	} else {
+		// Parse Ed25519 key (default behavior)
+		privHex := string(privHexBytes)
+		// Decode private key from hex
+		privSeed, err := hex.DecodeString(privHex)
+		if err != nil {
+			fmt.Println("Failed to decode private key hex:", err)
+			os.Exit(1)
+		}
+
+		// Reconstruct full Ed25519 private key from seed
+		priv = ed25519.NewKeyFromSeed(privSeed)
 	}
 
-	// Reconstruct full Ed25519 private key from seed
-	priv := ed25519.NewKeyFromSeed(privSeed)
-
 	// 2) Create the PubSub for both publish & subscribe
-	signingBroker, err := messaging.NewJetStreamBroker(context.Background(), opts.NatsConn, "mpc-signing", []string{
-		"mpc.signing_request.*",
-	})
+	signingBroker, err := messaging.NewJetStreamBroker(
+		context.Background(),
+		opts.NatsConn,
+		"mpc-signing",
+		[]string{
+			"mpc.signing_request.*",
+		},
+	)
 	if err != nil {
 		logger.Fatal("Failed to create signing jetstream broker", err)
 	}
-	keygenBroker, err := messaging.NewJetStreamBroker(context.Background(), opts.NatsConn, "mpc-keygen", []string{
-		"mpc.keygen_request.*",
-	})
+	keygenBroker, err := messaging.NewJetStreamBroker(
+		context.Background(),
+		opts.NatsConn,
+		"mpc-keygen",
+		[]string{
+			"mpc.keygen_request.*",
+		},
+	)
 	if err != nil {
 		logger.Fatal("Failed to create keygen jetstream broker", err)
 	}
@@ -142,6 +183,17 @@ func NewMPCClient(opts Options) MPCClient {
 	signResultQueue := manager.NewMessageQueue("mpc_signing_result")
 	reshareSuccessQueue := manager.NewMessageQueue("mpc_reshare_result")
 
+	// Create initiatorPrivKey based on algorithm
+	initiatorPrivKey := &InitiatorPrivKey{
+		Algorithm: types.KeyType(opts.Algorithm),
+		Ed25519:   priv,
+	}
+
+	// Only set P256 key if it exists (for p256 algorithm)
+	if privECDSA != nil {
+		initiatorPrivKey.P256 = privECDSA
+	}
+
 	return &mpcClient{
 		signingBroker:       signingBroker,
 		keygenBroker:        keygenBroker,
@@ -149,7 +201,10 @@ func NewMPCClient(opts Options) MPCClient {
 		genKeySuccessQueue:  genKeySuccessQueue,
 		signResultQueue:     signResultQueue,
 		reshareSuccessQueue: reshareSuccessQueue,
-		privKey:             priv,
+		// privKey:             priv,
+		// privKeyECDSA:        privECDSA,
+		initiatorPrivKey: initiatorPrivKey,
+		algorithm: opts.Algorithm,
 	}
 }
 
@@ -187,8 +242,24 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 	if err != nil {
 		return fmt.Errorf("CreateWallet: raw payload error: %w", err)
 	}
-	// sign
-	msg.Signature = ed25519.Sign(c.privKey, raw)
+	logger.Info("Raw payload for signing", "raw", string(raw), "raw_bytes", raw)
+	// sign based on algorithm
+	var signature []byte
+	if c.algorithm == "p256" {
+		if c.initiatorPrivKey.P256.Curve == nil {
+			return fmt.Errorf("CreateWallet: P256 private key not initialized")
+		}
+		signature, err = encryption.SignWithP256(c.initiatorPrivKey.P256, raw)
+		if err != nil {
+			return fmt.Errorf("CreateWallet: failed to create P256 signature: %w", err)
+		}
+		if signature == nil {
+			return fmt.Errorf("CreateWallet: failed to create P256 signature")
+		}
+	} else {
+		signature = ed25519.Sign(c.initiatorPrivKey.Ed25519, raw)
+	}
+	msg.Signature = signature
 
 	bytes, err := json.Marshal(msg)
 	if err != nil {
@@ -227,8 +298,23 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 	if err != nil {
 		return fmt.Errorf("SignTransaction: raw payload error: %w", err)
 	}
-	// sign
-	msg.Signature = ed25519.Sign(c.privKey, raw)
+	// sign based on algorithm
+	var signature []byte
+	if c.algorithm == "p256" {
+		if c.initiatorPrivKey.P256.Curve == nil {
+			return fmt.Errorf("SignTransaction: P256 private key not initialized")
+		}
+		signature, err = encryption.SignWithP256(c.initiatorPrivKey.P256, raw)
+		if err != nil {
+			return fmt.Errorf("SignTransaction: failed to create P256 signature: %w", err)
+		}
+		if signature == nil {
+			return fmt.Errorf("SignTransaction: failed to create P256 signature")
+		}
+	} else {
+		signature = ed25519.Sign(c.initiatorPrivKey.Ed25519, raw)
+	}
+	msg.Signature = signature
 
 	bytes, err := json.Marshal(msg)
 	if err != nil {
@@ -265,8 +351,23 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 	if err != nil {
 		return fmt.Errorf("Resharing: raw payload error: %w", err)
 	}
-	// sign
-	msg.Signature = ed25519.Sign(c.privKey, raw)
+	// sign based on algorithm
+	var signature []byte
+	if c.algorithm == "p256" {
+		if c.initiatorPrivKey.P256.Curve == nil {
+			return fmt.Errorf("Resharing: P256 private key not initialized")
+		}
+		signature, err = encryption.SignWithP256(c.initiatorPrivKey.P256, raw)
+		if err != nil {
+			return fmt.Errorf("Resharing: failed to create P256 signature: %w", err)
+		}
+		if signature == nil {
+			return fmt.Errorf("Resharing: failed to create P256 signature")
+		}
+	} else {
+		signature = ed25519.Sign(c.initiatorPrivKey.Ed25519, raw)
+	}
+	msg.Signature = signature
 
 	bytes, err := json.Marshal(msg)
 	if err != nil {
