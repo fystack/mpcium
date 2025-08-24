@@ -126,5 +126,11 @@ func (d *natsDirectMessaging) Listen(topic string, handler func(data []byte)) (S
 	d.handlers[topic] = append(d.handlers[topic], handler)
 	d.mu.Unlock()
 
-	return &natsSubscription{subscription: sub}, nil
+	return &natsSubscription{subscription: sub, topic: topic, direct: d}, nil
+}
+
+func (d *natsDirectMessaging) cleanupHandlers(topic string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.handlers, topic)
 }

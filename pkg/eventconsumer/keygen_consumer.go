@@ -90,7 +90,7 @@ func (sc *keygenConsumer) waitForAllPeersReadyToGenKey(ctx context.Context) erro
 	}
 }
 
-// Run subscribes to signing events and processes them until the context is canceled.
+// Run subscribes to keygen events and processes them until the context is canceled.
 func (sc *keygenConsumer) Run(ctx context.Context) error {
 	// Wait for sufficient peers before starting to consume messages
 	if err := sc.waitForAllPeersReadyToGenKey(ctx); err != nil {
@@ -110,7 +110,7 @@ func (sc *keygenConsumer) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to keygen events: %w", err)
 	}
 	sc.jsSub = sub
-	logger.Info("SigningConsumer: Subscribed to keygen events")
+	logger.Info("KeygenConsumer: Subscribed to keygen events")
 
 	// Block until context cancellation.
 	<-ctx.Done()
@@ -140,8 +140,10 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		return
 	}
 
-	// Create a reply inbox to receive the signing event response.
+	// Create a reply inbox to receive the keygen event response.
 	replyInbox := nats.NewInbox()
+
+	logger.Info("Newreplybox id", "topic", replyInbox)
 
 	// Use a synchronous subscription for the reply inbox.
 	replySub, err := sc.natsConn.SubscribeSync(replyInbox)
@@ -156,12 +158,12 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		}
 	}()
 
-	// Publish the signing event with the reply inbox.
+	// Publish the keygen event with the reply inbox.
 	headers := map[string]string{
 		"SessionID": uuid.New().String(),
 	}
 	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data(), headers); err != nil {
-		logger.Error("KeygenConsumer: Failed to publish signing event with reply", err)
+		logger.Error("KeygenConsumer: Failed to publish keygen event with reply", err)
 		_ = msg.Nak()
 		return
 	}
