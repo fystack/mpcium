@@ -17,20 +17,30 @@ type InitiatorMessage interface {
 	Sig() []byte
 	// InitiatorID returns the ID whose public key we have to look up.
 	InitiatorID() string
+	// AuthorizerSigs returns the optional list of authorizer signatures.
+	AuthorizerSigs() []AuthorizerSignature
+}
+
+// AuthorizerSignature represents an approval signature from an external authorizer.
+type AuthorizerSignature struct {
+	AuthorizerID string `json:"authorizer_id"`
+	Signature    []byte `json:"signature"`
 }
 
 type GenerateKeyMessage struct {
-	WalletID  string `json:"wallet_id"`
-	Signature []byte `json:"signature"`
+	WalletID             string                `json:"wallet_id"`
+	Signature            []byte                `json:"signature"`
+	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
 
 type SignTxMessage struct {
-	KeyType             KeyType `json:"key_type"`
-	WalletID            string  `json:"wallet_id"`
-	NetworkInternalCode string  `json:"network_internal_code"`
-	TxID                string  `json:"tx_id"`
-	Tx                  []byte  `json:"tx"`
-	Signature           []byte  `json:"signature"`
+	KeyType              KeyType               `json:"key_type"`
+	WalletID             string                `json:"wallet_id"`
+	NetworkInternalCode  string                `json:"network_internal_code"`
+	TxID                 string                `json:"tx_id"`
+	Tx                   []byte                `json:"tx"`
+	Signature            []byte                `json:"signature"`
+	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
 
 func (m *SignTxMessage) Raw() ([]byte, error) {
@@ -59,6 +69,10 @@ func (m *SignTxMessage) InitiatorID() string {
 	return m.TxID
 }
 
+func (m *SignTxMessage) AuthorizerSigs() []AuthorizerSignature {
+	return m.AuthorizerSignatures
+}
+
 func (m *GenerateKeyMessage) Raw() ([]byte, error) {
 	return []byte(m.WalletID), nil
 }
@@ -69,4 +83,8 @@ func (m *GenerateKeyMessage) Sig() []byte {
 
 func (m *GenerateKeyMessage) InitiatorID() string {
 	return m.WalletID
+}
+
+func (m *GenerateKeyMessage) AuthorizerSigs() []AuthorizerSignature {
+	return m.AuthorizerSignatures
 }
