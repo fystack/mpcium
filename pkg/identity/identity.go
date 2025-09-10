@@ -260,6 +260,7 @@ func loadPrivateKey(identityDir, nodeName string, decrypt bool, agePasswordFile 
 		return "", fmt.Errorf("invalid encrypted key path for node %s: %w", nodeName, err)
 	}
 
+	logger.Info("Encrypted key path", "path", encryptedKeyPath)
 	unencryptedKeyPath, err := pathutil.SafePath(identityDir, unencryptedKeyFileName)
 	if err != nil {
 		return "", fmt.Errorf("invalid unencrypted key path for node %s: %w", nodeName, err)
