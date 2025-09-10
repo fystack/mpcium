@@ -1,19 +1,20 @@
 module github.com/fystack/mpcium
 
-go 1.23.0
+go 1.23.8
 
-toolchain go1.23.5
+toolchain go1.24.7
 
 require (
 	filippo.io/age v1.2.1
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/aws-sdk-go-v2/config v1.31.4
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.8
 	github.com/aws/aws-sdk-go-v2/service/kms v1.45.0
 	github.com/bnb-chain/tss-lib/v2 v2.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3
 	github.com/dgraph-io/badger/v4 v4.7.0
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/consul/api v1.26.1
+	github.com/hashicorp/consul/api v1.32.1
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/nats-io/nats.go v1.31.0
 	github.com/rs/zerolog v1.31.0
@@ -29,7 +30,6 @@ require (
 	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.38.2 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.5 // indirect
@@ -96,7 +96,7 @@ require (
 	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.21.0 // indirect
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
