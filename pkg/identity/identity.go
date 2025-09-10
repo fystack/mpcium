@@ -61,6 +61,19 @@ type InitiatorKey struct {
 	P256      *ecdsa.PublicKey
 }
 
+// AuthorizerInfo represents a single authorizer with their public key and algorithm
+type AuthorizerInfo struct {
+	PublicKey string `json:"public_key"`
+	Algorithm string `json:"algorithm"` // "ed25519" or "secp256k1"
+}
+
+// AuthorizationConfig holds the cached authorization configuration
+type AuthorizationConfig struct {
+	Enabled              bool
+	RequiredAuthorizers  int
+	AuthorizerPublicKeys map[string]AuthorizerInfo // key is authorizer ID
+}
+
 // fileStore implements the Store interface using the filesystem
 type fileStore struct {
 	identityDir     string
@@ -73,6 +86,7 @@ type fileStore struct {
 	privateKey    []byte
 	initiatorKey  *InitiatorKey
 	symmetricKeys map[string][]byte
+	authConfig    AuthorizationConfig
 }
 
 // NewFileStore creates a new identity store
@@ -113,6 +127,7 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 		publicKeys:      make(map[string][]byte),
 		privateKey:      privateKey,
 		initiatorKey:    initiatorKey,
+		authorizerInfo:  make(map[string]AuthorizerInfo),
 		symmetricKeys:   make(map[string][]byte),
 	}
 
