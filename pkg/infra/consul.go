@@ -33,7 +33,15 @@ func GetConsulClient(environment string) *api.Client {
 	config.Address = viper.GetString("consul.address")
 	config.WaitTime = 10 * time.Second
 	// Ping the Consul server to verify connectivity
-
+	logger.Info("Consul config",
+		"environment", environment,
+		"address", config.Address,
+		"scheme", config.Scheme,
+		"datacenter", config.Datacenter,
+		"wait_time", config.WaitTime,
+		"token", config.Token,
+		"http_auth", config.HttpAuth,
+	)
 	client, err := api.NewClient(config)
 	if err != nil {
 		logger.Fatal("Failed to create consul client", err)

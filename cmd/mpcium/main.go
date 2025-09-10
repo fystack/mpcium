@@ -413,13 +413,6 @@ func NewConsulClient(addr string) *api.Client {
 
 func LoadPeersFromConsul(consulClient *api.Client) []config.Peer { // Create a Consul Key-Value store client
 	kv := consulClient.KV()
-	keys, _, err := kv.Keys("", "", nil)
-	if err != nil {
-		logger.Fatal("Error load keys", err)
-	}
-	for _, key := range keys {
-		fmt.Println("Key:", key)
-	}
 	peers, err := config.LoadPeersFromConsul(kv, "mpc_peers/")
 	if err != nil {
 		logger.Fatal("Failed to load peers from Consul", err)
