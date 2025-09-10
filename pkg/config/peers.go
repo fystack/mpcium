@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/hashicorp/consul/api"
 )
 
@@ -17,6 +18,13 @@ func LoadPeersFromConsul(kv *api.KV, prefix string) ([]Peer, error) {
 	if err != nil {
 		return nil, err
 	}
+	debugPeers, _, err := kv.List("mpc_peers", nil)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("Loaded peers from consul prefix", "preifx", prefix)
+	logger.Info("Loaded peers from consul", "pairs", pairs)
+	logger.Info("Loaded peers from consul", "peers2", debugPeers)
 
 	fmt.Println("List of node IDs with the prefix: " + prefix)
 	peers := make([]Peer, 0, len(pairs))
