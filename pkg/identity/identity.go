@@ -1,12 +1,15 @@
 package identity
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"strings"
 	"sync"
@@ -53,6 +56,19 @@ type Store interface {
 	DecryptMessage(cipher []byte, peerID string) ([]byte, error)
 }
 
+// AuthorizerInfo represents a single authorizer with their public key and algorithm
+type AuthorizerInfo struct {
+	PublicKey string `json:"public_key"`
+	Algorithm string `json:"algorithm"` // "ed25519" or "secp256k1"
+}
+
+// AuthorizationConfig holds the cached authorization configuration
+type AuthorizationConfig struct {
+	Enabled              bool
+	RequiredAuthorizers  int
+	AuthorizerPublicKeys map[string]AuthorizerInfo // key is authorizer ID
+}
+
 // fileStore implements the Store interface using the filesystem
 type fileStore struct {
 	identityDir     string
@@ -66,8 +82,11 @@ type fileStore struct {
 	initiatorPubKey []byte
 	symmetricKeys   map[string][]byte
 
-	// Cached authorizer public keys by authorizer ID
-	authorizerPubKeys map[string][]byte
+	// Cached authorizer information by authorizer ID
+	authorizerInfo map[string]AuthorizerInfo
+
+	// Cached authorization configuration
+	authzConfig AuthorizationConfig
 }
 
 // NewFileStore creates a new identity store
@@ -109,12 +128,13 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 	}
 
 	store := &fileStore{
-		identityDir:       identityDir,
-		currentNodeName:   nodeName,
-		publicKeys:        make(map[string][]byte),
-		privateKey:        privateKey,
-		initiatorPubKey:   initiatorPubKey,
-		authorizerPubKeys: make(map[string][]byte),
+		identityDir:     identityDir,
+		currentNodeName: nodeName,
+		publicKeys:      make(map[string][]byte),
+		privateKey:      privateKey,
+		initiatorPubKey: initiatorPubKey,
+		authorizerInfo:  make(map[string]AuthorizerInfo),
+		symmetricKeys:   make(map[string][]byte),
 	}
 
 	// Check that each node in peers.json has an identity file
@@ -149,23 +169,66 @@ func NewFileStore(identityDir, nodeName string, decrypt bool) (*fileStore, error
 		store.publicKeys[identity.NodeID] = key
 	}
 
-	// Load authorizer public keys from configuration if present
+	// Load authorization configuration
+	store.authzConfig = AuthorizationConfig{
+		Enabled:              viper.GetBool("authorization.enabled"),
+		RequiredAuthorizers:  viper.GetInt("authorization.required_authorizers"),
+		AuthorizerPublicKeys: make(map[string]AuthorizerInfo),
+	}
+
+	// Load authorizer public keys
+	authKeys := viper.GetStringMap("authorization.authorizer_public_keys")
+	for authID, authData := range authKeys {
+		if authInfo, ok := authData.(map[string]interface{}); ok {
+			info := AuthorizerInfo{
+				Algorithm: "ed25519", // default algorithm
+			}
+
+			if pubKey, ok := authInfo["public_key"].(string); ok && pubKey != "" {
+				info.PublicKey = pubKey
+			}
+
+			if algo, ok := authInfo["algorithm"].(string); ok && algo != "" {
+				info.Algorithm = algo
+			}
+
+			if info.PublicKey != "" {
+				store.authzConfig.AuthorizerPublicKeys[authID] = info
+				store.authorizerInfo[authID] = info
+			}
+		}
+	}
+
+	// Load global authorizer configuration (backward compatibility)
 	authzAuthorizers := viper.GetStringMap("authorization.authorizers")
 	for id, v := range authzAuthorizers {
-		// v is expected to be a map with key "pubkey"
+		// Skip if already loaded from operation-specific config
+		if _, exists := store.authorizerInfo[id]; exists {
+			continue
+		}
+
+		// v is expected to be a map with key "pubkey" and optional "algorithm"
 		if entry, ok := v.(map[string]interface{}); ok {
+			info := AuthorizerInfo{
+				Algorithm: "ed25519", // default algorithm
+			}
+
 			if pubHexRaw, ok := entry["pubkey"]; ok {
-				pubHex, ok := pubHexRaw.(string)
-				if !ok || pubHex == "" {
-					logger.Warn("Invalid or empty pubkey for authorizer", "authorizerID", id)
-					continue
+				if pubHex, ok := pubHexRaw.(string); ok && pubHex != "" {
+					info.PublicKey = pubHex
 				}
-				key, err := hex.DecodeString(pubHex)
-				if err != nil {
-					logger.Warn("Invalid hex pubkey for authorizer", "authorizerID", id, "error", err)
-					continue
+			}
+
+			if algoRaw, ok := entry["algorithm"]; ok {
+				if algo, ok := algoRaw.(string); ok && algo != "" {
+					info.Algorithm = algo
 				}
-				store.authorizerPubKeys[id] = key
+			}
+
+			if info.PublicKey != "" {
+				store.authorizerInfo[id] = info
+			} else {
+				logger.Warn("Invalid or empty pubkey for authorizer", "authorizerID", id)
 			}
 		}
 	}
@@ -424,57 +487,25 @@ func (s *fileStore) VerifyInitiatorMessage(msg types.InitiatorMessage) error {
 // AuthorizeInitiatorMessage verifies that a message has sufficient valid authorizer signatures
 // according to the configured authorization policy. If authorization is disabled or the
 // required threshold resolves to zero, this is a no-op.
+// The operation parameter is kept for logging and debugging purposes.
 func (s *fileStore) AuthorizeInitiatorMessage(operation string, msg types.InitiatorMessage) error {
 	// If authorization is not enabled, allow
-	if !viper.GetBool("authorization.enabled") {
+	if !s.authzConfig.Enabled {
 		return nil
 	}
 
-	// Determine required threshold: operation-specific overrides default
-	defaultThreshold := viper.GetInt("authorization.default_threshold")
-	opPolicy := viper.GetStringMap("authorization.operation_policies." + operation)
-	required := 0
-	if val, ok := opPolicy["required_authorizers"]; ok {
-		switch t := val.(type) {
-		case int:
-			required = t
-		case int64:
-			required = int(t)
-		case float64:
-			required = int(t)
-		}
-	}
-	if required <= 0 {
-		required = defaultThreshold
-	}
+	// Get required threshold
+	required := s.authzConfig.RequiredAuthorizers
 	if required <= 0 {
 		// No requirement; authorization effectively disabled
 		return nil
 	}
 
-	// Build allowed authorizer ID set
-	allowedIDs := map[string]struct{}{}
-	if idsVal, ok := opPolicy["authorizer_ids"]; ok {
-		switch ids := idsVal.(type) {
-		case []interface{}:
-			for _, idv := range ids {
-				if sId, ok := idv.(string); ok && sId != "" {
-					allowedIDs[sId] = struct{}{}
-				}
-			}
-		case []string:
-			for _, sId := range ids {
-				if sId != "" {
-					allowedIDs[sId] = struct{}{}
-				}
-			}
-		}
-	}
-	// If no explicit allowed IDs configured, allow any configured authorizer
-	if len(allowedIDs) == 0 {
-		for id := range s.authorizerPubKeys {
-			allowedIDs[id] = struct{}{}
-		}
+	// Use configured authorizers
+	allowedAuthorizers := s.authzConfig.AuthorizerPublicKeys
+	if len(allowedAuthorizers) == 0 {
+		// Fallback to global authorizer info for backward compatibility
+		allowedAuthorizers = s.authorizerInfo
 	}
 
 	// Prepare payload
@@ -493,14 +524,20 @@ func (s *fileStore) AuthorizeInitiatorMessage(operation string, msg types.Initia
 		if _, dup := seen[sig.AuthorizerID]; dup {
 			continue
 		}
-		if _, ok := allowedIDs[sig.AuthorizerID]; !ok {
+
+		authInfo, ok := allowedAuthorizers[sig.AuthorizerID]
+		if !ok || authInfo.PublicKey == "" {
 			continue
 		}
-		pub, ok := s.authorizerPubKeys[sig.AuthorizerID]
-		if !ok || len(pub) == 0 {
+
+		// Verify signature using the appropriate algorithm
+		valid, err := verifySignatureByAlgorithm(authInfo.PublicKey, authInfo.Algorithm, msgBytes, sig.Signature)
+		if err != nil {
+			logger.Warn("Failed to verify authorizer signature", "authorizerID", sig.AuthorizerID, "algorithm", authInfo.Algorithm, "error", err)
 			continue
 		}
-		if ed25519.Verify(pub, msgBytes, sig.Signature) {
+
+		if valid {
 			seen[sig.AuthorizerID] = struct{}{}
 			validCount++
 		}
@@ -511,6 +548,59 @@ func (s *fileStore) AuthorizeInitiatorMessage(operation string, msg types.Initia
 	}
 
 	return nil
+}
+
+// verifySignatureByAlgorithm verifies a signature using the specified algorithm
+func verifySignatureByAlgorithm(publicKeyHex, algorithm string, message, signature []byte) (bool, error) {
+	switch algorithm {
+	case "ed25519":
+		pubKeyBytes, err := hex.DecodeString(publicKeyHex)
+		if err != nil {
+			return false, fmt.Errorf("invalid ed25519 public key hex: %w", err)
+		}
+		if len(pubKeyBytes) != ed25519.PublicKeySize {
+			return false, fmt.Errorf("invalid ed25519 public key length: expected %d, got %d", ed25519.PublicKeySize, len(pubKeyBytes))
+		}
+		return ed25519.Verify(pubKeyBytes, message, signature), nil
+
+	case "secp256k1", "p256":
+		pubKeyBytes, err := hex.DecodeString(publicKeyHex)
+		if err != nil {
+			return false, fmt.Errorf("invalid ecdsa public key hex: %w", err)
+		}
+
+		// Parse the public key
+		var curve elliptic.Curve
+		if algorithm == "secp256k1" {
+			// For secp256k1, we'd need to import a secp256k1 library
+			// For now, we'll use P256 as a placeholder
+			curve = elliptic.P256()
+		} else {
+			curve = elliptic.P256()
+		}
+
+		// Assume uncompressed point format (0x04 + 32 bytes x + 32 bytes y)
+		if len(pubKeyBytes) == 65 && pubKeyBytes[0] == 0x04 {
+			x := new(big.Int).SetBytes(pubKeyBytes[1:33])
+			y := new(big.Int).SetBytes(pubKeyBytes[33:65])
+			_ = &ecdsa.PublicKey{Curve: curve, X: x, Y: y} // pubKey would be used for actual verification
+
+			// Parse DER-encoded signature
+			// This is a simplified implementation - in production you'd want proper ASN.1 parsing
+			if len(signature) < 6 {
+				return false, fmt.Errorf("signature too short")
+			}
+
+			// For now, return false - proper ECDSA signature verification would need more robust parsing
+			logger.Warn("ECDSA signature verification not fully implemented", "algorithm", algorithm)
+			return false, fmt.Errorf("ECDSA signature verification not fully implemented for %s", algorithm)
+		} else {
+			return false, fmt.Errorf("unsupported public key format for %s", algorithm)
+		}
+
+	default:
+		return false, fmt.Errorf("unsupported signature algorithm: %s", algorithm)
+	}
 }
 
 func partyIDToNodeID(partyID *tss.PartyID) string {
