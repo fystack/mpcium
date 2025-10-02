@@ -7,11 +7,26 @@ const (
 )
 
 type KeygenResultEvent struct {
-	WalletID    string `json:"wallet_id"`
-	ECDSAPubKey []byte `json:"ecdsa_pub_key"`
-	EDDSAPubKey []byte `json:"eddsa_pub_key"`
+	WalletID        string `json:"wallet_id"`
+	ECDSAPubKey     []byte `json:"ecdsa_pub_key"`
+	EDDSAPubKey     []byte `json:"eddsa_pub_key"`
+	TaurusCMPPubKey []byte `json:"taurus_cmp_pub_key"`
 
 	ResultType  ResultType `json:"result_type"`
 	ErrorReason string     `json:"error_reason"`
 	ErrorCode   string     `json:"error_code"`
+}
+
+// CreateKeygenFailureEvent creates a failed keygen event
+func CreateKeygenFailureEvent(walletID string, metadata map[string]any) *KeygenResultEvent {
+	errorMsg := ""
+	if err, ok := metadata["error"].(string); ok {
+		errorMsg = err
+	}
+	return &KeygenResultEvent{
+		WalletID:    walletID,
+		ResultType:  ResultTypeError,
+		ErrorReason: errorMsg,
+		ErrorCode:   string(ErrorCodeKeygenFailure),
+	}
 }

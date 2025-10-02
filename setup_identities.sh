@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Add Go bin directory to PATH to ensure mpcium-cli is available
+export PATH="$HOME/go/bin:$PATH"
+
 # Number of nodes to create (default is 3)
 NUM_NODES=3
 

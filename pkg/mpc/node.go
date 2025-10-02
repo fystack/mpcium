@@ -14,6 +14,8 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/mpc/taurus"
+	"github.com/taurusgroup/multi-party-sig/pkg/party"
 )
 
 const (
@@ -137,6 +139,38 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 		resultQueue,
 		p.identityStore,
 	)
+	return session, nil
+}
+
+func (p *Node) CreateCMPKeyGenSession(
+	walletID string,
+	threshold int,
+	resultQueue messaging.MessageQueue,
+) (taurus.KeyGenSession, error) {
+	if !p.peerRegistry.ArePeersReady() {
+		return nil, fmt.Errorf(
+			"peers are not ready yet. ready: %d, expected: %d",
+			p.peerRegistry.GetReadyPeersCount(),
+			len(p.peerIDs)+1,
+		)
+	}
+
+	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
+	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
+
+	session := taurus.NewCGGMP21KeygenSession(
+		walletID,
+		p.pubSub,
+		selfPartyID,
+		allPartyIDs,
+		threshold,
+		p.kvstore,
+		p.keyinfoStore,
+		resultQueue,
+		p.identityStore,
+	)
+
+	session.Init()
 	return session, nil
 }
 
@@ -470,4 +504,28 @@ func sessionKeyPrefix(sessionType SessionType) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported session type: %v", sessionType)
 	}
+}
+
+func (p *Node) generateTaurusPartyIDs(purpose string, peerIDs []string, version int) (party.ID, []party.ID) {
+	partyIDs := make([]party.ID, len(peerIDs))
+	var selfPartyID party.ID
+
+	for i, peerID := range peerIDs {
+		partyID := createTaurusPartyID(peerID, purpose, version)
+		partyIDs[i] = partyID
+		if peerID == p.nodeID {
+			selfPartyID = partyID
+		}
+	}
+
+	return selfPartyID, partyIDs
+}
+
+func createTaurusPartyID(sessionID string, keyType string, version int) party.ID {
+	if version == 0 {
+		// Backward compatible version - just use sessionID
+		return party.ID(sessionID)
+	}
+	// Include version in party ID
+	return party.ID(fmt.Sprintf("%s:%s:%d", sessionID, keyType, version))
 }
