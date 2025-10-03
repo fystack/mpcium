@@ -2,7 +2,6 @@ package eventconsumer
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,7 +186,6 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 
 	// ecdsaSession.Init()
 	// eddsaSession.Init()
-	taurusSession.Init()
 
 	// ctxEcdsa, doneEcdsa := context.WithCancel(baseCtx)
 	// ctxEddsa, doneEddsa := context.WithCancel(baseCtx)
@@ -225,58 +223,24 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	// 	}
 	// }()
 
-	go func() {
-		select {
-		case <-ctxTaurus.Done():
-			return
-		case err := <-taurusSession.ErrChan():
-			if err != nil {
-				logger.Error("CGGMP21 keygen session error", err)
-				errorChan <- err
-				doneTaurus()
-			}
-		}
-	}()
-
 	// ecdsaSession.ListenToIncomingMessageAsync()
 	// eddsaSession.ListenToIncomingMessageAsync()
-	taurusSession.ListenToIncomingMessageAsync(taurusSession.ProcessInboundMessage)
 	// Temporary delay for peer setup
 	ec.warmUpSession()
 	// go ecdsaSession.GenerateKey(doneEcdsa)
 	// go eddsaSession.GenerateKey(doneEddsa)
-	go taurusSession.ProcessOutboundMessage()
 
-	// Wait for the keygen to complete
-	completionChan := make(chan string, 1)
 	go func() {
-		result := taurusSession.WaitForFinish()
-		completionChan <- result
-	}()
-
-	// Wait for completion, error, or timeout
-	select {
-	case pubKeyHex := <-completionChan:
-		// Success - set the public key
-		if pubKeyHex != "" {
-			pubKeyBytes, err := hex.DecodeString(pubKeyHex)
-			if err == nil {
-				successEvent.TaurusCMPPubKey = pubKeyBytes
-			}
+		data, err := taurusSession.Keygen(ctxTaurus)
+		if err != nil {
+			logger.Error("Failed to generate key", err)
+			ec.handleKeygenSessionError(walletID, err, "Failed to generate key", natMsg)
+			errorChan <- err
+			doneTaurus()
 		}
-		doneTaurus() // Signal completion
-
-	case err := <-errorChan:
-		// Error occurred
-		ec.handleKeygenSessionError(walletID, err, "CGGMP21 keygen error", natMsg)
-		return
-
-	case <-baseCtx.Done():
-		// Timeout occurred
-		logger.Warn("Key generation timed out", "walletID", walletID, "timeout", KeyGenTimeOut)
-		ec.handleKeygenSessionError(walletID, fmt.Errorf("keygen session timed out after %v", KeyGenTimeOut), "Key generation timed out", natMsg)
-		return
-	}
+		successEvent.TaurusCMPPubKey = data.Payload
+		doneTaurus()
+	}()
 
 	payload, err := json.Marshal(successEvent)
 	if err != nil {
@@ -284,7 +248,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(walletID, err, "Failed to marshal keygen success event", natMsg)
 		return
 	}
-
+	fmt.Println("payload", string(payload))
 	key := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, walletID)
 	if err := ec.genKeyResultQueue.Enqueue(
 		key,

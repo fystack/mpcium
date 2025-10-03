@@ -16,6 +16,7 @@ import (
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc/taurus"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
+	"github.com/taurusgroup/multi-party-sig/pkg/pool"
 )
 
 const (
@@ -146,32 +147,14 @@ func (p *Node) CreateCMPKeyGenSession(
 	walletID string,
 	threshold int,
 	resultQueue messaging.MessageQueue,
-) (taurus.KeyGenSession, error) {
-	if !p.peerRegistry.ArePeersReady() {
-		return nil, fmt.Errorf(
-			"peers are not ready yet. ready: %d, expected: %d",
-			p.peerRegistry.GetReadyPeersCount(),
-			len(p.peerIDs)+1,
-		)
-	}
-
+) (*taurus.CmpParty, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
-
-	session := taurus.NewCGGMP21KeygenSession(
-		walletID,
-		p.pubSub,
-		selfPartyID,
-		allPartyIDs,
-		threshold,
-		p.kvstore,
-		p.keyinfoStore,
-		resultQueue,
-		p.identityStore,
-	)
-
-	session.Init()
-	return session, nil
+	tr := taurus.NewNATSTransport(walletID, selfPartyID, p.pubSub)
+	adapter := taurus.NewTaurusNetworkAdapter(walletID, selfPartyID, tr, allPartyIDs)
+	pl := pool.NewPool(0)
+	party := taurus.NewCmpParty(walletID, selfPartyID, allPartyIDs, threshold, pl, adapter)
+	return party, nil
 }
 
 func (p *Node) CreateSigningSession(
@@ -506,8 +489,8 @@ func sessionKeyPrefix(sessionType SessionType) (string, error) {
 	}
 }
 
-func (p *Node) generateTaurusPartyIDs(purpose string, peerIDs []string, version int) (party.ID, []party.ID) {
-	partyIDs := make([]party.ID, len(peerIDs))
+func (p *Node) generateTaurusPartyIDs(purpose string, peerIDs []string, version int) (party.ID, party.IDSlice) {
+	partyIDs := make(party.IDSlice, len(peerIDs))
 	var selfPartyID party.ID
 
 	for i, peerID := range peerIDs {
