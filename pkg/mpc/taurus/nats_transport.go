@@ -69,12 +69,14 @@ func NewNATSTransport(
 	}
 
 	bcastTopic := t.topicComposer.ComposeBroadcastTopic()
-	if sub, err := pubsub.Subscribe(bcastTopic, t.handle); err == nil {
+	if sub, err := pubsub.Subscribe(bcastTopic, func(msg *nats.Msg) {
+		t.handle(msg.Data)
+	}); err == nil {
 		t.subs = append(t.subs, sub)
 	}
 
 	directTopic := t.topicComposer.ComposeDirectTopic(t.selfID, walletID)
-	if sub, err := direct.Listen(directTopic, t.handleDirect); err == nil {
+	if sub, err := direct.Listen(directTopic, t.handle); err == nil {
 		t.subs = append(t.subs, sub)
 	}
 
@@ -141,28 +143,7 @@ func (t *NATSTransport) Close() error {
 	return nil
 }
 
-func (t *NATSTransport) handle(m *nats.Msg) {
-	var msg types.TaurusMessage
-	if err := encoding.JsonBytesToStruct(m.Data, &msg); err != nil {
-		return
-	}
-	if t.identityStore != nil {
-		if err := t.identityStore.VerifyTaurusMessage(&msg); err != nil {
-			logger.Warn("failed to verify message", "err", err.Error())
-			return
-		}
-	}
-	if msg.From == t.selfID {
-		return
-	}
-	select {
-	case t.inbox <- msg:
-	default:
-		logger.Warn("dropping inbound message, inbox full", "wallet", t.wallet)
-	}
-}
-
-func (t *NATSTransport) handleDirect(data []byte) {
+func (t *NATSTransport) handle(data []byte) {
 	var msg types.TaurusMessage
 	if err := encoding.JsonBytesToStruct(data, &msg); err != nil {
 		return
