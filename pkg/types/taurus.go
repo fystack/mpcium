@@ -38,3 +38,8 @@ type KeyData struct {
 	Payload     []byte
 	PubKeyBytes []byte
 }
+
+type ReshareData struct {
+	KeyData
+	Threshold int
+}

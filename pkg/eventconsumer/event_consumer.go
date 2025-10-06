@@ -712,6 +712,11 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, err, "Failed to get session type", natMsg)
 			return
 		}
+		// Handle CMP reshare separately
+		if keyType == types.KeyTypeTaurusCmp {
+			ec.handleCMPReshare(msg, natMsg)
+			return
+		}
 
 		createSession := func(isNewPeer bool) (mpc.ReshareSession, error) {
 			return ec.node.CreateReshareSession(
@@ -849,6 +854,72 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 
 	ec.reshareSub = sub
 	return err
+}
+
+// NOTE: In CMP reshare, it just refresh the keyshare of each node but keep the same public key and threshold.
+// Therefore, we don't need to create new party sessions for CMP reshare.
+func (ec *eventConsumer) handleCMPReshare(msg types.ResharingMessage, natMsg *nats.Msg) {
+	logger.Info("Starting CMP reshare", "walletID", msg.WalletID, "sessionID", msg.SessionID)
+
+	// Create CMP session for reshare
+	taurusSession, err := ec.node.CreateCMPSession(msg.WalletID, msg.NewThreshold, taurus.ActReshare)
+	if err != nil {
+		logger.Error("Failed to create Taurus CMP reshare session", err, "walletID", msg.WalletID)
+		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to create Taurus CMP reshare session", natMsg)
+		return
+	}
+
+	// Load the existing key for reshare
+	if err := taurusSession.LoadKey(msg.WalletID); err != nil {
+		logger.Error("Failed to load key for CMP reshare", err, "walletID", msg.WalletID)
+		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to load key for CMP reshare", natMsg)
+		return
+	}
+
+	// Create context for reshare
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Longer timeout for reshare
+	defer cancel()
+
+	// Perform CMP reshare
+	keyData, err := taurusSession.Reshare(ctx)
+	if err != nil {
+		logger.Error("CMP reshare failed", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
+		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "CMP reshare failed", natMsg)
+		return
+	}
+
+	// Create reshare result event
+	reshareResult := event.ResharingResultEvent{
+		ResultType:   event.ResultTypeSuccess,
+		WalletID:     msg.WalletID,
+		NewThreshold: keyData.Threshold,
+		KeyType:      msg.KeyType,
+		PubKey:       keyData.PubKeyBytes,
+	}
+
+	// Marshal and enqueue the result
+	reshareResultBytes, err := json.Marshal(reshareResult)
+	if err != nil {
+		logger.Error("Failed to marshal CMP reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
+		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to marshal CMP reshare result", natMsg)
+		return
+	}
+
+	// Enqueue the reshare result
+	key := fmt.Sprintf(mpc.TypeReshareWalletResultFmt, msg.SessionID)
+	err = ec.reshareResultQueue.Enqueue(key, reshareResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: composeReshareIdempotentKey(msg.SessionID, natMsg),
+	})
+	if err != nil {
+		logger.Error("Failed to enqueue CMP reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
+		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to enqueue CMP reshare result", natMsg)
+		return
+	}
+
+	// Remove this line - don't send reply for reshare messages
+	// ec.sendReplyToRemoveMsg(natMsg)
+
+	logger.Info("[COMPLETED CMP RESHARE] CMP reshare completed successfully", "walletID", msg.WalletID, "sessionID", msg.SessionID)
 }
 
 // handleReshareSessionError handles errors that occur during reshare operations

@@ -154,21 +154,48 @@ func (p *CmpParty) Sign(ctx context.Context, msg *big.Int) ([]byte, error) {
 	return sig.SigEthereum()
 }
 
-func (p *CmpParty) Reshare(ctx context.Context) (types.KeyData, error) {
+func (p *CmpParty) Reshare(ctx context.Context) (res types.ReshareData, err error) {
 	if p.savedData == nil {
-		return types.KeyData{}, errors.New("no key loaded")
+		return res, errors.New("no key loaded")
 	}
 	cfg, err := p.run(ctx, cmp.Refresh(p.savedData, p.pl))
 	if err != nil {
-		return types.KeyData{}, err
+		return res, err
 	}
 	savedData, ok := cfg.(*cmp.Config)
 	if !ok {
-		return types.KeyData{}, errors.New("unexpected result type")
+		return res, errors.New("unexpected result type")
 	}
 	p.savedData = savedData
 	packed, _ := p.savedData.MarshalBinary()
-	return types.KeyData{SID: p.sid, Type: "taurus_cmp", Payload: packed}, nil
+
+	key := p.composeKey(p.sid)
+	// Store updated key share
+	if p.kvstore != nil {
+		if err := p.kvstore.Put(key, packed); err != nil {
+			return res, fmt.Errorf("store key: %w", err)
+		}
+	}
+
+	// Extract public key coordinates
+	x, y, err := ExtractXYFromPoint(p.savedData.PublicPoint())
+	if err != nil {
+		return res, fmt.Errorf("extract pubkey: %w", err)
+	}
+
+	// Use secp256k1 curve, not P256
+	pubKey := &cryptoEcdsa.PublicKey{
+		Curve: btcec.S256(),
+		X:     x,
+		Y:     y,
+	}
+
+	pubKeyBytes, err := encoding.EncodeS256PubKey(pubKey)
+	if err != nil {
+		return res, fmt.Errorf("encode pubkey: %w", err)
+	}
+
+	return types.ReshareData{KeyData: types.KeyData{SID: p.sid, Type: "taurus_cmp", PubKeyBytes: pubKeyBytes}, Threshold: p.threshold}, nil
 }
 
 func (p *CmpParty) run(ctx context.Context, proto protocol.StartFunc) (any, error) {
