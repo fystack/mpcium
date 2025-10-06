@@ -155,7 +155,10 @@ func (p *Node) CreateCMPSession(
 	pl := pool.NewPool(0)
 	session := taurus.NewCmpParty(walletID, selfPartyID, allPartyIDs, threshold, pl, adapter, p.keyinfoStore, p.kvstore)
 	if act == taurus.ActSign || act == taurus.ActReshare {
-		session.LoadKey(walletID)
+		err := session.LoadKey(walletID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return session, nil
