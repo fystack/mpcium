@@ -223,7 +223,6 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 			doneEddsa()
 		}
 	}()
-
 	go func() {
 		defer wg.Done()
 		data, err := taurusSession.Keygen(ctxTaurus)
@@ -233,7 +232,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 			return
 		}
 
-		logger.Info("Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
+		logger.Info("CMP Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
 		successEvent.TaurusCMPPubKey = data.PubKeyBytes
 		doneTaurus()
 	}()
@@ -253,7 +252,6 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		close(doneAll)
 	}()
 
-	// Check for errors
 	select {
 	case <-doneAll:
 		// Check if any errors occurred during execution
@@ -277,6 +275,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(walletID, err, "Failed to marshal keygen success event", natMsg)
 		return
 	}
+
 	key := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, walletID)
 	if err := ec.genKeyResultQueue.Enqueue(
 		key,
