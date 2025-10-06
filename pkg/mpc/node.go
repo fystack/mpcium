@@ -143,18 +143,21 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 	return session, nil
 }
 
-func (p *Node) CreateCMPKeyGenSession(
+func (p *Node) CreateCMPSession(
 	walletID string,
 	threshold int,
-	resultQueue messaging.MessageQueue,
+	act taurus.Act,
 ) (*taurus.CmpParty, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
-	tr := taurus.NewNATSTransport(walletID, selfPartyID, p.pubSub)
+	tr := taurus.NewNATSTransport(walletID, selfPartyID, act, p.pubSub, p.direct, p.identityStore)
 	adapter := taurus.NewTaurusNetworkAdapter(walletID, selfPartyID, tr, allPartyIDs)
 	pl := pool.NewPool(0)
-	party := taurus.NewCmpParty(walletID, selfPartyID, allPartyIDs, threshold, pl, adapter)
-	return party, nil
+	session := taurus.NewCmpParty(walletID, selfPartyID, allPartyIDs, threshold, pl, adapter, p.keyinfoStore, p.kvstore)
+	if act == taurus.ActSign {
+		session.LoadKey(walletID)
+	}
+	return session, nil
 }
 
 func (p *Node) CreateSigningSession(

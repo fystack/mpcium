@@ -1,18 +1,14 @@
 package taurus
 
-import "sync"
+import (
+	"sync"
 
-type Msg struct {
-	SID         string
-	From        string
-	To          []string
-	IsBroadcast bool
-	Data        []byte
-}
+	"github.com/fystack/mpcium/pkg/types"
+)
 
 type Transport interface {
-	Send(to string, msg Msg) error
-	Inbox() <-chan Msg
+	Send(to string, msg types.TaurusMessage) error
+	Inbox() <-chan types.TaurusMessage
 	Done() <-chan struct{}
 	Close() error
 }
@@ -20,10 +16,10 @@ type Transport interface {
 // Memory implements Transport for local testing (per-party instance)
 type Memory struct {
 	selfID string
-	peers  map[string]*Memory // reference tới các peer
+	peers  map[string]*Memory // reference to peers
 	mu     sync.RWMutex
 
-	inbox chan Msg
+	inbox chan types.TaurusMessage
 	done  chan struct{}
 }
 
@@ -32,7 +28,7 @@ func NewMemoryParty(selfID string) *Memory {
 	return &Memory{
 		selfID: selfID,
 		peers:  make(map[string]*Memory),
-		inbox:  make(chan Msg, 100),
+		inbox:  make(chan types.TaurusMessage, 100),
 		done:   make(chan struct{}),
 	}
 }
@@ -53,7 +49,7 @@ func (m *Memory) SelfID() string {
 	return m.selfID
 }
 
-func (m *Memory) Send(to string, msg Msg) error {
+func (m *Memory) Send(to string, msg types.TaurusMessage) error {
 	m.mu.RLock()
 	peer, ok := m.peers[to]
 	m.mu.RUnlock()
@@ -68,7 +64,7 @@ func (m *Memory) Send(to string, msg Msg) error {
 	return nil
 }
 
-func (m *Memory) Inbox() <-chan Msg {
+func (m *Memory) Inbox() <-chan types.TaurusMessage {
 	return m.inbox
 }
 

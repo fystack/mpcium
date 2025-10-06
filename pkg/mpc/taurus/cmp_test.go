@@ -1,93 +1,116 @@
 package taurus
 
 import (
+	"bytes"
 	"context"
-	"fmt"
+	"math/big"
 	"sync"
 	"testing"
 
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
-	"github.com/fystack/mpcium/pkg/types"
 	"github.com/nats-io/nats.go"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
 	"github.com/taurusgroup/multi-party-sig/pkg/pool"
 )
 
-func TestCmpParty(t *testing.T) {
-	sid := "test-session-123"
-	parties := []string{"party1", "party2", "party3"}
-	ids := make([]party.ID, len(parties))
-	for i, id := range parties {
-		ids[i] = party.ID(id)
-	}
-	pl := pool.NewPool(0)
+type cmpTest struct {
+	parties []*CmpParty
+	results map[string]chan any
+}
 
-	natsConn, err := nats.Connect("nats://localhost:4223")
+func newCmpTest(sid string, ids []party.ID) *cmpTest {
+	pl := pool.NewPool(0)
+	nc, err := nats.Connect("nats://localhost:4223")
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
 
-	pubsub := messaging.NewNATSPubSub(natsConn)
+	pubsub := messaging.NewNATSPubSub(nc)
+	direct := messaging.NewNatsDirectMessaging(nc)
 
-	// networks + adapters
-	network1 := NewNATSTransport(sid, party.ID("party1"), pubsub)
-	network2 := NewNATSTransport(sid, party.ID("party2"), pubsub)
-	network3 := NewNATSTransport(sid, party.ID("party3"), pubsub)
+	t := &cmpTest{
+		results: map[string]chan any{
+			"keygen":  make(chan any, len(ids)),
+			"sign":    make(chan any, len(ids)),
+			"reshare": make(chan any, len(ids)),
+		},
+	}
 
-	adapter1 := NewTaurusNetworkAdapter(sid, "party1", network1, ids)
-	adapter2 := NewTaurusNetworkAdapter(sid, "party2", network2, ids)
-	adapter3 := NewTaurusNetworkAdapter(sid, "party3", network3, ids)
+	for _, id := range ids {
+		net := NewNATSTransport(sid, id, ActKeygen, pubsub, direct, nil)
+		adapter := NewTaurusNetworkAdapter(sid, id, net, ids)
+		t.parties = append(t.parties, NewCmpParty(sid, id, ids, 2, pl, adapter, nil, nil))
+	}
 
-	party1 := NewCmpParty(sid, "party1", ids, 2, pl, adapter1)
-	party2 := NewCmpParty(sid, "party2", ids, 2, pl, adapter2)
-	party3 := NewCmpParty(sid, "party3", ids, 2, pl, adapter3)
+	return t
+}
 
-	result1 := make(chan types.KeyData, 1)
-	result2 := make(chan types.KeyData, 1)
-	result3 := make(chan types.KeyData, 1)
-
-	wg := sync.WaitGroup{}
-	wg.Add(3)
-
-	go func() {
-		defer wg.Done()
-		res, err := party1.Keygen(context.Background())
-		if err != nil {
-			t.Errorf("party1 keygen error: %v", err)
-			return
-		}
-		result1 <- res
-	}()
-
-	go func() {
-		defer wg.Done()
-		res, err := party2.Keygen(context.Background())
-		if err != nil {
-			t.Errorf("party2 keygen error: %v", err)
-			return
-		}
-		result2 <- res
-	}()
-
-	go func() {
-		defer wg.Done()
-		res, err := party3.Keygen(context.Background())
-		if err != nil {
-			t.Errorf("party3 keygen error: %v", err)
-			return
-		}
-		result3 <- res
-	}()
-
+func (t *cmpTest) runAll(fn func(*CmpParty) (any, error), key string) {
+	var wg sync.WaitGroup
+	for _, p := range t.parties {
+		wg.Add(1)
+		go func(p *CmpParty) {
+			defer wg.Done()
+			res, err := fn(p)
+			if err != nil {
+				logger.Error("operation failed", err)
+				return
+			}
+			t.results[key] <- res
+		}(p)
+	}
 	wg.Wait()
+}
 
-	// Read the actual values from channels
-	r1 := <-result1
-	r2 := <-result2
-	r3 := <-result3
+func TestCmpParty(t *testing.T) {
+	sid := "test-session-123"
+	ids := []party.ID{"node0", "node1", "node2"}
+	test := newCmpTest(sid, ids)
 
-	fmt.Println("party1 result:", len(r1.Payload))
-	fmt.Println("party2 result:", len(r2.Payload))
-	fmt.Println("party3 result:", len(r3.Payload))
+	// --- Keygen ---
+	test.runAll(func(p *CmpParty) (any, error) {
+		return p.Keygen(context.Background())
+	}, "keygen")
+
+	// --- Sign 1 ---
+	msg := big.NewInt(1)
+	test.runAll(func(p *CmpParty) (any, error) {
+		return p.Sign(context.Background(), msg)
+	}, "sign")
+
+	sigs := drain[[]byte](test.results["sign"])
+	assertAllBytesEqual(t, sigs)
+
+	// --- Reshare ---
+	test.runAll(func(p *CmpParty) (any, error) {
+		return p.Reshare(context.Background())
+	}, "reshare")
+
+	// --- Sign 2 ---
+	msg = big.NewInt(2)
+	test.runAll(func(p *CmpParty) (any, error) {
+		return p.Sign(context.Background(), msg)
+	}, "sign")
+}
+
+func drain[T any](ch chan any) []T {
+	n := len(ch)
+	out := make([]T, n)
+	for i := 0; i < n; i++ {
+		out[i] = (<-ch).(T)
+	}
+	return out
+}
+
+func assertAllBytesEqual(t *testing.T, vals [][]byte) {
+	if len(vals) == 0 {
+		t.Fatal("no values to compare")
+	}
+	first := vals[0]
+	for i, v := range vals[1:] {
+		if !bytes.Equal(first, v) {
+			t.Fatalf("byte slices not equal at index %d", i+1)
+		}
+	}
 }

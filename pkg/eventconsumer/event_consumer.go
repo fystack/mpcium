@@ -15,6 +15,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/mpc/taurus"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
@@ -167,80 +168,108 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}
 
 	walletID := msg.WalletID
-	// ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
-	// if err != nil {
-	// 	ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
-	// 	return
-	// }
-	// eddsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeEDDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
-	// if err != nil {
-	// 	ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session", natMsg)
-	// 	return
-	// }
-	taurusSession, err := ec.node.CreateCMPKeyGenSession(walletID, ec.mpcThreshold, ec.genKeyResultQueue)
+	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
+	if err != nil {
+		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
+		return
+	}
+	eddsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeEDDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
+	if err != nil {
+		ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session", natMsg)
+		return
+	}
+	taurusSession, err := ec.node.CreateCMPSession(walletID, ec.mpcThreshold, taurus.ActKeygen)
 	if err != nil {
 		logger.Error("Failed to create Taurus CMP session", err, "walletID", walletID)
 		ec.handleKeygenSessionError(walletID, err, "Failed to create Taurus CMP key generation session", natMsg)
 		return
 	}
 
-	// ecdsaSession.Init()
-	// eddsaSession.Init()
+	ecdsaSession.Init()
+	eddsaSession.Init()
 
-	// ctxEcdsa, doneEcdsa := context.WithCancel(baseCtx)
-	// ctxEddsa, doneEddsa := context.WithCancel(baseCtx)
+	ctxEcdsa, doneEcdsa := context.WithCancel(baseCtx)
+	ctxEddsa, doneEddsa := context.WithCancel(baseCtx)
 	ctxTaurus, doneTaurus := context.WithCancel(baseCtx)
 
 	successEvent := &event.KeygenResultEvent{WalletID: walletID, ResultType: event.ResultTypeSuccess}
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(3)
 
 	// Channel to communicate errors from goroutines to main function
-	errorChan := make(chan error, 1)
-
-	// go func() {
-	// 	defer wg.Done()
-	// 	select {
-	// 	case <-ctxEcdsa.Done():
-	// 		successEvent.ECDSAPubKey = ecdsaSession.GetPubKeyResult()
-	// 	case err := <-ecdsaSession.ErrChan():
-	// 		logger.Error("ECDSA keygen session error", err)
-	// 		ec.handleKeygenSessionError(walletID, err, "ECDSA keygen session error", natMsg)
-	// 		errorChan <- err
-	// 		doneEcdsa()
-	// 	}
-	// }()
-	// go func() {
-	// 	defer wg.Done()
-	// 	select {
-	// 	case <-ctxEddsa.Done():
-	// 		successEvent.EDDSAPubKey = eddsaSession.GetPubKeyResult()
-	// 	case err := <-eddsaSession.ErrChan():
-	// 		logger.Error("EdDSA keygen session error", err)
-	// 		ec.handleKeygenSessionError(walletID, err, "EdDSA keygen session error", natMsg)
-	// 		errorChan <- err
-	// 		doneEddsa()
-	// 	}
-	// }()
-
-	// ecdsaSession.ListenToIncomingMessageAsync()
-	// eddsaSession.ListenToIncomingMessageAsync()
-	// Temporary delay for peer setup
-	ec.warmUpSession()
-	// go ecdsaSession.GenerateKey(doneEcdsa)
-	// go eddsaSession.GenerateKey(doneEddsa)
+	errorChan := make(chan error, 3)
 
 	go func() {
+		defer wg.Done()
+		select {
+		case <-ctxEcdsa.Done():
+			successEvent.ECDSAPubKey = ecdsaSession.GetPubKeyResult()
+		case err := <-ecdsaSession.ErrChan():
+			logger.Error("ECDSA keygen session error", err)
+			ec.handleKeygenSessionError(walletID, err, "ECDSA keygen session error", natMsg)
+			errorChan <- err
+			doneEcdsa()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		select {
+		case <-ctxEddsa.Done():
+			successEvent.EDDSAPubKey = eddsaSession.GetPubKeyResult()
+		case err := <-eddsaSession.ErrChan():
+			logger.Error("EdDSA keygen session error", err)
+			ec.handleKeygenSessionError(walletID, err, "EdDSA keygen session error", natMsg)
+			errorChan <- err
+			doneEddsa()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
 		data, err := taurusSession.Keygen(ctxTaurus)
 		if err != nil {
 			logger.Error("Failed to generate key", err)
-			ec.handleKeygenSessionError(walletID, err, "Failed to generate key", natMsg)
 			errorChan <- err
-			doneTaurus()
+			return
 		}
-		successEvent.TaurusCMPPubKey = data.Payload
+
+		logger.Info("Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
+		successEvent.TaurusCMPPubKey = data.PubKeyBytes
 		doneTaurus()
 	}()
+
+	ecdsaSession.ListenToIncomingMessageAsync()
+	eddsaSession.ListenToIncomingMessageAsync()
+
+	// Temporary delay for peer setup
+	ec.warmUpSession()
+	go ecdsaSession.GenerateKey(doneEcdsa)
+	go eddsaSession.GenerateKey(doneEddsa)
+
+	// Wait for completion or timeout
+	doneAll := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(doneAll)
+	}()
+
+	// Check for errors
+	select {
+	case <-doneAll:
+		// Check if any errors occurred during execution
+		select {
+		case <-errorChan:
+			// Error already handled by the goroutine, just return early
+			return
+		default:
+			// No errors, continue with success
+		}
+	case <-baseCtx.Done():
+		// timeout occurred
+		logger.Warn("Key generation timed out", "walletID", walletID, "timeout", KeyGenTimeOut)
+		ec.handleKeygenSessionError(walletID, fmt.Errorf("keygen session timed out after %v", KeyGenTimeOut), "Key generation timed out", natMsg)
+		return
+	}
 
 	payload, err := json.Marshal(successEvent)
 	if err != nil {
@@ -248,7 +277,6 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(walletID, err, "Failed to marshal keygen success event", natMsg)
 		return
 	}
-	fmt.Println("payload", string(payload))
 	key := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, walletID)
 	if err := ec.genKeyResultQueue.Enqueue(
 		key,
@@ -396,6 +424,9 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			ec.signingResultQueue,
 			idempotentKey,
 		)
+	case types.KeyTypeTaurusCmp:
+		ec.handleCMPSigning(msg, natMsg)
+		return
 	default:
 		sessionErr = fmt.Errorf("unsupported key type: %v", msg.KeyType)
 	}
@@ -486,6 +517,93 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		ec.sendReplyToRemoveMsg(natMsg)
 	}
 	go session.Sign(onSuccess)
+}
+
+// Add this method to handle CMP signing
+func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.Msg) {
+	logger.Info("Starting CMP signing", "walletID", msg.WalletID, "txID", msg.TxID)
+
+	// Create CMP session for signing
+	taurusSession, err := ec.node.CreateCMPSession(msg.WalletID, ec.mpcThreshold, taurus.ActSign)
+	if err != nil {
+		logger.Error("Failed to create Taurus CMP signing session", err, "walletID", msg.WalletID)
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to create Taurus CMP signing session",
+			natMsg,
+		)
+		return
+	}
+
+	// Convert transaction bytes to big.Int
+	txBigInt := new(big.Int).SetBytes(msg.Tx)
+
+	// Create context for signing
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Perform CMP signing
+	signature, err := taurusSession.Sign(ctx, txBigInt)
+	if err != nil {
+		logger.Error("CMP signing failed", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"CMP signing failed",
+			natMsg,
+		)
+		return
+	}
+
+	// Create signing result event
+	signingResult := event.SigningResultEvent{
+		ResultType:          event.ResultTypeSuccess,
+		NetworkInternalCode: msg.NetworkInternalCode,
+		WalletID:            msg.WalletID,
+		TxID:                msg.TxID,
+		Signature:           signature, // CMP returns the full signature
+	}
+
+	// Marshal and enqueue the result
+	signingResultBytes, err := json.Marshal(signingResult)
+	if err != nil {
+		logger.Error("Failed to marshal CMP signing result event", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to marshal CMP signing result",
+			natMsg,
+		)
+		return
+	}
+
+	// Enqueue the signing result
+	err = ec.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: composeSigningIdempotentKey(msg.TxID, natMsg),
+	})
+	if err != nil {
+		logger.Error("Failed to enqueue CMP signing result event", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to enqueue CMP signing result",
+			natMsg,
+		)
+		return
+	}
+
+	// Send reply and log success
+	ec.sendReplyToRemoveMsg(natMsg)
+	logger.Info("[COMPLETED CMP SIGN] CMP signing completed successfully", "walletID", msg.WalletID, "txID", msg.TxID)
 }
 
 func (ec *eventConsumer) consumeTxSigningEvent() error {
@@ -868,6 +986,8 @@ func sessionTypeFromKeyType(keyType types.KeyType) (mpc.SessionType, error) {
 		return mpc.SessionTypeECDSA, nil
 	case types.KeyTypeEd25519:
 		return mpc.SessionTypeEDDSA, nil
+	case types.KeyTypeTaurusCmp:
+		return mpc.SessionTypeTaurusCmp, nil
 	default:
 		logger.Warn("Unsupported key type", "keyType", keyType)
 		return "", fmt.Errorf("unsupported key type: %v", keyType)

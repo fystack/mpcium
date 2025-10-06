@@ -1,9 +1,8 @@
 package taurus
 
 import (
-	"encoding/json"
-	"log/slog"
-
+	"github.com/fystack/mpcium/pkg/logger"
+	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
 	"github.com/taurusgroup/multi-party-sig/pkg/protocol"
 )
@@ -45,42 +44,44 @@ func (a *TaurusNetworkAdapter) Next() <-chan *protocol.Message { return a.inbox 
 func (a *TaurusNetworkAdapter) Done() <-chan struct{}          { return a.done }
 
 func (a *TaurusNetworkAdapter) Send(msg *protocol.Message) {
-	wire, err := json.Marshal(msg)
+	wire, err := msg.MarshalBinary()
 	if err != nil {
-		slog.Error("❌ marshal protocol msg", "err", err)
+		logger.Error("marshal protocol msg", err)
 		return
 	}
-	m := Msg{SID: a.sid, From: string(msg.From), IsBroadcast: msg.Broadcast, Data: wire}
+	m := types.TaurusMessage{
+		SID:         a.sid,
+		From:        string(msg.From),
+		To:          []string{string(msg.To)},
+		IsBroadcast: msg.Broadcast,
+		Data:        wire,
+	}
 	for _, pid := range a.peers {
-		if pid == a.selfID {
-			continue
-		}
-		if msg.Broadcast || msg.IsFor(pid) {
+		if pid != a.selfID && (msg.Broadcast || msg.IsFor(pid)) {
 			_ = a.transport.Send(string(pid), m)
 		}
 	}
 }
 
 func (a *TaurusNetworkAdapter) route() {
+	defer close(a.done)
 	for {
 		select {
 		case tm, ok := <-a.transport.Inbox():
 			if !ok {
-				close(a.done)
 				return
 			}
 			var pm protocol.Message
-			if err := json.Unmarshal(tm.Data, &pm); err != nil {
-				slog.Error("❌ unmarshal protocol msg", "err", err)
+			if err := pm.UnmarshalBinary(tm.Data); err != nil {
+				logger.Error("unmarshal protocol msg", err)
 				continue
 			}
 			select {
 			case a.inbox <- &pm:
 			default:
-				slog.Warn("⚠️ inbox full, drop msg", "self", a.selfID)
+				logger.Warn("inbox full, drop msg", "self", a.selfID)
 			}
 		case <-a.transport.Done():
-			close(a.done)
 			return
 		}
 	}
