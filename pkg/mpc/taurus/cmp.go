@@ -224,8 +224,6 @@ func (p *CmpParty) run(ctx context.Context, proto protocol.StartFunc) (any, erro
 					"broadcast", msg.Broadcast,
 				)
 			}
-		case <-p.network.Done():
-			return h.Result()
 		}
 	}
 }

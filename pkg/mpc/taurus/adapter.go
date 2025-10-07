@@ -10,7 +10,6 @@ import (
 type NetworkInterface interface {
 	Next() <-chan *protocol.Message
 	Send(msg *protocol.Message)
-	Done() <-chan struct{}
 }
 
 type TaurusNetworkAdapter struct {
@@ -18,7 +17,6 @@ type TaurusNetworkAdapter struct {
 	selfID    party.ID
 	transport Transport
 	inbox     chan *protocol.Message
-	done      chan struct{}
 	peers     party.IDSlice
 }
 
@@ -33,7 +31,6 @@ func NewTaurusNetworkAdapter(
 		selfID:    selfID,
 		transport: t,
 		inbox:     make(chan *protocol.Message, 100),
-		done:      make(chan struct{}),
 		peers:     peers,
 	}
 	go a.route()
@@ -41,7 +38,6 @@ func NewTaurusNetworkAdapter(
 }
 
 func (a *TaurusNetworkAdapter) Next() <-chan *protocol.Message { return a.inbox }
-func (a *TaurusNetworkAdapter) Done() <-chan struct{}          { return a.done }
 
 func (a *TaurusNetworkAdapter) Send(msg *protocol.Message) {
 	wire, err := msg.MarshalBinary()
@@ -64,25 +60,17 @@ func (a *TaurusNetworkAdapter) Send(msg *protocol.Message) {
 }
 
 func (a *TaurusNetworkAdapter) route() {
-	defer close(a.done)
-	for {
+	for tm := range a.transport.Inbox() {
+		var pm protocol.Message
+		if err := pm.UnmarshalBinary(tm.Data); err != nil {
+			logger.Error("unmarshal protocol msg", err)
+			continue
+		}
+
 		select {
-		case tm, ok := <-a.transport.Inbox():
-			if !ok {
-				return
-			}
-			var pm protocol.Message
-			if err := pm.UnmarshalBinary(tm.Data); err != nil {
-				logger.Error("unmarshal protocol msg", err)
-				continue
-			}
-			select {
-			case a.inbox <- &pm:
-			default:
-				logger.Warn("inbox full, drop msg", "self", a.selfID)
-			}
-		case <-a.transport.Done():
-			return
+		case a.inbox <- &pm:
+		default:
+			logger.Warn("inbox full, drop msg", "self", a.selfID)
 		}
 	}
 }
