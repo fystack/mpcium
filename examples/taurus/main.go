@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	const environment = "dev"
+	const environment = "development"
 	config.InitViperConfig("")
 	logger.Init(environment, true)
 
@@ -45,6 +45,7 @@ func main() {
 			nil,
 		)
 	}
+
 	natsURL := viper.GetString("nats.url")
 	natsConn, err := nats.Connect(natsURL)
 	if err != nil {
@@ -65,51 +66,45 @@ func main() {
 		Signer:   localSigner,
 	})
 
-	// 3) Listen for signing results
-	err = mpcClient.OnResharingResult(func(evt event.ResharingResultEvent) {
-		logger.Info("Resharing result received",
-			"walletID", evt.WalletID,
-			"pubKey", fmt.Sprintf("%x", evt.PubKey),
-			"newThreshold", evt.NewThreshold,
-			"keyType", evt.KeyType,
-		)
+	// Generate a new wallet ID for this demo
+	walletID := uuid.New().String()
+	fmt.Printf("Generated wallet ID: %s\n", walletID)
+
+	// Step 1: Key Generation
+	fmt.Println("Step 1: Generating Taurus CMP keys...")
+
+	err = mpcClient.OnWalletCreationResult(func(evt event.KeygenResultEvent) {
+		if evt.ResultType == event.ResultTypeSuccess {
+			logger.Info("Taurus CMP key generation completed successfully",
+				"walletID", evt.WalletID,
+				"taurusPubKeySize", len(evt.TaurusCMPPubKey),
+			)
+			fmt.Printf("Taurus CMP key generated successfully\n")
+			fmt.Printf("   Public key size: %d bytes\n", len(evt.TaurusCMPPubKey))
+		} else {
+			logger.Error("Taurus CMP key generation failed", nil,
+				"walletID", evt.WalletID,
+				"error", evt.ErrorReason,
+			)
+			fmt.Printf("Taurus CMP key generation failed: %s\n", evt.ErrorReason)
+		}
 	})
 	if err != nil {
-		logger.Fatal("Failed to subscribe to OnResharingResult", err)
+		logger.Fatal("Failed to subscribe to wallet creation results", err)
 	}
 
-	// Example wallet ID - replace with your actual wallet ID
-	walletID := "506d2d40-483a-49f1-93c8-27dd4fe9740c"
-
-	// Example node IDs - replace with your actual node IDs
-	nodeIDs := []string{
-		"c95c340e-5a18-472d-b9b0-5ac68218213a",
-		"ac37e85f-caca-4bee-8a3a-49a0fe35abff",
-	}
-
-	// Choose the key type to reshare
-	// Options: types.KeyTypeECDSA, types.KeyTypeEd25519, types.KeyTypeTaurusCmp
-	keyType := types.KeyTypeTaurusCmp // Changed to demonstrate Taurus CMP resharing
-
-	fmt.Printf("Resharing %s keys for wallet %s\n", keyType, walletID)
-	fmt.Printf("New node committee: %v\n", nodeIDs)
-
-	resharingMsg := &types.ResharingMessage{
-		SessionID:    uuid.NewString(),
-		WalletID:     walletID,
-		NodeIDs:      nodeIDs, // new peer IDs
-		NewThreshold: 1,       // t+1 <= len(NodeIDs)
-		KeyType:      keyType,
-	}
-	err = mpcClient.Resharing(resharingMsg)
+	err = mpcClient.CreateWallet(walletID)
 	if err != nil {
-		logger.Fatal("Resharing failed", err)
+		logger.Fatal("Failed to create wallet", err)
 	}
-	fmt.Printf("Resharing(%q) sent, awaiting result...\n", resharingMsg.WalletID)
+
+	fmt.Printf("Wallet creation request sent for %s\n", walletID)
+	fmt.Println("Waiting for key generation to complete...")
+	fmt.Println("Note: This generates keys for all protocols (ECDSA, EdDSA, Taurus CMP)")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	fmt.Println("Shutting down.")
+	fmt.Println("\nShutting down Taurus CMP demo.")
 }
