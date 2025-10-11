@@ -4,6 +4,18 @@
 # This script sets up identities for testing with separate test database paths
 set -e
 
+# Cross-platform sed in-place function
+# macOS requires backup extension, Linux doesn't
+sed_inplace() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' "$@"
+    else
+        # Linux and others
+        sed -i "$@"
+    fi
+}
+
 # Number of test nodes
 NUM_NODES=3
 BASE_DIR="$(pwd)"
@@ -97,14 +109,14 @@ if [ -f "test_event_initiator.identity.json" ]; then
     # Update all test node config files with the actual public key and password
     for i in $(seq 0 $((NUM_NODES-1))); do
         # Update public key using sed with | as delimiter (safer than /)
-        sed -i "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/test_node$i/config.yaml"
+        sed_inplace "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/test_node$i/config.yaml"
         # Update password using sed with | as delimiter and escaped password
-        sed -i "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/test_node$i/config.yaml"
+        sed_inplace "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/test_node$i/config.yaml"
     done
     
     # Also update the main config.test.yaml
-    sed -i "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/config.test.yaml"
-    sed -i "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/config.test.yaml"
+    sed_inplace "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/config.test.yaml"
+    sed_inplace "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/config.test.yaml"
     
     echo "✅ Event initiator public key updated: $PUBKEY"
     echo "✅ Badger password updated: $BADGER_PASSWORD"
