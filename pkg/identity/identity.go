@@ -61,17 +61,33 @@ type InitiatorKey struct {
 	P256      *ecdsa.PublicKey
 }
 
+// SignatureAlgorithm represents supported signature algorithms
+type SignatureAlgorithm string
+
+const (
+	AlgorithmEd25519 SignatureAlgorithm = "ed25519"
+	AlgorithmP256    SignatureAlgorithm = "p256"
+)
+
 // AuthorizerInfo represents a single authorizer with their public key and algorithm
 type AuthorizerInfo struct {
-	PublicKey string `json:"public_key"`
-	Algorithm string `json:"algorithm"` // "ed25519" or "secp256k1"
+	PublicKey string             `json:"public_key"`
+	Algorithm SignatureAlgorithm `json:"algorithm"`
 }
 
 // AuthorizationConfig holds the cached authorization configuration
 type AuthorizationConfig struct {
-	Enabled              bool
-	RequiredAuthorizers  int
-	AuthorizerPublicKeys map[string]AuthorizerInfo // key is authorizer ID
+	Enabled              bool                      `mapstructure:"enabled"`
+	RequiredAuthorizers  int                       `mapstructure:"required_authorizers"`
+	AuthorizerPublicKeys map[string]AuthorizerInfo `mapstructure:"authorizer_public_keys"`
+	Authorizers          map[string]AuthorizerInfo `mapstructure:"authorizers"` // backward compatibility
+}
+
+// AuthorizerConfigEntry represents the raw configuration for an authorizer
+type AuthorizerConfigEntry struct {
+	PublicKey string `mapstructure:"public_key"`
+	Algorithm string `mapstructure:"algorithm"`
+	Pubkey    string `mapstructure:"pubkey"` // backward compatibility
 }
 
 // fileStore implements the Store interface using the filesystem
