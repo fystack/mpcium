@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.8
 	github.com/aws/aws-sdk-go-v2/service/kms v1.45.0
 	github.com/bnb-chain/tss-lib/v2 v2.0.2
+	github.com/btcsuite/btcd/btcec/v2 v2.3.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0
 	github.com/dgraph-io/badger/v4 v4.7.0
@@ -43,7 +44,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.1 // indirect
 	github.com/aws/smithy-go v1.23.0 // indirect
 	github.com/btcsuite/btcd v0.24.2 // indirect
-	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/btcsuite/btcutil v1.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
