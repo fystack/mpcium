@@ -39,6 +39,7 @@ type Store interface {
 	// GetPublicKey retrieves a node's public key by its ID
 	GetPublicKey(nodeID string) ([]byte, error)
 	VerifyInitiatorMessage(msg types.InitiatorMessage) error
+	AuthorizeInitiatorMessage(msg types.InitiatorMessage) error
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
 
@@ -69,25 +70,24 @@ const (
 	AlgorithmP256    SignatureAlgorithm = "p256"
 )
 
-// AuthorizerInfo represents a single authorizer with their public key and algorithm
-type AuthorizerInfo struct {
-	PublicKey string             `json:"public_key"`
-	Algorithm SignatureAlgorithm `json:"algorithm"`
+type AuthorizerID string
+
+// AuthorizerPublicKey represents a single authorizer with their public key and algorithm
+type AuthorizerPublicKey struct {
+	PublicKey string             `json:"public_key" mapstructure:"public_key"`
+	Algorithm SignatureAlgorithm `json:"algorithm" mapstructure:"algorithm"`
 }
 
-// AuthorizationConfig holds the cached authorization configuration
 type AuthorizationConfig struct {
-	Enabled              bool                      `mapstructure:"enabled"`
-	RequiredAuthorizers  int                       `mapstructure:"required_authorizers"`
-	AuthorizerPublicKeys map[string]AuthorizerInfo `mapstructure:"authorizer_public_keys"`
-	Authorizers          map[string]AuthorizerInfo `mapstructure:"authorizers"` // backward compatibility
+	Enabled              bool                                 `mapstructure:"enabled"`
+	RequiredAuthorizers  []AuthorizerID                       `mapstructure:"required_authorizers"`
+	AuthorizerPublicKeys map[AuthorizerID]AuthorizerPublicKey `mapstructure:"authorizer_public_keys"`
 }
 
 // AuthorizerConfigEntry represents the raw configuration for an authorizer
 type AuthorizerConfigEntry struct {
 	PublicKey string `mapstructure:"public_key"`
 	Algorithm string `mapstructure:"algorithm"`
-	Pubkey    string `mapstructure:"pubkey"` // backward compatibility
 }
 
 // fileStore implements the Store interface using the filesystem
@@ -99,10 +99,11 @@ type fileStore struct {
 	publicKeys map[string][]byte
 	mu         sync.RWMutex
 
-	privateKey    []byte
-	initiatorKey  *InitiatorKey
-	symmetricKeys map[string][]byte
-	authConfig    AuthorizationConfig
+	privateKey           []byte
+	initiatorKey         *InitiatorKey
+	symmetricKeys        map[string][]byte
+	authConfig           AuthorizationConfig
+	cachedAuthorizerKeys map[AuthorizerID]any // ed25519.PublicKey or *ecdsa.PublicKey
 }
 
 // NewFileStore creates a new identity store
@@ -143,7 +144,6 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 		publicKeys:      make(map[string][]byte),
 		privateKey:      privateKey,
 		initiatorKey:    initiatorKey,
-		authorizerInfo:  make(map[string]AuthorizerInfo),
 		symmetricKeys:   make(map[string][]byte),
 	}
 
@@ -186,6 +186,11 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 		}
 
 		store.publicKeys[identity.NodeID] = key
+	}
+
+	err = store.loadAuthorizationConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	return store, nil
@@ -237,6 +242,42 @@ func loadInitiatorKeys() (*InitiatorKey, error) {
 	}
 
 	return initiatorKey, nil
+}
+
+// loadAuthorizationConfig loads and caches the authorization configuration
+func (s *fileStore) loadAuthorizationConfig() error {
+	var authConfig AuthorizationConfig
+	if err := viper.UnmarshalKey("authorization", &authConfig); err != nil {
+		return fmt.Errorf("failed to unmarshal authorization config: %w", err)
+	}
+	s.authConfig = authConfig
+	if !authConfig.Enabled {
+		return nil
+	}
+
+	for id, key := range authConfig.AuthorizerPublicKeys {
+		switch key.Algorithm {
+		case AlgorithmEd25519:
+			pubKeyBytes, err := encryption.ParseEd25519PublicKeyFromHex(key.PublicKey)
+			if err != nil {
+				logger.Fatal("Invalid authorization config", fmt.Errorf("invalid ed25519 public key for authorizer %s: %w", id, err))
+			}
+			s.cachedAuthorizerKeys[id] = ed25519.PublicKey(pubKeyBytes)
+
+		case AlgorithmP256:
+			pubKey, err := encryption.ParseP256PublicKeyFromHex(key.PublicKey)
+			if err != nil {
+				logger.Fatal("Invalid authorization config", fmt.Errorf("invalid P256 public key for authorizer %s: %w", id, err))
+			}
+			s.cachedAuthorizerKeys[id] = pubKey
+
+		default:
+			logger.Fatal("Invalid authorization config", fmt.Errorf("unknown algorithm %s for authorizer %s", key.Algorithm, id))
+		}
+	}
+
+	logger.Info("Loaded authorization config", "authConfig", authConfig)
+	return nil
 }
 
 // loadEd25519InitiatorKey loads Ed25519 initiator public key
@@ -532,6 +573,65 @@ func (s *fileStore) VerifyInitiatorMessage(msg types.InitiatorMessage) error {
 		return s.verifyP256(msg)
 	}
 	return fmt.Errorf("unsupported algorithm: %s", algo)
+}
+
+func (s *fileStore) AuthorizeInitiatorMessage(msg types.InitiatorMessage) error {
+	if !s.authConfig.Enabled {
+		return nil
+	}
+	sigs := msg.GetAuthorizerSignatures()
+	if len(sigs) == 0 {
+		return nil // skip as no signatures
+	}
+
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		return fmt.Errorf("failed to compose authorizer raw: %w", err)
+	}
+
+	// Verify each authorizer signature
+	for _, sig := range sigs {
+		if err := s.verifyAuthorizerSignature(authorizerRaw, sig); err != nil {
+			return fmt.Errorf("authorizer %s verification failed: %w", sig.AuthorizerID, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *fileStore) verifyAuthorizerSignature(raw []byte, sig types.AuthorizerSignature) error {
+	authPub, ok := s.cachedAuthorizerKeys[AuthorizerID(sig.AuthorizerID)]
+	if !ok {
+		return fmt.Errorf("authorizer %s not found in cache", sig.AuthorizerID)
+	}
+
+	keyMeta := s.authConfig.AuthorizerPublicKeys[AuthorizerID(sig.AuthorizerID)]
+	switch keyMeta.Algorithm {
+	case AlgorithmEd25519:
+		pub := authPub.(ed25519.PublicKey)
+		if !ed25519.Verify(pub, raw, sig.Signature) {
+			return fmt.Errorf("ed25519 verification failed for %s", sig.AuthorizerID)
+		}
+
+	case AlgorithmP256:
+		pub := authPub.(*ecdsa.PublicKey)
+		if err := encryption.VerifyP256Signature(pub, raw, sig.Signature); err != nil {
+			return fmt.Errorf("p256 verification failed for %s: %w", sig.AuthorizerID, err)
+		}
+
+	default:
+		return fmt.Errorf("unsupported algorithm %q for authorizer %s", keyMeta.Algorithm, sig.AuthorizerID)
+	}
+
+	return nil
+}
+
+func (s *fileStore) getAuthorizerPublicKey(authorizerID string) (*AuthorizerPublicKey, error) {
+	publicKey, ok := s.authConfig.AuthorizerPublicKeys[AuthorizerID(authorizerID)]
+	if !ok {
+		return nil, fmt.Errorf("unknown authorizer ID: %s", authorizerID)
+	}
+	return &publicKey, nil
 }
 
 func (s *fileStore) verifyEd25519(msg types.InitiatorMessage) error {

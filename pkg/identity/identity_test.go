@@ -1,519 +1,768 @@
 package identity
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/fystack/mpcium/pkg/encryption"
 	"github.com/fystack/mpcium/pkg/types"
-	"github.com/spf13/viper"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// Helper function to create a temporary directory for tests
-func createTempDir(t *testing.T) string {
-	tempDir, err := os.MkdirTemp("", "identity_test_*")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(tempDir)
-	})
-	return tempDir
+// Mock InitiatorMessage for testing
+type mockInitiatorMessage struct {
+	raw                  []byte
+	sig                  []byte
+	initiatorID          string
+	authorizerSignatures []types.AuthorizerSignature
 }
 
-// Helper function to create test identity files
-func createTestIdentityFiles(t *testing.T, identityDir string) {
-	// Create peers.json
-	peers := map[string]string{
-		"node1": "node1-id",
-		"node2": "node2-id", 
-	}
-	peersData, err := json.Marshal(peers)
-	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(identityDir, "..", "peers.json"), peersData, 0644)
-	require.NoError(t, err)
-
-	// Create identity files for each node
-	for nodeName, nodeID := range peers {
-		pubKey, _, err := ed25519.GenerateKey(rand.Reader)
-		require.NoError(t, err)
-		
-		identity := NodeIdentity{
-			NodeName:  nodeName,
-			NodeID:    nodeID,
-			PublicKey: hex.EncodeToString(pubKey),
-			CreatedAt: "2024-01-01T00:00:00Z",
-		}
-		
-		identityData, err := json.Marshal(identity)
-		require.NoError(t, err)
-		
-		identityFile := filepath.Join(identityDir, fmt.Sprintf("%s_identity.json", nodeName))
-		err = os.WriteFile(identityFile, identityData, 0644)
-		require.NoError(t, err)
-	}
-
-	// Create private key for node1 (the test node)
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	privateKeyFile := filepath.Join(identityDir, "node1_private.key")
-	err = os.WriteFile(privateKeyFile, []byte(hex.EncodeToString(privateKey)), 0600)
-	require.NoError(t, err)
+func (m *mockInitiatorMessage) Raw() ([]byte, error) {
+	return m.raw, nil
 }
 
-// Helper function to setup viper configuration
-func setupViperConfig(t *testing.T, config map[string]interface{}) {
-	// Clear existing config
-	for _, key := range viper.AllKeys() {
-		viper.Set(key, nil)
-	}
-	
-	// Set new config
-	for key, value := range config {
-		viper.Set(key, value)
-	}
+func (m *mockInitiatorMessage) Sig() []byte {
+	return m.sig
 }
 
-func TestNewFileStore_Success(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	// Change working directory to tempDir for peers.json
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Setup viper config
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        false,
-		"authorization.required_authorizers": 0,
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-	assert.NotNil(t, store)
-	
-	// Test that we can get public keys
-	pubKey, err := store.GetPublicKey("node1-id")
-	assert.NoError(t, err)
-	assert.NotNil(t, pubKey)
+func (m *mockInitiatorMessage) InitiatorID() string {
+	return m.initiatorID
 }
 
-func TestAuthorizationDisabled(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        false,
-		"authorization.required_authorizers": 2,
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-	}
-
-	// Authorization should pass when disabled
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.NoError(t, err)
+func (m *mockInitiatorMessage) GetAuthorizerSignatures() []types.AuthorizerSignature {
+	return m.authorizerSignatures
 }
 
-func TestAuthorizationWithEd25519(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Generate authorizer keys
-	authPubKey, authPrivKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 1,
-		"authorization.authorizer_public_keys": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey),
-				"algorithm":  "ed25519",
-			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-	}
-
-	// Get message raw bytes for signing
-	msgBytes, err := msg.Raw()
-	require.NoError(t, err)
-
-	// Sign the message with authorizer key
-	authSig := ed25519.Sign(authPrivKey, msgBytes)
-
-	// Add authorizer signature
-	msg.AuthorizerSignatures = []types.AuthorizerSignature{
-		{
-			AuthorizerID: "auth1",
-			Signature:    authSig,
-		},
-	}
-
-	// Authorization should pass with valid signature
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.NoError(t, err)
-}
-
-func TestAuthorizationInsufficientSignatures(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Generate authorizer keys
-	authPubKey, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 2, // Require 2 signatures
-		"authorization.authorizer_public_keys": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey),
-				"algorithm":  "ed25519",
-			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message with no authorizer signatures
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-	}
-
-	// Authorization should fail with insufficient signatures
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authorization failed for keygen: 0/2 valid authorizer signatures")
-}
-
-func TestAuthorizationInvalidSignature(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Generate authorizer keys
-	authPubKey, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 1,
-		"authorization.authorizer_public_keys": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey),
-				"algorithm":  "ed25519",
-			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message with invalid signature
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-		AuthorizerSignatures: []types.AuthorizerSignature{
-			{
-				AuthorizerID: "auth1",
-				Signature:    []byte("invalid-signature"),
-			},
-		},
-	}
-
-	// Authorization should fail with invalid signature
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authorization failed for keygen: 0/1 valid authorizer signatures")
-}
-
-func TestAuthorizationBackwardCompatibility(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Generate authorizer keys
-	authPubKey, authPrivKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	// Test old configuration format
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 1,
-		"authorization.authorizers": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"pubkey":    hex.EncodeToString(authPubKey),
-				"algorithm": "ed25519",
-			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-	}
-
-	// Get message raw bytes for signing
-	msgBytes, err := msg.Raw()
-	require.NoError(t, err)
-
-	// Sign the message with authorizer key
-	authSig := ed25519.Sign(authPrivKey, msgBytes)
-
-	// Add authorizer signature
-	msg.AuthorizerSignatures = []types.AuthorizerSignature{
-		{
-			AuthorizerID: "auth1",
-			Signature:    authSig,
-		},
-	}
-
-	// Authorization should pass with backward compatible config
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.NoError(t, err)
-}
-
-func TestVerifySignatureByAlgorithm_Ed25519(t *testing.T) {
-	// Generate test key pair
+// Test helper functions
+func generateTestEd25519Key() (ed25519.PublicKey, ed25519.PrivateKey, string) {
 	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	message := []byte("test message")
-	signature := ed25519.Sign(privKey, message)
+	if err != nil {
+		panic(err)
+	}
 	pubKeyHex := hex.EncodeToString(pubKey)
-
-	// Test valid signature
-	valid, err := verifySignatureByAlgorithm(pubKeyHex, "ed25519", message, signature)
-	assert.NoError(t, err)
-	assert.True(t, valid)
-
-	// Test invalid signature
-	valid, err = verifySignatureByAlgorithm(pubKeyHex, "ed25519", message, []byte("invalid"))
-	assert.NoError(t, err)
-	assert.False(t, valid)
-
-	// Test invalid public key
-	valid, err = verifySignatureByAlgorithm("invalid-hex", "ed25519", message, signature)
-	assert.Error(t, err)
-	assert.False(t, valid)
+	return pubKey, privKey, pubKeyHex
 }
 
-func TestVerifySignatureByAlgorithm_UnsupportedAlgorithm(t *testing.T) {
-	valid, err := verifySignatureByAlgorithm("deadbeef", "unknown", []byte("message"), []byte("signature"))
-	assert.Error(t, err)
-	assert.False(t, valid)
-	assert.Contains(t, err.Error(), "unsupported signature algorithm: unknown")
-}
-
-func TestAuthorizationMultipleAuthorizers(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
-
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
-
-	createTestIdentityFiles(t, identityDir)
-
-	// Generate multiple authorizer keys
-	authPubKey1, authPrivKey1, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	authPubKey2, authPrivKey2, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 2,
-		"authorization.authorizer_public_keys": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey1),
-				"algorithm":  "ed25519",
-			},
-			"auth2": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey2),
-				"algorithm":  "ed25519",
-			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
+func generateTestP256Key() (*ecdsa.PublicKey, *ecdsa.PrivateKey, string, error) {
+	keyData, err := encryption.GenerateP256Keys()
+	if err != nil {
+		return nil, nil, "", err
 	}
 
-	// Get message raw bytes for signing
-	msgBytes, err := msg.Raw()
-	require.NoError(t, err)
+	privKeyBytes, err := hex.DecodeString(keyData.PrivateKeyHex)
+	if err != nil {
+		return nil, nil, "", err
+	}
 
-	// Sign the message with both authorizer keys
-	authSig1 := ed25519.Sign(authPrivKey1, msgBytes)
-	authSig2 := ed25519.Sign(authPrivKey2, msgBytes)
+	privKey, err := encryption.ParseP256PrivateKey(privKeyBytes)
+	if err != nil {
+		return nil, nil, "", err
+	}
 
-	// Add both authorizer signatures
-	msg.AuthorizerSignatures = []types.AuthorizerSignature{
-		{
-			AuthorizerID: "auth1",
-			Signature:    authSig1,
+	return &privKey.PublicKey, privKey, keyData.PublicKeyHex, nil
+}
+
+func createTestStore(authEnabled bool, authorizerKeys map[AuthorizerID]AuthorizerPublicKey) *fileStore {
+	cachedKeys := make(map[AuthorizerID]any)
+
+	if authEnabled {
+		for id, keyMeta := range authorizerKeys {
+			switch keyMeta.Algorithm {
+			case AlgorithmEd25519:
+				pubKeyBytes, err := encryption.ParseEd25519PublicKeyFromHex(keyMeta.PublicKey)
+				if err != nil {
+					panic(err)
+				}
+				cachedKeys[id] = ed25519.PublicKey(pubKeyBytes)
+
+			case AlgorithmP256:
+				pubKey, err := encryption.ParseP256PublicKeyFromHex(keyMeta.PublicKey)
+				if err != nil {
+					panic(err)
+				}
+				cachedKeys[id] = pubKey
+			}
+		}
+	}
+
+	return &fileStore{
+		authConfig: AuthorizationConfig{
+			Enabled:              authEnabled,
+			RequiredAuthorizers:  []AuthorizerID{},
+			AuthorizerPublicKeys: authorizerKeys,
 		},
-		{
-			AuthorizerID: "auth2",
-			Signature:    authSig2,
+		cachedAuthorizerKeys: cachedKeys,
+	}
+}
+
+// TestAuthorizeInitiatorMessage_Disabled tests authorization when it's disabled
+func TestAuthorizeInitiatorMessage_Disabled(t *testing.T) {
+	store := createTestStore(false, nil)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("fake signature"),
+		initiatorID: "test-id",
+		authorizerSignatures: []types.AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: []byte("fake sig")},
 		},
 	}
 
-	// Authorization should pass with both signatures
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.NoError(t, err)
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() with disabled auth should return nil, got error: %v", err)
+	}
 }
 
-func TestAuthorizationDuplicateSignatures(t *testing.T) {
-	tempDir := createTempDir(t)
-	identityDir := filepath.Join(tempDir, "identities")
-	err := os.MkdirAll(identityDir, 0750)
-	require.NoError(t, err)
+// TestAuthorizeInitiatorMessage_NoSignatures tests when there are no authorizer signatures
+func TestAuthorizeInitiatorMessage_NoSignatures(t *testing.T) {
+	_, _, pubKeyHex := generateTestEd25519Key()
 
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(oldWd)
-	os.Chdir(tempDir)
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
 
-	createTestIdentityFiles(t, identityDir)
+	store := createTestStore(true, authorizerKeys)
 
+	msg := &mockInitiatorMessage{
+		raw:                  []byte("test message"),
+		sig:                  []byte("fake signature"),
+		initiatorID:          "test-id",
+		authorizerSignatures: []types.AuthorizerSignature{},
+	}
+
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() with no signatures should return nil, got error: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_ValidEd25519 tests valid Ed25519 authorizer signatures
+func TestAuthorizeInitiatorMessage_ValidEd25519(t *testing.T) {
 	// Generate authorizer keys
-	authPubKey, authPrivKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	auth1Pub, auth1Priv, auth1PubHex := generateTestEd25519Key()
+	auth2Pub, auth2Priv, auth2PubHex := generateTestEd25519Key()
 
-	setupViperConfig(t, map[string]interface{}{
-		"event_initiator_pubkey":       "deadbeefcafebabe",
-		"authorization.enabled":        true,
-		"authorization.required_authorizers": 2,
-		"authorization.authorizer_public_keys": map[string]interface{}{
-			"auth1": map[string]interface{}{
-				"public_key": hex.EncodeToString(authPubKey),
-				"algorithm":  "ed25519",
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth1PubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+		"auth2": {
+			PublicKey: auth2PubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	// Create test message
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+	}
+
+	// Compose the authorizer raw data
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		t.Fatalf("Failed to compose authorizer raw: %v", err)
+	}
+
+	// Sign with both authorizers
+	auth1Sig := ed25519.Sign(auth1Priv, authorizerRaw)
+	auth2Sig := ed25519.Sign(auth2Priv, authorizerRaw)
+
+	msg.authorizerSignatures = []types.AuthorizerSignature{
+		{AuthorizerID: "auth1", Signature: auth1Sig},
+		{AuthorizerID: "auth2", Signature: auth2Sig},
+	}
+
+	err = store.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() with valid Ed25519 signatures failed: %v", err)
+	}
+
+	// Verify the keys are still valid
+	if !ed25519.Verify(auth1Pub, authorizerRaw, auth1Sig) {
+		t.Error("Auth1 signature verification failed")
+	}
+	if !ed25519.Verify(auth2Pub, authorizerRaw, auth2Sig) {
+		t.Error("Auth2 signature verification failed")
+	}
+}
+
+// TestAuthorizeInitiatorMessage_ValidP256 tests valid P256 authorizer signatures
+func TestAuthorizeInitiatorMessage_ValidP256(t *testing.T) {
+	// Generate P256 authorizer keys
+	auth1Pub, auth1Priv, auth1PubHex, err := generateTestP256Key()
+	if err != nil {
+		t.Fatalf("Failed to generate P256 key for auth1: %v", err)
+	}
+
+	auth2Pub, auth2Priv, auth2PubHex, err := generateTestP256Key()
+	if err != nil {
+		t.Fatalf("Failed to generate P256 key for auth2: %v", err)
+	}
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth1PubHex,
+			Algorithm: AlgorithmP256,
+		},
+		"auth2": {
+			PublicKey: auth2PubHex,
+			Algorithm: AlgorithmP256,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	// Create test message
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+	}
+
+	// Compose the authorizer raw data
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		t.Fatalf("Failed to compose authorizer raw: %v", err)
+	}
+
+	// Sign with both P256 authorizers
+	auth1Sig, err := encryption.SignWithP256(auth1Priv, authorizerRaw)
+	if err != nil {
+		t.Fatalf("Failed to sign with auth1: %v", err)
+	}
+
+	auth2Sig, err := encryption.SignWithP256(auth2Priv, authorizerRaw)
+	if err != nil {
+		t.Fatalf("Failed to sign with auth2: %v", err)
+	}
+
+	msg.authorizerSignatures = []types.AuthorizerSignature{
+		{AuthorizerID: "auth1", Signature: auth1Sig},
+		{AuthorizerID: "auth2", Signature: auth2Sig},
+	}
+
+	err = store.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() with valid P256 signatures failed: %v", err)
+	}
+
+	// Verify the signatures are still valid
+	if err := encryption.VerifyP256Signature(auth1Pub, authorizerRaw, auth1Sig); err != nil {
+		t.Errorf("Auth1 P256 signature verification failed: %v", err)
+	}
+	if err := encryption.VerifyP256Signature(auth2Pub, authorizerRaw, auth2Sig); err != nil {
+		t.Errorf("Auth2 P256 signature verification failed: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_MixedAlgorithms tests mixed Ed25519 and P256 signatures
+func TestAuthorizeInitiatorMessage_MixedAlgorithms(t *testing.T) {
+	// Generate Ed25519 key for auth1
+	_, auth1Ed25519Priv, auth1Ed25519PubHex := generateTestEd25519Key()
+
+	// Generate P256 key for auth2
+	_, auth2P256Priv, auth2P256PubHex, err := generateTestP256Key()
+	if err != nil {
+		t.Fatalf("Failed to generate P256 key: %v", err)
+	}
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth1Ed25519PubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+		"auth2": {
+			PublicKey: auth2P256PubHex,
+			Algorithm: AlgorithmP256,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	// Create test message
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message with mixed algorithms"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-456",
+	}
+
+	// Compose the authorizer raw data
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		t.Fatalf("Failed to compose authorizer raw: %v", err)
+	}
+
+	// Sign with Ed25519 authorizer
+	auth1Sig := ed25519.Sign(auth1Ed25519Priv, authorizerRaw)
+
+	// Sign with P256 authorizer
+	auth2Sig, err := encryption.SignWithP256(auth2P256Priv, authorizerRaw)
+	if err != nil {
+		t.Fatalf("Failed to sign with P256: %v", err)
+	}
+
+	msg.authorizerSignatures = []types.AuthorizerSignature{
+		{AuthorizerID: "auth1", Signature: auth1Sig},
+		{AuthorizerID: "auth2", Signature: auth2Sig},
+	}
+
+	err = store.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() with mixed algorithms failed: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_InvalidSignature tests invalid signatures
+func TestAuthorizeInitiatorMessage_InvalidSignature(t *testing.T) {
+	_, _, authPubHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: authPubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+		authorizerSignatures: []types.AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: []byte("invalid signature")},
+		},
+	}
+
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail with invalid signature")
+	}
+	if !strings.Contains(err.Error(), "verification failed") {
+		t.Errorf("Expected error to contain 'verification failed', got: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_UnknownAuthorizer tests unknown authorizer ID
+func TestAuthorizeInitiatorMessage_UnknownAuthorizer(t *testing.T) {
+	_, _, authPubHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: authPubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+		authorizerSignatures: []types.AuthorizerSignature{
+			{AuthorizerID: "unknown-auth", Signature: []byte("some signature")},
+		},
+	}
+
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail with unknown authorizer")
+	}
+	if !strings.Contains(err.Error(), "not found in cache") {
+		t.Errorf("Expected error to contain 'not found in cache', got: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_WrongKeyForSignature tests signature signed with wrong key
+func TestAuthorizeInitiatorMessage_WrongKeyForSignature(t *testing.T) {
+	// Create two different key pairs
+	_, auth1Priv, auth1PubHex := generateTestEd25519Key()
+	_, _, auth2PubHex := generateTestEd25519Key() // Different key
+
+	// Configure store with auth2's public key but sign with auth1's private key
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth2PubHex, // Using auth2's public key
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+	}
+
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		t.Fatalf("Failed to compose authorizer raw: %v", err)
+	}
+
+	// Sign with auth1's private key
+	wrongSig := ed25519.Sign(auth1Priv, authorizerRaw)
+
+	msg.authorizerSignatures = []types.AuthorizerSignature{
+		{AuthorizerID: "auth1", Signature: wrongSig},
+	}
+
+	err = store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail when signature doesn't match public key")
+	}
+	if !strings.Contains(err.Error(), "verification failed") {
+		t.Errorf("Expected error to contain 'verification failed', got: %v", err)
+	}
+
+	// Also test with valid key to ensure our test setup is correct
+	authorizerKeys2 := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth1PubHex, // Using correct public key
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+	store2 := createTestStore(true, authorizerKeys2)
+	err = store2.AuthorizeInitiatorMessage(msg)
+	if err != nil {
+		t.Errorf("AuthorizeInitiatorMessage() should succeed with correct key: %v", err)
+	}
+}
+
+// TestVerifyAuthorizerSignature_Ed25519 tests the verifyAuthorizerSignature helper with Ed25519
+func TestVerifyAuthorizerSignature_Ed25519(t *testing.T) {
+	_, privKey, pubKeyHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	rawData := []byte("test data for signing")
+	validSig := ed25519.Sign(privKey, rawData)
+
+	tests := []struct {
+		name      string
+		raw       []byte
+		sig       types.AuthorizerSignature
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid signature",
+			raw:  rawData,
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    validSig,
 			},
-		},
-	})
-
-	store, err := NewFileStore(identityDir, "node1", false)
-	require.NoError(t, err)
-
-	// Create a test message
-	msg := &types.GenerateKeyMessage{
-		WalletID:  "test-wallet",
-		Signature: []byte("test-signature"),
-	}
-
-	// Get message raw bytes for signing
-	msgBytes, err := msg.Raw()
-	require.NoError(t, err)
-
-	// Sign the message with authorizer key
-	authSig := ed25519.Sign(authPrivKey, msgBytes)
-
-	// Add duplicate authorizer signatures (should only count once)
-	msg.AuthorizerSignatures = []types.AuthorizerSignature{
-		{
-			AuthorizerID: "auth1",
-			Signature:    authSig,
+			wantError: false,
 		},
 		{
-			AuthorizerID: "auth1", // Duplicate
-			Signature:    authSig,
+			name: "invalid signature",
+			raw:  rawData,
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    []byte("invalid signature"),
+			},
+			wantError: true,
+			errorMsg:  "verification failed",
+		},
+		{
+			name: "unknown authorizer",
+			raw:  rawData,
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "unknown",
+				Signature:    validSig,
+			},
+			wantError: true,
+			errorMsg:  "not found in cache",
+		},
+		{
+			name: "tampered data",
+			raw:  []byte("different data"),
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    validSig,
+			},
+			wantError: true,
+			errorMsg:  "verification failed",
 		},
 	}
 
-	// Authorization should fail - only 1 unique signature, need 2
-	err = store.AuthorizeInitiatorMessage("keygen", msg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authorization failed for keygen: 1/2 valid authorizer signatures")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := store.verifyAuthorizerSignature(tt.raw, tt.sig)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("verifyAuthorizerSignature() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("verifyAuthorizerSignature() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("verifyAuthorizerSignature() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestVerifyAuthorizerSignature_P256 tests the verifyAuthorizerSignature helper with P256
+func TestVerifyAuthorizerSignature_P256(t *testing.T) {
+	_, privKey, pubKeyHex, err := generateTestP256Key()
+	if err != nil {
+		t.Fatalf("Failed to generate P256 key: %v", err)
+	}
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmP256,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	rawData := []byte("test data for P256 signing")
+	validSig, err := encryption.SignWithP256(privKey, rawData)
+	if err != nil {
+		t.Fatalf("Failed to sign data: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		raw       []byte
+		sig       types.AuthorizerSignature
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid P256 signature",
+			raw:  rawData,
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    validSig,
+			},
+			wantError: false,
+		},
+		{
+			name: "invalid P256 signature",
+			raw:  rawData,
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    []byte("invalid signature"),
+			},
+			wantError: true,
+			errorMsg:  "verification failed",
+		},
+		{
+			name: "tampered P256 data",
+			raw:  []byte("different data"),
+			sig: types.AuthorizerSignature{
+				AuthorizerID: "auth1",
+				Signature:    validSig,
+			},
+			wantError: true,
+			errorMsg:  "verification failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := store.verifyAuthorizerSignature(tt.raw, tt.sig)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("verifyAuthorizerSignature() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("verifyAuthorizerSignature() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("verifyAuthorizerSignature() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestGetAuthorizerPublicKey tests the getAuthorizerPublicKey helper
+func TestGetAuthorizerPublicKey(t *testing.T) {
+	_, _, pubKeyHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	tests := []struct {
+		name         string
+		authorizerID string
+		wantError    bool
+		errorMsg     string
+	}{
+		{
+			name:         "existing authorizer",
+			authorizerID: "auth1",
+			wantError:    false,
+		},
+		{
+			name:         "non-existent authorizer",
+			authorizerID: "unknown",
+			wantError:    true,
+			errorMsg:     "unknown authorizer ID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pubKey, err := store.getAuthorizerPublicKey(tt.authorizerID)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("getAuthorizerPublicKey() expected error but got none")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("getAuthorizerPublicKey() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+				if pubKey != nil {
+					t.Error("getAuthorizerPublicKey() expected nil public key on error")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("getAuthorizerPublicKey() unexpected error = %v", err)
+				}
+				if pubKey == nil {
+					t.Error("getAuthorizerPublicKey() expected non-nil public key")
+				} else if pubKey.PublicKey != pubKeyHex {
+					t.Errorf("getAuthorizerPublicKey() public key = %v, want %v", pubKey.PublicKey, pubKeyHex)
+				}
+			}
+		})
+	}
+}
+
+// TestAuthorizeInitiatorMessage_MultipleAuthorizersPartialFailure tests failure when one of multiple signatures is invalid
+func TestAuthorizeInitiatorMessage_MultipleAuthorizersPartialFailure(t *testing.T) {
+	// Generate two Ed25519 keys
+	_, auth1Priv, auth1PubHex := generateTestEd25519Key()
+	_, _, auth2PubHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: auth1PubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+		"auth2": {
+			PublicKey: auth2PubHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+	}
+
+	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)
+	if err != nil {
+		t.Fatalf("Failed to compose authorizer raw: %v", err)
+	}
+
+	// Create one valid signature and one invalid
+	validSig := ed25519.Sign(auth1Priv, authorizerRaw)
+	invalidSig := []byte("invalid signature for auth2")
+
+	msg.authorizerSignatures = []types.AuthorizerSignature{
+		{AuthorizerID: "auth1", Signature: validSig},
+		{AuthorizerID: "auth2", Signature: invalidSig},
+	}
+
+	err = store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail when one of multiple signatures is invalid")
+	}
+	if !strings.Contains(err.Error(), "auth2") {
+		t.Errorf("Expected error to mention 'auth2', got: %v", err)
+	}
+}
+
+// TestAuthorizeInitiatorMessage_EmptySignature tests behavior with empty signature bytes
+func TestAuthorizeInitiatorMessage_EmptySignature(t *testing.T) {
+	_, _, pubKeyHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+		authorizerSignatures: []types.AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: []byte{}},
+		},
+	}
+
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail with empty signature")
+	}
+}
+
+// TestAuthorizeInitiatorMessage_NilSignature tests behavior with nil signature
+func TestAuthorizeInitiatorMessage_NilSignature(t *testing.T) {
+	_, _, pubKeyHex := generateTestEd25519Key()
+
+	authorizerKeys := map[AuthorizerID]AuthorizerPublicKey{
+		"auth1": {
+			PublicKey: pubKeyHex,
+			Algorithm: AlgorithmEd25519,
+		},
+	}
+
+	store := createTestStore(true, authorizerKeys)
+
+	msg := &mockInitiatorMessage{
+		raw:         []byte("test message"),
+		sig:         []byte("initiator signature"),
+		initiatorID: "wallet-123",
+		authorizerSignatures: []types.AuthorizerSignature{
+			{AuthorizerID: "auth1", Signature: nil},
+		},
+	}
+
+	err := store.AuthorizeInitiatorMessage(msg)
+	if err == nil {
+		t.Error("AuthorizeInitiatorMessage() should fail with nil signature")
+	}
 }
