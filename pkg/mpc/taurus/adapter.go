@@ -7,39 +7,34 @@ import (
 	"github.com/taurusgroup/multi-party-sig/pkg/protocol"
 )
 
-type NetworkInterface interface {
-	Next() <-chan *protocol.Message
-	Send(msg *protocol.Message)
-}
-
-type TaurusNetworkAdapter struct {
+type NetworkAdapter struct {
 	sid       string
 	selfID    party.ID
+	peers     party.IDSlice
 	transport Transport
 	inbox     chan *protocol.Message
-	peers     party.IDSlice
 }
 
-func NewTaurusNetworkAdapter(
+func NewNetworkAdapter(
 	sid string,
 	selfID party.ID,
 	t Transport,
 	peers party.IDSlice,
-) *TaurusNetworkAdapter {
-	a := &TaurusNetworkAdapter{
+) *NetworkAdapter {
+	a := &NetworkAdapter{
 		sid:       sid,
 		selfID:    selfID,
+		peers:     peers,
 		transport: t,
 		inbox:     make(chan *protocol.Message, 100),
-		peers:     peers,
 	}
 	go a.route()
 	return a
 }
 
-func (a *TaurusNetworkAdapter) Next() <-chan *protocol.Message { return a.inbox }
+func (a *NetworkAdapter) Next() <-chan *protocol.Message { return a.inbox }
 
-func (a *TaurusNetworkAdapter) Send(msg *protocol.Message) {
+func (a *NetworkAdapter) Send(msg *protocol.Message) {
 	wire, err := msg.MarshalBinary()
 	if err != nil {
 		logger.Error("marshal protocol msg", err)
@@ -59,7 +54,7 @@ func (a *TaurusNetworkAdapter) Send(msg *protocol.Message) {
 	}
 }
 
-func (a *TaurusNetworkAdapter) route() {
+func (a *NetworkAdapter) route() {
 	for tm := range a.transport.Inbox() {
 		var pm protocol.Message
 		if err := pm.UnmarshalBinary(tm.Data); err != nil {

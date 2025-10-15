@@ -15,8 +15,8 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc/taurus"
+	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
-	"github.com/taurusgroup/multi-party-sig/pkg/pool"
 )
 
 const (
@@ -143,24 +143,33 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 	return session, nil
 }
 
-func (p *Node) CreateCMPSession(
+func (p *Node) CreateTaurusSession(
 	walletID string,
 	threshold int,
+	sessionType types.KeyType,
 	act taurus.Act,
-) (*taurus.CmpParty, error) {
+) (taurus.TaurusSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
-	tr := taurus.NewNATSTransport(walletID, selfPartyID, act, p.pubSub, p.direct, p.identityStore)
-	adapter := taurus.NewTaurusNetworkAdapter(walletID, selfPartyID, tr, allPartyIDs)
-	pl := pool.NewPool(0)
-	session := taurus.NewCmpParty(walletID, selfPartyID, allPartyIDs, threshold, pl, adapter, p.keyinfoStore, p.kvstore)
+	var session taurus.TaurusSession
+	switch sessionType {
+	case types.KeyTypeCGGMP21:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+	case types.KeyTypeTaproot:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+	case types.KeyTypeFROST:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROST, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+	}
+
 	if act == taurus.ActSign || act == taurus.ActReshare {
 		err := session.LoadKey(walletID)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	return session, nil
 }
 

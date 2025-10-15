@@ -178,10 +178,16 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session", natMsg)
 		return
 	}
-	taurusSession, err := ec.node.CreateCMPSession(walletID, ec.mpcThreshold, taurus.ActKeygen)
+	cggmp21Session, err := ec.node.CreateTaurusSession(walletID, ec.mpcThreshold, types.KeyTypeCGGMP21, taurus.ActKeygen)
 	if err != nil {
-		logger.Error("Failed to create Taurus CMP session", err, "walletID", walletID)
-		ec.handleKeygenSessionError(walletID, err, "Failed to create Taurus CMP key generation session", natMsg)
+		logger.Error("Failed to create CMP session", err, "walletID", walletID)
+		ec.handleKeygenSessionError(walletID, err, "Failed to create CMP key generation session", natMsg)
+		return
+	}
+	taprootSession, err := ec.node.CreateTaurusSession(walletID, ec.mpcThreshold, types.KeyTypeTaproot, taurus.ActKeygen)
+	if err != nil {
+		logger.Error("Failed to create Taproot session", err, "walletID", walletID)
+		ec.handleKeygenSessionError(walletID, err, "Failed to create Taproot key generation session", natMsg)
 		return
 	}
 
@@ -190,14 +196,15 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 
 	ctxEcdsa, doneEcdsa := context.WithCancel(baseCtx)
 	ctxEddsa, doneEddsa := context.WithCancel(baseCtx)
-	ctxTaurus, doneTaurus := context.WithCancel(baseCtx)
+	ctxCggmp21, doneCggmp21 := context.WithCancel(baseCtx)
+	ctxTaproot, doneTaproot := context.WithCancel(baseCtx)
 
 	successEvent := &event.KeygenResultEvent{WalletID: walletID, ResultType: event.ResultTypeSuccess}
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	// Channel to communicate errors from goroutines to main function
-	errorChan := make(chan error, 3)
+	errorChan := make(chan error, 4)
 
 	go func() {
 		defer wg.Done()
@@ -225,16 +232,30 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}()
 	go func() {
 		defer wg.Done()
-		data, err := taurusSession.Keygen(ctxTaurus)
+		data, err := cggmp21Session.Keygen(ctxCggmp21)
 		if err != nil {
 			logger.Error("Failed to generate key", err)
 			errorChan <- err
 			return
 		}
 
-		logger.Info("CMP Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
-		successEvent.TaurusCMPPubKey = data.PubKeyBytes
-		doneTaurus()
+		logger.Info("CGGMP21 Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
+		successEvent.CGGMP21PubKey = data.PubKeyBytes
+		doneCggmp21()
+	}()
+
+	go func() {
+		defer wg.Done()
+		data, err := taprootSession.Keygen(ctxTaproot)
+		if err != nil {
+			logger.Error("Failed to generate key", err)
+			errorChan <- err
+			return
+		}
+
+		logger.Info("Taproot Keygen completed successfully", "walletID", walletID, "payloadLength", len(data.Payload))
+		successEvent.TaprootPubKey = data.PubKeyBytes
+		doneTaproot()
 	}()
 
 	ecdsaSession.ListenToIncomingMessageAsync()
@@ -423,8 +444,8 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			ec.signingResultQueue,
 			idempotentKey,
 		)
-	case types.KeyTypeTaurusCmp:
-		ec.handleCMPSigning(msg, natMsg)
+	case types.KeyTypeCGGMP21, types.KeyTypeTaproot, types.KeyTypeFROST:
+		ec.handleTaurusSigning(msg.KeyType, msg, natMsg)
 		return
 	default:
 		sessionErr = fmt.Errorf("unsupported key type: %v", msg.KeyType)
@@ -518,20 +539,17 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 	go session.Sign(onSuccess)
 }
 
-// Add this method to handle CMP signing
-func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.Msg) {
-	logger.Info("Starting CMP signing", "walletID", msg.WalletID, "txID", msg.TxID)
-
-	// Create CMP session for signing
-	taurusSession, err := ec.node.CreateCMPSession(msg.WalletID, ec.mpcThreshold, taurus.ActSign)
+func (ec *eventConsumer) handleTaurusSigning(keyType types.KeyType, msg types.SignTxMessage, natMsg *nats.Msg) {
+	logger.Info("Starting signing", "walletID", msg.WalletID, "txID", msg.TxID, "keyType", keyType)
+	session, err := ec.node.CreateTaurusSession(msg.WalletID, ec.mpcThreshold, keyType, taurus.ActSign)
 	if err != nil {
-		logger.Error("Failed to create Taurus CMP signing session", err, "walletID", msg.WalletID)
+		logger.Error("Failed to create session", err, "walletID", msg.WalletID)
 		ec.handleSigningSessionError(
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
 			err,
-			"Failed to create Taurus CMP signing session",
+			fmt.Sprintf("Failed to create %s session: %v", keyType, err),
 			natMsg,
 		)
 		return
@@ -544,16 +562,15 @@ func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Perform CMP signing
-	signature, err := taurusSession.Sign(ctx, txBigInt)
+	signature, err := session.Sign(ctx, txBigInt)
 	if err != nil {
-		logger.Error("CMP signing failed", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		logger.Error("signing failed", err, "keyType", keyType, "walletID", msg.WalletID, "txID", msg.TxID)
 		ec.handleSigningSessionError(
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
 			err,
-			"CMP signing failed",
+			fmt.Sprintf("%s signing failed", keyType),
 			natMsg,
 		)
 		return
@@ -565,19 +582,19 @@ func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.
 		NetworkInternalCode: msg.NetworkInternalCode,
 		WalletID:            msg.WalletID,
 		TxID:                msg.TxID,
-		Signature:           signature, // CMP returns the full signature
+		Signature:           signature, // Returns the full signature
 	}
 
 	// Marshal and enqueue the result
 	signingResultBytes, err := json.Marshal(signingResult)
 	if err != nil {
-		logger.Error("Failed to marshal CMP signing result event", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		logger.Error("Failed to marshal signing result event", err, "keyType", keyType, "walletID", msg.WalletID, "txID", msg.TxID)
 		ec.handleSigningSessionError(
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
 			err,
-			"Failed to marshal CMP signing result",
+			fmt.Sprintf("Failed to marshal %s signing result", keyType),
 			natMsg,
 		)
 		return
@@ -588,13 +605,13 @@ func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.
 		IdempotententKey: composeSigningIdempotentKey(msg.TxID, natMsg),
 	})
 	if err != nil {
-		logger.Error("Failed to enqueue CMP signing result event", err, "walletID", msg.WalletID, "txID", msg.TxID)
+		logger.Error("Failed to enqueue signing result event", err, "keyType", keyType, "walletID", msg.WalletID, "txID", msg.TxID)
 		ec.handleSigningSessionError(
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
 			err,
-			"Failed to enqueue CMP signing result",
+			fmt.Sprintf("Failed to enqueue %s signing result", keyType),
 			natMsg,
 		)
 		return
@@ -602,7 +619,7 @@ func (ec *eventConsumer) handleCMPSigning(msg types.SignTxMessage, natMsg *nats.
 
 	// Send reply and log success
 	ec.sendReplyToRemoveMsg(natMsg)
-	logger.Info("[COMPLETED CMP SIGN] CMP signing completed successfully", "walletID", msg.WalletID, "txID", msg.TxID)
+	logger.Info("[COMPLETED SIGN] signing completed successfully", "keyType", keyType, "walletID", msg.WalletID, "txID", msg.TxID)
 }
 
 func (ec *eventConsumer) consumeTxSigningEvent() error {
@@ -712,8 +729,8 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			return
 		}
 		// Handle CMP reshare separately
-		if keyType == types.KeyTypeTaurusCmp {
-			ec.handleCMPReshare(msg, natMsg)
+		if keyType == types.KeyTypeCGGMP21 || keyType == types.KeyTypeTaproot || keyType == types.KeyTypeFROST {
+			ec.handleTaurusReshare(msg, natMsg)
 			return
 		}
 
@@ -855,23 +872,37 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 	return err
 }
 
-// NOTE: In CMP reshare, it just refresh the keyshare of each node but keep the same public key and threshold.
+// NOTE: In Taurus reshare, it just refresh the keyshare of each node but keep the same public key and threshold.
 // Therefore, we don't need to create new party sessions for CMP reshare.
-func (ec *eventConsumer) handleCMPReshare(msg types.ResharingMessage, natMsg *nats.Msg) {
-	logger.Info("Starting CMP reshare", "walletID", msg.WalletID, "sessionID", msg.SessionID)
+func (ec *eventConsumer) handleTaurusReshare(msg types.ResharingMessage, natMsg *nats.Msg) {
+	logger.Info("Starting reshare", "walletID", msg.WalletID, "sessionID", msg.SessionID, "keyType", msg.KeyType)
 
-	// Create CMP session for reshare
-	taurusSession, err := ec.node.CreateCMPSession(msg.WalletID, msg.NewThreshold, taurus.ActReshare)
+	// Create Taurus session for reshare
+	session, err := ec.node.CreateTaurusSession(msg.WalletID, msg.NewThreshold, types.KeyTypeCGGMP21, taurus.ActReshare)
 	if err != nil {
-		logger.Error("Failed to create Taurus CMP reshare session", err, "walletID", msg.WalletID)
-		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to create Taurus CMP reshare session", natMsg)
+		logger.Error("Failed to create reshare session", err, "walletID", msg.WalletID, "keyType", msg.KeyType)
+		ec.handleReshareSessionError(
+			msg.WalletID,
+			msg.KeyType,
+			msg.NewThreshold,
+			err,
+			fmt.Sprintf("Failed to create %s reshare session", msg.KeyType),
+			natMsg,
+		)
 		return
 	}
 
 	// Load the existing key for reshare
-	if err := taurusSession.LoadKey(msg.WalletID); err != nil {
-		logger.Error("Failed to load key for CMP reshare", err, "walletID", msg.WalletID)
-		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to load key for CMP reshare", natMsg)
+	if err := session.LoadKey(msg.WalletID); err != nil {
+		logger.Error("Failed to load key for reshare", err, "walletID", msg.WalletID, "keyType", msg.KeyType)
+		ec.handleReshareSessionError(
+			msg.WalletID,
+			msg.KeyType,
+			msg.NewThreshold,
+			err,
+			fmt.Sprintf("Failed to load key for %s reshare", msg.KeyType),
+			natMsg,
+		)
 		return
 	}
 
@@ -879,11 +910,18 @@ func (ec *eventConsumer) handleCMPReshare(msg types.ResharingMessage, natMsg *na
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Longer timeout for reshare
 	defer cancel()
 
-	// Perform CMP reshare
-	keyData, err := taurusSession.Reshare(ctx)
+	// Perform reshare
+	keyData, err := session.Reshare(ctx)
 	if err != nil {
-		logger.Error("CMP reshare failed", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
-		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "CMP reshare failed", natMsg)
+		logger.Error("Reshare failed", err, "walletID", msg.WalletID, "sessionID", msg.SessionID, "keyType", msg.KeyType)
+		ec.handleReshareSessionError(
+			msg.WalletID,
+			msg.KeyType,
+			msg.NewThreshold,
+			err,
+			fmt.Sprintf("Reshare failed for %s", msg.KeyType),
+			natMsg,
+		)
 		return
 	}
 
@@ -899,8 +937,15 @@ func (ec *eventConsumer) handleCMPReshare(msg types.ResharingMessage, natMsg *na
 	// Marshal and enqueue the result
 	reshareResultBytes, err := json.Marshal(reshareResult)
 	if err != nil {
-		logger.Error("Failed to marshal CMP reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
-		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to marshal CMP reshare result", natMsg)
+		logger.Error("Failed to marshal reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID, "keyType", msg.KeyType)
+		ec.handleReshareSessionError(
+			msg.WalletID,
+			msg.KeyType,
+			msg.NewThreshold,
+			err,
+			fmt.Sprintf("Failed to marshal %s reshare result", msg.KeyType),
+			natMsg,
+		)
 		return
 	}
 
@@ -910,15 +955,22 @@ func (ec *eventConsumer) handleCMPReshare(msg types.ResharingMessage, natMsg *na
 		IdempotententKey: composeReshareIdempotentKey(msg.SessionID, natMsg),
 	})
 	if err != nil {
-		logger.Error("Failed to enqueue CMP reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID)
-		ec.handleReshareSessionError(msg.WalletID, msg.KeyType, msg.NewThreshold, err, "Failed to enqueue CMP reshare result", natMsg)
+		logger.Error("Failed to enqueue reshare result event", err, "walletID", msg.WalletID, "sessionID", msg.SessionID, "keyType", msg.KeyType)
+		ec.handleReshareSessionError(
+			msg.WalletID,
+			msg.KeyType,
+			msg.NewThreshold,
+			err,
+			fmt.Sprintf("Failed to enqueue %s reshare result", msg.KeyType),
+			natMsg,
+		)
 		return
 	}
 
 	// Remove this line - don't send reply for reshare messages
 	// ec.sendReplyToRemoveMsg(natMsg)
 
-	logger.Info("[COMPLETED CMP RESHARE] CMP reshare completed successfully", "walletID", msg.WalletID, "sessionID", msg.SessionID)
+	logger.Info("[COMPLETED RESHARE] CMP reshare completed successfully", "walletID", msg.WalletID, "sessionID", msg.SessionID)
 }
 
 // handleReshareSessionError handles errors that occur during reshare operations
@@ -1056,8 +1108,12 @@ func sessionTypeFromKeyType(keyType types.KeyType) (mpc.SessionType, error) {
 		return mpc.SessionTypeECDSA, nil
 	case types.KeyTypeEd25519:
 		return mpc.SessionTypeEDDSA, nil
-	case types.KeyTypeTaurusCmp:
-		return mpc.SessionTypeTaurusCmp, nil
+	case types.KeyTypeCGGMP21:
+		return mpc.SessionTypeCGGMP21, nil
+	case types.KeyTypeTaproot:
+		return mpc.SessionTypeTaproot, nil
+	case types.KeyTypeFROST:
+		return mpc.SessionTypeFROST, nil
 	default:
 		logger.Warn("Unsupported key type", "keyType", keyType)
 		return "", fmt.Errorf("unsupported key type: %v", keyType)

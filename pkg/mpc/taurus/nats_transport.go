@@ -31,6 +31,7 @@ type NATSTransport struct {
 	selfID        string
 	wallet        string
 	act           Act
+	proto         Protocol
 	topicComposer *TopicComposer
 	pubsub        messaging.PubSub
 	direct        messaging.DirectMessaging
@@ -45,6 +46,7 @@ func NewNATSTransport(
 	walletID string,
 	self party.ID,
 	act Act,
+	proto Protocol,
 	pubsub messaging.PubSub,
 	direct messaging.DirectMessaging,
 	identityStore identity.Store,
@@ -53,15 +55,16 @@ func NewNATSTransport(
 		selfID:        string(self),
 		wallet:        walletID,
 		act:           act,
+		proto:         proto,
 		pubsub:        pubsub,
 		direct:        direct,
 		identityStore: identityStore,
 		topicComposer: &TopicComposer{
 			ComposeBroadcastTopic: func() string {
-				return fmt.Sprintf("%s:broadcast:cmp:%s", act, walletID)
+				return fmt.Sprintf("%s:broadcast:%s:%s", act, proto, walletID)
 			},
 			ComposeDirectTopic: func(to string, walletID string) string {
-				return fmt.Sprintf("%s:direct:cmp:%s:%s", act, to, walletID)
+				return fmt.Sprintf("%s:direct:%s:%s:%s", act, proto, to, walletID)
 			},
 		},
 		inbox: make(chan types.TaurusMessage, 128),
