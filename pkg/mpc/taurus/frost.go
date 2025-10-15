@@ -33,7 +33,15 @@ func NewFROSTSession(
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
 ) TaurusSession {
-	commonSession := NewCommonSession(sessionID, selfID, peerIDs, threshold, transport, kvstore, keyinfoStore)
+	commonSession := NewCommonSession(
+		sessionID,
+		selfID,
+		peerIDs,
+		threshold,
+		transport,
+		kvstore,
+		keyinfoStore,
+	)
 	return &FROSTSession{
 		commonSession: commonSession,
 		savedData:     nil,

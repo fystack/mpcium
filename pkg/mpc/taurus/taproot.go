@@ -34,7 +34,15 @@ func NewTaprootSession(
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
 ) TaurusSession {
-	commonSession := NewCommonSession(sessionID, selfID, peerIDs, threshold, transport, kvstore, keyinfoStore)
+	commonSession := NewCommonSession(
+		sessionID,
+		selfID,
+		peerIDs,
+		threshold,
+		transport,
+		kvstore,
+		keyinfoStore,
+	)
 	return &TaprootSession{
 		commonSession: commonSession,
 		savedData:     nil,
@@ -194,7 +202,11 @@ func (p *TaprootSession) Reshare(ctx context.Context) (res types.ReshareData, er
 	}
 
 	return types.ReshareData{
-		KeyData:   types.KeyData{SID: p.sessionID, Type: CGGMP21.String(), PubKeyBytes: pubKeyBytes},
+		KeyData: types.KeyData{
+			SID:         p.sessionID,
+			Type:        CGGMP21.String(),
+			PubKeyBytes: pubKeyBytes,
+		},
 		Threshold: p.threshold,
 	}, nil
 }

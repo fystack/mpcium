@@ -35,7 +35,15 @@ func NewCGGMP21Session(
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
 ) TaurusSession {
-	commonSession := NewCommonSession(sessionID, selfID, peerIDs, threshold, transport, kvstore, keyinfoStore)
+	commonSession := NewCommonSession(
+		sessionID,
+		selfID,
+		peerIDs,
+		threshold,
+		transport,
+		kvstore,
+		keyinfoStore,
+	)
 	return &CGGMP21Session{
 		commonSession: commonSession,
 		workerPool:    pool.NewPool(0),
@@ -63,7 +71,10 @@ func (p *CGGMP21Session) LoadKey(sid string) error {
 func (p *CGGMP21Session) Keygen(ctx context.Context) (types.KeyData, error) {
 	logger.Info("Starting to generate key CGGMP21", "walletID", p.sessionID)
 
-	result, err := p.run(ctx, cmp.Keygen(curve.Secp256k1{}, p.selfID, p.peerIDs, p.threshold, p.workerPool))
+	result, err := p.run(
+		ctx,
+		cmp.Keygen(curve.Secp256k1{}, p.selfID, p.peerIDs, p.threshold, p.workerPool),
+	)
 	if err != nil {
 		return types.KeyData{}, err
 	}
@@ -184,7 +195,11 @@ func (p *CGGMP21Session) Reshare(ctx context.Context) (res types.ReshareData, er
 	}
 
 	return types.ReshareData{
-		KeyData:   types.KeyData{SID: p.sessionID, Type: CGGMP21.String(), PubKeyBytes: pubKeyBytes},
+		KeyData: types.KeyData{
+			SID:         p.sessionID,
+			Type:        CGGMP21.String(),
+			PubKeyBytes: pubKeyBytes,
+		},
 		Threshold: p.threshold,
 	}, nil
 }
