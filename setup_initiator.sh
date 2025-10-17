@@ -1,10 +1,17 @@
 #!/bin/bash
 
+echo "🚀 Setting up peers..."
+
+go run ./cmd/mpcium-cli generate-peers -n 3
+
 echo "🚀 Setting up Event Initiator..."
 
 # Generate the event initiator
 echo "📝 Generating event initiator..."
-mpcium-cli generate-initiator
+go run ./cmd/mpcium-cli generate-initiator
+
+echo "📝 Copying config.yaml.template to config.yaml"
+cp config.yaml.template config.yaml
 
 # Extract the public key from the generated file
 if [ -f "event_initiator.identity.json" ]; then
@@ -19,7 +26,7 @@ if [ -f "event_initiator.identity.json" ]; then
             # Check if event_initiator_pubkey already exists
             if grep -q "event_initiator_pubkey:" config.yaml; then
                 # Replace existing line
-                sed -i "s/event_initiator_pubkey: .*/event_initiator_pubkey: \"$PUBLIC_KEY\"/" config.yaml
+                sed -i '' "s/event_initiator_pubkey: .*/event_initiator_pubkey: \"$PUBLIC_KEY\"/" config.yaml
             else
                 # Add new line
                 echo "event_initiator_pubkey: \"$PUBLIC_KEY\"" >> config.yaml
@@ -27,15 +34,12 @@ if [ -f "event_initiator.identity.json" ]; then
             echo "✅ Successfully updated config.yaml"
         else
             echo "❌ Error: config.yaml not found. Please create it first."
-            exit 1
         fi
     else
         echo "❌ Error: Could not extract public key from event_initiator.identity.json"
-        exit 1
     fi
 else
     echo "❌ Error: event_initiator.identity.json not found"
-    exit 1
 fi
 
 echo "✨ Event Initiator setup complete!" 
