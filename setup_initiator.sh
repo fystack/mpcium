@@ -1,17 +1,10 @@
 #!/bin/bash
-NUM_NODES=3
-
-echo "🚀 Generating peers..."
-go run ./cmd/mpcium-cli generate-peers -n $NUM_NODES
 
 echo "🚀 Setting up Event Initiator..."
 
 # Generate the event initiator
 echo "📝 Generating event initiator..."
-go run ./cmd/mpcium-cli generate-initiator
-
-echo "📝 Copying config.yaml.template to config.yaml"
-cp config.yaml.template config.yaml
+mpcium-cli generate-initiator
 
 # Extract the public key from the generated file
 if [ -f "event_initiator.identity.json" ]; then

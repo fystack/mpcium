@@ -22,7 +22,7 @@ echo "🔑 Generating identities for each node..."
 for i in $(seq 0 $((NUM_NODES-1))); do
     echo "📝 Generating identity for node$i..."
     cd "node$i"
-    go run ../cmd/mpcium-cli generate-identity --node "node$i"
+    mpcium-cli generate-identity --node "node$i"
     cd ..
 done
 
