@@ -1,8 +1,8 @@
 #!/bin/bash
+NUM_NODES=3
 
-echo "🚀 Setting up peers..."
-
-go run ./cmd/mpcium-cli generate-peers -n 3
+echo "🚀 Generating peers..."
+go run ./cmd/mpcium-cli generate-peers -n $NUM_NODES
 
 echo "🚀 Setting up Event Initiator..."
 
