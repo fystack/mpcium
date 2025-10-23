@@ -19,7 +19,11 @@ if [ -f "event_initiator.identity.json" ]; then
             # Check if event_initiator_pubkey already exists
             if grep -q "event_initiator_pubkey:" config.yaml; then
                 # Replace existing line
-                sed -i '' "s/event_initiator_pubkey: .*/event_initiator_pubkey: \"$PUBLIC_KEY\"/" config.yaml
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "s/event_initiator_pubkey: ./event_initiator_pubkey: "$PUBLIC_KEY"/" config.yaml
+                else
+                    sed -i "s/event_initiator_pubkey: ./event_initiator_pubkey: "$PUBLIC_KEY"/" config.yaml
+                fi
             else
                 # Add new line
                 echo "event_initiator_pubkey: \"$PUBLIC_KEY\"" >> config.yaml
