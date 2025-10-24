@@ -19,7 +19,11 @@ if [ -f "event_initiator.identity.json" ]; then
             # Check if event_initiator_pubkey already exists
             if grep -q "event_initiator_pubkey:" config.yaml; then
                 # Replace existing line
-                sed -i "s/event_initiator_pubkey: .*/event_initiator_pubkey: \"$PUBLIC_KEY\"/" config.yaml
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "s/event_initiator_pubkey: ./event_initiator_pubkey: "$PUBLIC_KEY"/" config.yaml
+                else
+                    sed -i "s/event_initiator_pubkey: ./event_initiator_pubkey: "$PUBLIC_KEY"/" config.yaml
+                fi
             else
                 # Add new line
                 echo "event_initiator_pubkey: \"$PUBLIC_KEY\"" >> config.yaml
@@ -27,15 +31,12 @@ if [ -f "event_initiator.identity.json" ]; then
             echo "✅ Successfully updated config.yaml"
         else
             echo "❌ Error: config.yaml not found. Please create it first."
-            exit 1
         fi
     else
         echo "❌ Error: Could not extract public key from event_initiator.identity.json"
-        exit 1
     fi
 else
     echo "❌ Error: event_initiator.identity.json not found"
-    exit 1
 fi
 
 echo "✨ Event Initiator setup complete!" 
