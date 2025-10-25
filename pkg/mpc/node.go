@@ -68,7 +68,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
-		presignCache:  taurus.NewPresignCache(),
+		presignCache:  taurus.NewPresignCache(10 * time.Minute),
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
