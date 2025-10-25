@@ -7,6 +7,9 @@ type KeyType string
 const (
 	KeyTypeSecp256k1 KeyType = "secp256k1"
 	KeyTypeEd25519   KeyType = "ed25519"
+	KeyTypeCGGMP21   KeyType = "cggmp21"
+	KeyTypeFROST     KeyType = "frost"
+	KeyTypeTaproot   KeyType = "taproot"
 )
 
 type EventInitiatorKeyType string
@@ -47,6 +50,15 @@ type ResharingMessage struct {
 	KeyType      KeyType  `json:"key_type"`
 	WalletID     string   `json:"wallet_id"`
 	Signature    []byte   `json:"signature,omitempty"`
+}
+
+type PresignTxMessage struct {
+	KeyType             KeyType `json:"key_type"`
+	WalletID            string  `json:"wallet_id"`
+	NetworkInternalCode string  `json:"network_internal_code"`
+	TxID                string  `json:"tx_id"`
+	Tx                  []byte  `json:"tx"`
+	Signature           []byte  `json:"signature"`
 }
 
 func (m *SignTxMessage) Raw() ([]byte, error) {
@@ -99,4 +111,30 @@ func (m *ResharingMessage) Sig() []byte {
 
 func (m *ResharingMessage) InitiatorID() string {
 	return m.WalletID
+}
+
+func (m PresignTxMessage) Raw() ([]byte, error) {
+	// omit the Signature field itself when computing the signed‐over data
+	payload := struct {
+		KeyType             KeyType `json:"key_type"`
+		WalletID            string  `json:"wallet_id"`
+		NetworkInternalCode string  `json:"network_internal_code"`
+		TxID                string  `json:"tx_id"`
+		Tx                  []byte  `json:"tx"`
+	}{
+		KeyType:             m.KeyType,
+		WalletID:            m.WalletID,
+		NetworkInternalCode: m.NetworkInternalCode,
+		TxID:                m.TxID,
+		Tx:                  m.Tx,
+	}
+	return json.Marshal(payload)
+}
+
+func (m PresignTxMessage) Sig() []byte {
+	return m.Signature
+}
+
+func (m PresignTxMessage) InitiatorID() string {
+	return m.TxID
 }

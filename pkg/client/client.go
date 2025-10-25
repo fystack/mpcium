@@ -27,6 +27,9 @@ type MPCClient interface {
 
 	Resharing(msg *types.ResharingMessage) error
 	OnResharingResult(callback func(event event.ResharingResultEvent)) error
+
+	PresignTransaction(msg *types.PresignTxMessage) error
+	OnPresignResult(callback func(event event.PresignResultEvent)) error
 }
 
 type mpcClient struct {
@@ -36,6 +39,7 @@ type mpcClient struct {
 	genKeySuccessQueue  messaging.MessageQueue
 	signResultQueue     messaging.MessageQueue
 	reshareSuccessQueue messaging.MessageQueue
+	presignSuccessQueue messaging.MessageQueue
 	signer              Signer
 }
 
@@ -85,11 +89,13 @@ func NewMPCClient(opts Options) MPCClient {
 		"mpc.mpc_keygen_result.*",
 		"mpc.mpc_signing_result.*",
 		"mpc.mpc_reshare_result.*",
+		"mpc.mpc_presign_result.*",
 	}, opts.NatsConn)
 
 	genKeySuccessQueue := manager.NewMessageQueue("mpc_keygen_result")
 	signResultQueue := manager.NewMessageQueue("mpc_signing_result")
 	reshareSuccessQueue := manager.NewMessageQueue("mpc_reshare_result")
+	presignSuccessQueue := manager.NewMessageQueue("mpc_presign_result")
 
 	return &mpcClient{
 		signingBroker:       signingBroker,
@@ -98,6 +104,7 @@ func NewMPCClient(opts Options) MPCClient {
 		genKeySuccessQueue:  genKeySuccessQueue,
 		signResultQueue:     signResultQueue,
 		reshareSuccessQueue: reshareSuccessQueue,
+		presignSuccessQueue: presignSuccessQueue,
 		signer:              opts.Signer,
 	}
 }
@@ -231,6 +238,47 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 
 	if err != nil {
 		return fmt.Errorf("OnResharingResult: subscribe error: %w", err)
+	}
+
+	return nil
+}
+
+func (c *mpcClient) PresignTransaction(msg *types.PresignTxMessage) error {
+	// compute the canonical raw bytes
+	raw, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("PresignTransaction: raw payload error: %w", err)
+	}
+	signature, err := c.signer.Sign(raw)
+	if err != nil {
+		return fmt.Errorf("PresignTransaction: failed to sign message: %w", err)
+	}
+	msg.Signature = signature
+
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("PresignTransaction: marshal error: %w", err)
+	}
+
+	if err := c.pubsub.Publish(eventconsumer.MPCPresignEvent, bytes); err != nil {
+		return fmt.Errorf("PresignTransaction: publish error: %w", err)
+	}
+	return nil
+}
+
+func (c *mpcClient) OnPresignResult(callback func(event event.PresignResultEvent)) error {
+	err := c.presignSuccessQueue.Dequeue(event.PresignResultTopic, func(msg []byte) error {
+		var event event.PresignResultEvent
+		err := json.Unmarshal(msg, &event)
+		if err != nil {
+			return err
+		}
+		callback(event)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("OnPresignResult: subscribe error: %w", err)
 	}
 
 	return nil

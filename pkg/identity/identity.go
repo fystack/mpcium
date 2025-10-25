@@ -42,6 +42,9 @@ type Store interface {
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
 
+	SignTaurusMessage(msg *types.TaurusMessage) ([]byte, error)
+	VerifyTaurusMessage(msg *types.TaurusMessage) error
+
 	SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error)
 	VerifySignature(msg *types.ECDHMessage) error
 
@@ -97,15 +100,19 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 	}
 
 	// Load peers.json to validate all nodes have identity files
-	peersData, err := os.ReadFile("peers.json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read peers.json: %w", err)
-	}
+	// peersData, err := os.ReadFile("peers.json")
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to read peers.json: %w", err)
+	// }
 
-	peers := make(map[string]string)
-	if err := json.Unmarshal(peersData, &peers); err != nil {
-		return nil, fmt.Errorf("failed to parse peers.json: %w", err)
+	peers := map[string]string{
+		"node0": "aa4adaea-257d-4337-842a-1d3f966d85c2",
+		"node1": "21ac5259-ac9e-4b81-bd42-d05f584879e4",
+		"node2": "2fff5119-a1f1-4763-8f4c-d7d88c212608",
 	}
+	// if err := json.Unmarshal(peersData, &peers); err != nil {
+	// 	return nil, fmt.Errorf("failed to parse peers.json: %w", err)
+	// }
 
 	store := &fileStore{
 		identityDir:     identityDir,
@@ -427,6 +434,45 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 	return nil
 }
 
+func (s *fileStore) SignTaurusMessage(msg *types.TaurusMessage) ([]byte, error) {
+	// Get deterministic bytes for signing
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message for signing: %w", err)
+	}
+
+	signature := ed25519.Sign(s.privateKey, msgBytes)
+	return signature, nil
+}
+
+func (s *fileStore) VerifyTaurusMessage(msg *types.TaurusMessage) error {
+	if msg.Signature == nil {
+		return fmt.Errorf("message has no signature")
+	}
+
+	// Get the sender's NodeID
+	senderNodeID := taurusPartyIDToNodeID(msg.From)
+
+	// Get the sender's public key
+	publicKey, err := s.GetPublicKey(senderNodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get sender's public key: %w", err)
+	}
+
+	// Get deterministic bytes for verification
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return fmt.Errorf("failed to marshal message for verification: %w", err)
+	}
+
+	// Verify the signature
+	if !ed25519.Verify(publicKey, msgBytes, msg.Signature) {
+		return fmt.Errorf("invalid signature")
+	}
+
+	return nil
+}
+
 func (s *fileStore) EncryptMessage(plaintext []byte, peerID string) ([]byte, error) {
 	key, err := s.GetSymmetricKey(peerID)
 	if err != nil {
@@ -535,4 +581,8 @@ func (s *fileStore) verifyP256(msg types.InitiatorMessage) error {
 
 func partyIDToNodeID(partyID *tss.PartyID) string {
 	return strings.Split(string(partyID.KeyInt().Bytes()), ":")[0]
+}
+
+func taurusPartyIDToNodeID(partyID string) string {
+	return strings.Split(partyID, ":")[0]
 }

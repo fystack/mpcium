@@ -177,6 +177,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		"mpc.mpc_keygen_result.*",
 		event.SigningResultTopic,
 		"mpc.mpc_reshare_result.*",
+		event.PresignResultTopic,
 	}, natsConn)
 
 	genKeyResultQueue := mqManager.NewMessageQueue("mpc_keygen_result")
@@ -185,6 +186,8 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	defer singingResultQueue.Close()
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
+	presignResultQueue := mqManager.NewMessageQueue("mpc_presign_result")
+	defer presignResultQueue.Close()
 
 	logger.Info("Node is running", "ID", nodeID, "name", nodeName)
 
@@ -209,6 +212,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		genKeyResultQueue,
 		singingResultQueue,
 		reshareResultQueue,
+		presignResultQueue,
 		identityStore,
 	)
 	eventConsumer.Run()
