@@ -7,52 +7,42 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEncodeS256PubKey(t *testing.T) {
-	// Generate a test ECDSA key pair
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	pubKey := &privateKey.PublicKey
-
-	// Test encoding
-	encoded, err := EncodeS256PubKey(pubKey)
-	require.NoError(t, err)
-	assert.NotEmpty(t, encoded)
-
-	// The encoded key should contain both X and Y coordinates appended together
-	xBytes := pubKey.X.Bytes()
-	yBytes := pubKey.Y.Bytes()
-	expectedLength := len(xBytes) + len(yBytes)
-	assert.Equal(t, expectedLength, len(encoded))
-
-	// Verify the encoded data contains the coordinates
-	assert.Equal(t, xBytes, encoded[:len(xBytes)])
-	assert.Equal(t, yBytes, encoded[len(xBytes):])
-}
-
-func TestEncodeS256PubKey_SpecificValues(t *testing.T) {
-	// Create a public key with specific values
-	x := big.NewInt(12345)
-	y := big.NewInt(67890)
 	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
+		Curve: btcec.S256(),
+		X:     big.NewInt(1),
+		Y:     big.NewInt(2),
 	}
 
 	encoded, err := EncodeS256PubKey(pubKey)
 	require.NoError(t, err)
+	require.Len(t, encoded, 64)
 
-	// Verify the encoding - should be X bytes followed by Y bytes
-	xBytes := x.Bytes()
-	yBytes := y.Bytes()
-	expected := append(xBytes, yBytes...)
+	expectedX := pubKey.X.FillBytes(make([]byte, 32))
+	expectedY := pubKey.Y.FillBytes(make([]byte, 32))
+	expected := append(expectedX, expectedY...)
+	assert.Equal(t, expected, encoded)
+}
 
+func TestEncodeS256PubKey_WithValidKey(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(btcec.S256(), rand.Reader)
+	require.NoError(t, err)
+
+	pubKey := &privateKey.PublicKey
+
+	encoded, err := EncodeS256PubKey(pubKey)
+	require.NoError(t, err)
+	require.Len(t, encoded, 64)
+
+	expectedX := pubKey.X.FillBytes(make([]byte, 32))
+	expectedY := pubKey.Y.FillBytes(make([]byte, 32))
+	expected := append(expectedX, expectedY...)
 	assert.Equal(t, expected, encoded)
 }
 
@@ -135,34 +125,25 @@ func TestEncodeDecodeEDDSA_RoundTrip(t *testing.T) {
 }
 
 func TestEncodeS256PubKey_NilPublicKey(t *testing.T) {
-	// Test with nil public key - this should panic or return an error
-	// depending on the implementation
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected panic due to nil pointer
-			t.Log("Correctly panicked on nil public key")
-		}
-	}()
-
 	_, err := EncodeS256PubKey(nil)
-	if err == nil {
-		t.Error("Expected error or panic with nil public key")
-	}
+	require.EqualError(t, err, "public key is nil")
 }
 
-func TestEncodeS256PubKey_ZeroCoordinates(t *testing.T) {
-	// Test with zero coordinates
-	x := big.NewInt(0)
-	y := big.NewInt(0)
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
-	}
-
-	encoded, err := EncodeS256PubKey(pubKey)
+func TestEncodeS256PubKey_UnsupportedCurve(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	// Should still work, though the result will be a very short byte array
-	assert.NotNil(t, encoded)
+	_, err = EncodeS256PubKey(&privateKey.PublicKey)
+	require.ErrorContains(t, err, "unsupported curve")
+}
+
+func TestEncodeS256PubKey_CoordinateTooLarge(t *testing.T) {
+	pubKey := &ecdsa.PublicKey{
+		Curve: btcec.S256(),
+		X:     new(big.Int).Lsh(big.NewInt(1), 256),
+		Y:     big.NewInt(0),
+	}
+
+	_, err := EncodeS256PubKey(pubKey)
+	require.EqualError(t, err, "coordinate length exceeds 32 bytes")
 }
