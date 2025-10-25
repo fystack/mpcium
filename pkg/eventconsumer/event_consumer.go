@@ -25,6 +25,7 @@ const (
 	MPCGenerateEvent = "mpc:generate"
 	MPCSignEvent     = "mpc:sign"
 	MPCReshareEvent  = "mpc:reshare"
+	MPCPresignEvent  = "mpc:presign"
 
 	DefaultConcurrentKeygen   = 2
 	DefaultConcurrentSigning  = 20
@@ -46,10 +47,12 @@ type eventConsumer struct {
 	genKeyResultQueue  messaging.MessageQueue
 	signingResultQueue messaging.MessageQueue
 	reshareResultQueue messaging.MessageQueue
+	presignResultQueue messaging.MessageQueue
 
 	keyGenerationSub messaging.Subscription
 	signingSub       messaging.Subscription
 	reshareSub       messaging.Subscription
+	presignSub       messaging.Subscription
 	identityStore    identity.Store
 
 	keygenMsgBuffer      chan *nats.Msg
@@ -72,6 +75,7 @@ func NewEventConsumer(
 	genKeyResultQueue messaging.MessageQueue,
 	signingResultQueue messaging.MessageQueue,
 	reshareResultQueue messaging.MessageQueue,
+	presignResultQueue messaging.MessageQueue,
 	identityStore identity.Store,
 ) EventConsumer {
 	maxConcurrentKeygen := viper.GetInt("max_concurrent_keygen")
@@ -105,6 +109,7 @@ func NewEventConsumer(
 		genKeyResultQueue:    genKeyResultQueue,
 		signingResultQueue:   signingResultQueue,
 		reshareResultQueue:   reshareResultQueue,
+		presignResultQueue:   presignResultQueue,
 		activeSessions:       make(map[string]time.Time),
 		cleanupInterval:      5 * time.Minute,  // Run cleanup every 5 minutes
 		sessionTimeout:       30 * time.Minute, // Consider sessions older than 30 minutes stale
@@ -140,6 +145,11 @@ func (ec *eventConsumer) Run() {
 	err = ec.consumeReshareEvent()
 	if err != nil {
 		log.Fatal("Failed to consume reshare event", err)
+	}
+
+	err = ec.consumePresignEvent()
+	if err != nil {
+		log.Fatal("Failed to consume presign event", err)
 	}
 
 	logger.Info("MPC Event consumer started...!")
@@ -634,6 +644,7 @@ func (ec *eventConsumer) consumeTxSigningEvent() error {
 
 	return nil
 }
+
 func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkInternalCode string, err error, contextMsg string, natMsg *nats.Msg) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
@@ -1021,6 +1032,141 @@ func (ec *eventConsumer) handleReshareSessionError(
 			"payload", string(reshareResultBytes),
 		)
 	}
+}
+
+func (ec *eventConsumer) consumePresignEvent() error {
+	sub, err := ec.pubsub.Subscribe(MPCPresignEvent, func(natMsg *nats.Msg) {
+		var msg types.PresignTxMessage
+		if err := json.Unmarshal(natMsg.Data, &msg); err != nil {
+			logger.Error("Failed to unmarshal presign message", err)
+			return
+		}
+		if err := ec.identityStore.VerifyInitiatorMessage(msg); err != nil {
+			logger.Error("Failed to verify initiator message", err)
+			return
+		}
+
+		// Only CGGMP21 supports presign
+		if msg.KeyType != types.KeyTypeCGGMP21 {
+			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+				fmt.Errorf("presign is only supported for CGGMP21 key type"),
+				"Unsupported key type for presign", natMsg)
+			return
+		}
+
+		session, err := ec.node.CreateTaurusSession(msg.WalletID, ec.mpcThreshold, msg.KeyType, taurus.ActPresign)
+		if err != nil {
+			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+				err, "Failed to create presign session", natMsg)
+			return
+		}
+
+		ctx := context.Background()
+		success, err := session.Presign(ctx, msg.TxID)
+		if err != nil {
+			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+				err, "Presign operation failed", natMsg)
+			return
+		}
+
+		if success {
+			ec.handlePresignSessionSuccess(msg.WalletID, msg.TxID, msg.NetworkInternalCode, natMsg)
+		} else {
+			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+				fmt.Errorf("presign operation returned false"),
+				"Presign operation failed", natMsg)
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	ec.presignSub = sub
+	return nil
+}
+
+// handlePresignSessionSuccess handles successful presign operations
+func (ec *eventConsumer) handlePresignSessionSuccess(walletID, txID, networkInternalCode string, natMsg *nats.Msg) {
+	presignResult := event.PresignResultEvent{
+		ResultType:          event.ResultTypeSuccess,
+		NetworkInternalCode: networkInternalCode,
+		WalletID:            walletID,
+		TxID:                txID,
+		Status:              "success",
+	}
+
+	presignResultBytes, err := json.Marshal(presignResult)
+	if err != nil {
+		logger.Error("Failed to marshal presign result event", err,
+			"walletID", walletID,
+			"txID", txID,
+		)
+		return
+	}
+
+	err = ec.presignResultQueue.Enqueue(event.PresignResultTopic, presignResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: composePresignIdempotentKey(txID, natMsg),
+	})
+	if err != nil {
+		logger.Error("Failed to enqueue presign result event", err,
+			"walletID", walletID,
+			"txID", txID,
+			"payload", string(presignResultBytes),
+		)
+	}
+	// Presign events don't use reply inboxes, so no need to send reply
+	logger.Info("[COMPLETED PRESIGN] Presign completed successfully", "walletID", walletID, "txID", txID)
+}
+
+// handlePresignSessionError handles errors that occur during presign operations
+func (ec *eventConsumer) handlePresignSessionError(walletID, txID, networkInternalCode string, err error, contextMsg string, natMsg *nats.Msg) {
+	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
+	errorCode := event.GetErrorCodeFromError(err)
+
+	logger.Warn("Presign session error",
+		"walletID", walletID,
+		"txID", txID,
+		"networkInternalCode", networkInternalCode,
+		"error", err.Error(),
+		"errorCode", errorCode,
+		"context", contextMsg,
+	)
+
+	presignResult := event.PresignResultEvent{
+		ResultType:          event.ResultTypeError,
+		ErrorCode:           errorCode,
+		NetworkInternalCode: networkInternalCode,
+		WalletID:            walletID,
+		TxID:                txID,
+		ErrorReason:         fullErrMsg,
+		Status:              "failed",
+	}
+
+	presignResultBytes, err := json.Marshal(presignResult)
+	if err != nil {
+		logger.Error("Failed to marshal presign result event", err,
+			"walletID", walletID,
+			"txID", txID,
+		)
+		return
+	}
+
+	err = ec.presignResultQueue.Enqueue(event.PresignResultTopic, presignResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: composePresignIdempotentKey(txID, natMsg),
+	})
+	if err != nil {
+		logger.Error("Failed to enqueue presign result event", err,
+			"walletID", walletID,
+			"txID", txID,
+			"payload", string(presignResultBytes),
+		)
+	}
+	// Presign events don't use reply inboxes, so no need to send reply
+}
+
+// composePresignIdempotentKey creates an idempotent key for presign operations
+func composePresignIdempotentKey(txID string, natMsg *nats.Msg) string {
+	return fmt.Sprintf("presign:%s:%s", txID, natMsg.Header.Get("Nats-Msg-Id"))
 }
 
 // Add a cleanup routine that runs periodically

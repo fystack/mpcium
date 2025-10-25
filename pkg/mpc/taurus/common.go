@@ -32,6 +32,7 @@ type TaurusSession interface {
 	Keygen(ctx context.Context) (types.KeyData, error)
 	Sign(ctx context.Context, msg *big.Int) ([]byte, error)
 	Reshare(ctx context.Context) (types.ReshareData, error)
+	Presign(ctx context.Context, txID string) (bool, error)
 }
 
 type commonSession struct {
@@ -63,6 +64,10 @@ func NewCommonSession(
 		kvstore:      kvstore,
 		keyinfoStore: keyinfoStore,
 	}
+}
+
+func (p *commonSession) Presign(ctx context.Context, txID string) (bool, error) {
+	return false, errors.New("not implemented")
 }
 
 func (p *commonSession) run(ctx context.Context, proto protocol.StartFunc) (any, error) {

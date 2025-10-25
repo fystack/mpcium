@@ -20,6 +20,7 @@ const (
 	ActKeygen  Act = "keygen"
 	ActSign    Act = "sign"
 	ActReshare Act = "reshare"
+	ActPresign Act = "presign"
 )
 
 type TopicComposer struct {

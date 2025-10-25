@@ -52,6 +52,15 @@ type ResharingMessage struct {
 	Signature    []byte   `json:"signature,omitempty"`
 }
 
+type PresignTxMessage struct {
+	KeyType             KeyType `json:"key_type"`
+	WalletID            string  `json:"wallet_id"`
+	NetworkInternalCode string  `json:"network_internal_code"`
+	TxID                string  `json:"tx_id"`
+	Tx                  []byte  `json:"tx"`
+	Signature           []byte  `json:"signature"`
+}
+
 func (m *SignTxMessage) Raw() ([]byte, error) {
 	// omit the Signature field itself when computing the signed‐over data
 	payload := struct {
@@ -102,4 +111,30 @@ func (m *ResharingMessage) Sig() []byte {
 
 func (m *ResharingMessage) InitiatorID() string {
 	return m.WalletID
+}
+
+func (m PresignTxMessage) Raw() ([]byte, error) {
+	// omit the Signature field itself when computing the signed‐over data
+	payload := struct {
+		KeyType             KeyType `json:"key_type"`
+		WalletID            string  `json:"wallet_id"`
+		NetworkInternalCode string  `json:"network_internal_code"`
+		TxID                string  `json:"tx_id"`
+		Tx                  []byte  `json:"tx"`
+	}{
+		KeyType:             m.KeyType,
+		WalletID:            m.WalletID,
+		NetworkInternalCode: m.NetworkInternalCode,
+		TxID:                m.TxID,
+		Tx:                  m.Tx,
+	}
+	return json.Marshal(payload)
+}
+
+func (m PresignTxMessage) Sig() []byte {
+	return m.Signature
+}
+
+func (m PresignTxMessage) InitiatorID() string {
+	return m.TxID
 }

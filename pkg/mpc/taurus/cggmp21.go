@@ -22,8 +22,9 @@ import (
 
 type CGGMP21Session struct {
 	*commonSession
-	workerPool *pool.Pool
-	savedData  *cmp.Config
+	workerPool   *pool.Pool
+	savedData    *cmp.Config
+	presignCache *PresignCache
 }
 
 func NewCGGMP21Session(
@@ -31,6 +32,7 @@ func NewCGGMP21Session(
 	selfID party.ID,
 	peerIDs party.IDSlice,
 	threshold int,
+	presignCache *PresignCache,
 	transport Transport,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
@@ -48,6 +50,7 @@ func NewCGGMP21Session(
 		commonSession: commonSession,
 		workerPool:    pool.NewPool(0),
 		savedData:     nil,
+		presignCache:  presignCache,
 	}
 }
 
@@ -137,12 +140,27 @@ func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int) ([]byte, error)
 	if p.savedData == nil {
 		return nil, errors.New("no key loaded")
 	}
-	logger.Info("Starting to sign message CGGMP21", "walletID", p.sessionID)
+
+	logger.Info("starting CGGMP21 sign", "walletID", p.sessionID)
 	msgHash := msg.Bytes()
-	result, err := p.run(ctx, cmp.Sign(p.savedData, p.peerIDs, msgHash, p.workerPool))
-	if err != nil {
-		return nil, err
+
+	var (
+		result any
+		err    error
+	)
+
+	if presign := p.getCachedPresign(); presign != nil {
+		result, err = p.run(ctx, cmp.PresignOnline(p.savedData, presign, msgHash, p.workerPool))
+		if err != nil {
+			return nil, fmt.Errorf("presign online failed: %w", err)
+		}
+	} else {
+		result, err = p.run(ctx, cmp.Sign(p.savedData, p.peerIDs, msgHash, p.workerPool))
+		if err != nil {
+			return nil, fmt.Errorf("full sign failed: %w", err)
+		}
 	}
+
 	sig, ok := result.(*ecdsa.Signature)
 	if !ok {
 		return nil, errors.New("unexpected result type")
@@ -151,6 +169,27 @@ func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int) ([]byte, error)
 		return nil, errors.New("signature verification failed")
 	}
 	return sig.SigEthereum()
+}
+
+func (p *CGGMP21Session) Presign(ctx context.Context, txID string) (bool, error) {
+	if p.savedData == nil {
+		return false, errors.New("no key loaded")
+	}
+	logger.Info("Starting to presign message CGGMP21", "walletID", p.sessionID, "txID", txID)
+	result, err := p.run(ctx, cmp.Presign(p.savedData, p.peerIDs, p.workerPool))
+	if err != nil {
+		return false, err
+	}
+	presig, ok := result.(*ecdsa.PreSignature)
+	if !ok {
+		return false, errors.New("unexpected result type")
+	}
+	if err = presig.Validate(); err != nil {
+		return false, errors.New("presign validation failed")
+	}
+
+	p.presignCache.Put(p.sessionID, txID, presig)
+	return true, nil
 }
 
 func (p *CGGMP21Session) Reshare(ctx context.Context) (res types.ReshareData, err error) {
@@ -206,4 +245,17 @@ func (p *CGGMP21Session) Reshare(ctx context.Context) (res types.ReshareData, er
 
 func (p *CGGMP21Session) composeKey(sid string) string {
 	return fmt.Sprintf("cggmp21:%s", sid)
+}
+
+func (p *CGGMP21Session) getCachedPresign() *ecdsa.PreSignature {
+	if p.presignCache == nil {
+		return nil
+	}
+
+	presig, ok := p.presignCache.Get(p.sessionID)
+	if !ok || presig == nil {
+		return nil
+	}
+
+	return presig
 }

@@ -40,6 +40,7 @@ type Node struct {
 	keyinfoStore   keyinfo.Store
 	ecdsaPreParams []*keygen.LocalPreParams
 	identityStore  identity.Store
+	presignCache   *taurus.PresignCache
 
 	peerRegistry PeerRegistry
 }
@@ -67,6 +68,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
+		presignCache:  taurus.NewPresignCache(),
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -155,7 +157,7 @@ func (p *Node) CreateTaurusSession(
 	switch sessionType {
 	case types.KeyTypeCGGMP21:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignCache, tr, p.kvstore, p.keyinfoStore)
 	case types.KeyTypeTaproot:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
@@ -164,7 +166,7 @@ func (p *Node) CreateTaurusSession(
 		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
 	}
 
-	if act == taurus.ActSign || act == taurus.ActReshare {
+	if act == taurus.ActSign || act == taurus.ActReshare || act == taurus.ActPresign {
 		err := session.LoadKey(walletID)
 		if err != nil {
 			return nil, err
