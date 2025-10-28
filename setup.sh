@@ -13,5 +13,5 @@ cp config.yaml.template config.yaml
 echo "🚀 Registering peers to Consul..."
 mpcium-cli register-peers
 
-. setup_initiator.sh
-. setup_identities.sh
+./setup_initiator.sh
+./setup_identities.sh

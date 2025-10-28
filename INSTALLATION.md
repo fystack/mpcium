@@ -44,7 +44,8 @@ go install ./cmd/mpcium-cli
 ### Set everything up in one go
 
 ```bash
-. setup.sh
+chmod +x ./setup.sh
+./setup.sh
 ```
 
 Detailed steps can be found in [SETUP.md](SETUP.md).
