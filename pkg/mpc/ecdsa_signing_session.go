@@ -56,6 +56,7 @@ func newECDSASigningSession(
 	identityStore identity.Store,
 	derivationPath []uint32,
 	idempotentKey string,
+	ckd *CKD,
 ) *ecdsaSigningSession {
 
 	return &ecdsaSigningSession{
@@ -92,7 +93,7 @@ func newECDSASigningSession(
 		txID:                txID,
 		networkInternalCode: networkInternalCode,
 		derivationPath:      derivationPath,
-		ckd:                 NewCKD(),
+		ckd:                 ckd,
 	}
 
 }
@@ -142,7 +143,7 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 			return errors.Wrap(errorDerivation, "Failed to derive key")
 		}
 		keyDerivationDelta := il
-		err = s.ckd.UpdateSinglePublicKeyAndAdjustBigXj(keyDerivationDelta, &data, &extendedChildPk.PublicKey, tss.S256())
+		err = s.ckd.ECDSAUpdateSinglePublicKeyAndAdjustBigXj(keyDerivationDelta, &data, extendedChildPk.PublicKey, tss.S256())
 		if err != nil {
 			return errors.Wrap(err, "Failed to update public key")
 		}

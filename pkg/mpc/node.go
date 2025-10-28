@@ -39,6 +39,7 @@ type Node struct {
 	ecdsaPreParams []*keygen.LocalPreParams
 	identityStore  identity.Store
 	peerRegistry   PeerRegistry
+	ckd            *CKD
 }
 
 func PartyIDToRoutingDest(partyID *tss.PartyID) string {
@@ -58,6 +59,7 @@ func NewNode(
 	keyinfoStore keyinfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
+	ckd *CKD,
 ) *Node {
 	start := time.Now()
 	elapsed := time.Since(start)
@@ -72,6 +74,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
+		ckd:           ckd,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -204,6 +207,7 @@ func (p *Node) CreateSigningSession(
 			p.identityStore,
 			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -223,6 +227,7 @@ func (p *Node) CreateSigningSession(
 			p.identityStore,
 			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 	}
 

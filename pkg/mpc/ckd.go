@@ -1,140 +1,136 @@
 package mpc
 
 import (
-	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"sync"
 
-	"github.com/bnb-chain/tss-lib/v2/common"
 	"github.com/bnb-chain/tss-lib/v2/crypto"
 	"github.com/bnb-chain/tss-lib/v2/crypto/ckd"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/fystack/mpcium/pkg/infra"
-	"github.com/fystack/mpcium/pkg/logger"
-	"github.com/hashicorp/consul/api"
-
+	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	eddsaKeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/fystack/mpcium/pkg/logger"
 )
 
-// Child Key Derivation
+const chainCodeLength = 32
+
+var (
+	ErrInvalidChainCode = errors.New("invalid chain code length")
+	ErrNilKey           = errors.New("key cannot be nil")
+	ErrNilPoint         = errors.New("point cannot be nil")
+)
+
+// CKD handles Child Key Derivation (ENV-based)
 type CKD struct {
-	Store     infra.ConsulKV
-	ChainCode []byte
-	Path      []uint32
+	chainCode []byte
+	mu        sync.RWMutex
 }
 
-func NewCKD() *CKD {
-	ckd := &CKD{
-		Store: infra.GetConsulClient("development").KV(),
+// NewCKD loads chain code from environment variable CHAIN_CODE (hex-encoded).
+func NewCKD() (*CKD, error) {
+	envVal := os.Getenv("CHAIN_CODE")
+	if envVal == "" {
+		return nil, fmt.Errorf("CHAIN_CODE not set in environment")
 	}
-	err := ckd.initializeChainCode()
+
+	code, err := hex.DecodeString(envVal)
 	if err != nil {
-		logger.Fatal("Failed to initialize chain code", err)
+		return nil, fmt.Errorf("invalid CHAIN_CODE hex: %w", err)
 	}
-	return ckd
+	if len(code) != chainCodeLength {
+		return nil, fmt.Errorf("%w: got %d, want %d", ErrInvalidChainCode, len(code), chainCodeLength)
+	}
+
+	logger.Info("Loaded static chain code from environment")
+
+	return &CKD{chainCode: code}, nil
 }
 
-func (c *CKD) UpdateSinglePublicKeyAndAdjustBigXj(
-	keyDerivationDelta *big.Int,
-	key *keygen.LocalPartySaveData,
-	extendedChildPk *ecdsa.PublicKey,
-	ec elliptic.Curve,
-) error {
-	var err error
-
-	// Compute g^delta
-	gDelta := crypto.ScalarBaseMult(ec, keyDerivationDelta)
-
-	// Update the public key
-	key.ECDSAPub, err = crypto.NewECPoint(ec, extendedChildPk.X, extendedChildPk.Y)
-	if err != nil {
-		common.Logger.Errorf("error creating new extended child public key")
-		return err
-	}
-
-	// Update each BigXj[i] := BigXj[i] + g^delta
-	for j := range key.BigXj {
-		key.BigXj[j], err = key.BigXj[j].Add(gDelta)
-		if err != nil {
-			common.Logger.Errorf("error in delta operation")
-			return err
-		}
-	}
-
-	return nil
+// GetChainCode returns a copy of the chain code.
+func (c *CKD) GetChainCode() []byte {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]byte, len(c.chainCode))
+	copy(out, c.chainCode)
+	return out
 }
 
+// Derive derives a child key from the master public key using the given path.
 func (c *CKD) Derive(masterPub *crypto.ECPoint, path []uint32, curve elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
-	return c.derivingPubkeyFromPath(masterPub, c.ChainCode, path, curve)
-}
-
-func (c *CKD) derivingPubkeyFromPath(masterPub *crypto.ECPoint, chainCode []byte, path []uint32, ec elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
-	// build ecdsa key pair
-	pk := ecdsa.PublicKey{
-		Curve: ec,
-		X:     masterPub.X(),
-		Y:     masterPub.Y(),
+	if masterPub == nil {
+		return nil, nil, ErrNilPoint
+	}
+	if curve == nil {
+		return nil, nil, errors.New("curve cannot be nil")
 	}
 
+	c.mu.RLock()
+	cc := append([]byte(nil), c.chainCode...)
+	c.mu.RUnlock()
+
+	return c.derivingPubkeyFromPath(masterPub, cc, path, curve)
+}
+
+// derivingPubkeyFromPath performs the actual derivation.
+func (c *CKD) derivingPubkeyFromPath(masterPub *crypto.ECPoint, chainCode []byte, path []uint32, ec elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
 	net := &chaincfg.MainNetParams
-	extendedParentPk := &ckd.ExtendedKey{
-		PublicKey:  pk,
+	parent := &ckd.ExtendedKey{
+		PublicKey:  masterPub,
 		Depth:      0,
 		ChildIndex: 0,
-		ChainCode:  chainCode[:],
+		ChainCode:  chainCode,
 		ParentFP:   []byte{0x00, 0x00, 0x00, 0x00},
 		Version:    net.HDPrivateKeyID[:],
 	}
 
-	return ckd.DeriveChildKeyFromHierarchy(path, extendedParentPk, ec.Params().N, ec)
+	delta, extKey, err := ckd.DeriveChildKeyFromHierarchy(path, parent, ec.Params().N, ec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive child key: %w", err)
+	}
+	return delta, extKey, nil
 }
 
-func (c *CKD) initializeChainCode() error {
-	logger.Info("Initializing chain code")
-
-	// Try to get chain code from store
-	val, _, err := c.Store.Get("chain_code", nil)
-	if err == nil && val != nil && len(val.Value) == 32 {
-		// Found existing chain code
-		c.ChainCode = make([]byte, 32)
-		copy(c.ChainCode, val.Value)
-		logger.Info("Loaded existing chain code", "chainCode", c.ChainCode)
-		return nil
+// ECDSAUpdateSinglePublicKeyAndAdjustBigXj updates ECDSA public key and BigXj.
+func (c *CKD) ECDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *ecdsaKeygen.LocalPartySaveData, childPk *crypto.ECPoint, ec elliptic.Curve) error {
+	if key == nil {
+		return ErrNilKey
 	}
-
-	// Not found or invalid: generate new chain code
-	chainCode := make([]byte, 32)
-	max := new(big.Int).Lsh(big.NewInt(1), 256)
-	max.Sub(max, big.NewInt(1))
-	fillBytes(common.GetRandomPositiveInt(rand.Reader, max), chainCode)
-
-	// Save to store
-	_, err = c.Store.Put(&api.KVPair{Key: "chain_code", Value: chainCode}, nil)
-	if err != nil {
-		return fmt.Errorf("failed to store chain code: %w", err)
+	if childPk == nil {
+		return ErrNilPoint
 	}
-
-	// Assign to CKD struct
-	c.ChainCode = make([]byte, 32)
-	copy(c.ChainCode, chainCode)
-	logger.Info("Generated new chain code", "chainCode", c.ChainCode)
+	gDelta := crypto.ScalarBaseMult(ec, delta)
+	key.ECDSAPub = childPk
+	for i := range key.BigXj {
+		updated, err := key.BigXj[i].Add(gDelta)
+		if err != nil {
+			return fmt.Errorf("failed to update BigXj[%d]: %w", i, err)
+		}
+		key.BigXj[i] = updated
+	}
 	return nil
 }
 
-func fillBytes(x *big.Int, buf []byte) []byte {
-	b := x.Bytes()
-	if len(b) > len(buf) {
-		panic("buffer too small")
+// EDDSAUpdateSinglePublicKeyAndAdjustBigXj updates EdDSA public key and BigXj.
+func (c *CKD) EDDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *eddsaKeygen.LocalPartySaveData, childPk *crypto.ECPoint, ec elliptic.Curve) error {
+	if key == nil {
+		return ErrNilKey
 	}
-	offset := len(buf) - len(b)
-	for i := range buf {
-		if i < offset {
-			buf[i] = 0
-		} else {
-			buf[i] = b[i-offset]
+	if childPk == nil {
+		return ErrNilPoint
+	}
+	gDelta := crypto.ScalarBaseMult(ec, delta)
+	key.EDDSAPub = childPk
+	for i := range key.BigXj {
+		updated, err := key.BigXj[i].Add(gDelta)
+		if err != nil {
+			return fmt.Errorf("failed to update BigXj[%d]: %w", i, err)
 		}
+		key.BigXj[i] = updated
 	}
-	return buf
+	return nil
 }
