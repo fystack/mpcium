@@ -203,6 +203,11 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
 
+	ckd, err := mpc.NewCKD()
+	if err != nil {
+		logger.Fatal("Failed to create ckd store", err)
+	}
+
 	mpcNode := mpc.NewNode(
 		nodeID,
 		peerNodeIDs,
@@ -212,6 +217,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		keyinfoStore,
 		peerRegistry,
 		identityStore,
+		ckd,
 	)
 	defer mpcNode.Close()
 
