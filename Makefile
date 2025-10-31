@@ -1,4 +1,4 @@
-.PHONY: all build clean mpcium mpc install test test-verbose test-coverage e2e-test e2e-clean cleanup-test-env
+.PHONY: all build clean mpcium mpc install reset test test-verbose test-coverage e2e-test e2e-clean cleanup-test-env
 
 BIN_DIR := bin
 
@@ -69,3 +69,15 @@ clean:
 
 # Full clean (including E2E artifacts)
 clean-all: clean e2e-clean
+
+# Reset the entire local environment
+reset:
+	@echo "Removing project artifacts..."
+	rm -rf $(BIN_DIR)
+	rm -rf node0 node1 node2
+	rm -rf event_initiator.identity.json event_initiator.key event_initiator.key.age
+	rm -rf config.yaml peers.json
+	rm -f coverage.out coverage.html
+	@echo "Cleaning E2E artifacts..."
+	- $(MAKE) e2e-clean || true
+	@echo "Reset completed."
