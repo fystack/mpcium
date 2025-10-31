@@ -24,3 +24,4 @@ node2
 config.yaml
 .vscode
 .vagrant
+.chain_code
