@@ -2,6 +2,8 @@ package mpc
 
 import (
 	"crypto/elliptic"
+	"crypto/hmac"
+	"crypto/sha512"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -70,10 +72,14 @@ func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, 
 	}
 
 	c.mu.RLock()
-	cc := append([]byte(nil), c.chainCode...)
+	masterCC := append([]byte(nil), c.masterChainCode...)
 	c.mu.RUnlock()
 
-	return c.derivingPubkeyFromPath(masterPub, cc, path, curve)
+	h := hmac.New(sha512.New, masterCC)
+	h.Write([]byte(walletID))
+	walletCC := h.Sum(nil)
+
+	return c.derivingPubkeyFromPath(masterPub, walletCC, path, curve)
 }
 
 // derivingPubkeyFromPath performs the actual derivation.
