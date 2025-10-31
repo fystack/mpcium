@@ -1,4 +1,4 @@
-package mpc
+package ckd
 
 import (
 	"crypto/elliptic"
@@ -62,6 +62,18 @@ func (c *CKD) GetMasterChainCode() []byte {
 	return out
 }
 
+func (c *CKD) GetChildChainCode(walletID string) []byte {
+	c.mu.RLock()
+	masterCC := append([]byte(nil), c.masterChainCode...)
+	c.mu.RUnlock()
+
+	h := hmac.New(sha512.New, masterCC)
+	h.Write([]byte("WalletChainCode:" + walletID))
+	cc := h.Sum(nil)
+
+	return cc[:32]
+}
+
 // Derive derives a child key from the master public key using the given path.
 func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, curve elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
 	if masterPub == nil {
@@ -71,14 +83,7 @@ func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, 
 		return nil, nil, errors.New("curve cannot be nil")
 	}
 
-	c.mu.RLock()
-	masterCC := append([]byte(nil), c.masterChainCode...)
-	c.mu.RUnlock()
-
-	h := hmac.New(sha512.New, masterCC)
-	h.Write([]byte(walletID))
-	walletCC := h.Sum(nil)
-
+	walletCC := c.GetChildChainCode(walletID)
 	return c.derivingPubkeyFromPath(masterPub, walletCC, path, curve)
 }
 

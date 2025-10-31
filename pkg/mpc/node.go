@@ -15,6 +15,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/fystack/mpcium/pkg/mpc/taurus"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
@@ -44,7 +45,7 @@ type Node struct {
 	presignCache   *taurus.PresignCache
 
 	peerRegistry PeerRegistry
-	ckd          *CKD
+	ckd          *ckd.CKD
 }
 
 func PartyIDToRoutingDest(partyID *tss.PartyID) string {
@@ -64,7 +65,7 @@ func NewNode(
 	keyinfoStore keyinfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
-	ckd *CKD,
+	ckd *ckd.CKD,
 ) *Node {
 	start := time.Now()
 	elapsed := time.Since(start)
@@ -169,13 +170,13 @@ func (p *Node) CreateTaurusSession(
 	switch sessionType {
 	case types.KeyTypeCGGMP21:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignCache, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignCache, tr, p.kvstore, p.keyinfoStore, p.ckd)
 	case types.KeyTypeTaproot:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore, p.ckd)
 	case types.KeyTypeFROST:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROST, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore, p.ckd)
 	}
 
 	if act == taurus.ActSign || act == taurus.ActReshare || act == taurus.ActPresign {

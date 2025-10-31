@@ -12,6 +12,7 @@ import (
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/ecdsa"
 	"github.com/taurusgroup/multi-party-sig/pkg/math/curve"
@@ -36,6 +37,7 @@ func NewCGGMP21Session(
 	transport Transport,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
+	ckd *ckd.CKD,
 ) TaurusSession {
 	commonSession := NewCommonSession(
 		sessionID,
@@ -45,6 +47,7 @@ func NewCGGMP21Session(
 		transport,
 		kvstore,
 		keyinfoStore,
+		ckd,
 	)
 	return &CGGMP21Session{
 		commonSession: commonSession,
@@ -81,13 +84,13 @@ func (p *CGGMP21Session) Keygen(ctx context.Context) (types.KeyData, error) {
 	if err != nil {
 		return types.KeyData{}, err
 	}
-
 	cfg, ok := result.(*cmp.Config)
 	if !ok {
 		return types.KeyData{}, fmt.Errorf("unexpected result type %T", result)
 	}
+	childChainCode := p.ckd.GetChildChainCode(p.sessionID)
 	p.savedData = cfg
-
+	p.savedData.ChainKey = childChainCode
 	packed, err := cfg.MarshalBinary()
 	if err != nil {
 		return types.KeyData{}, fmt.Errorf("marshal config: %w", err)
@@ -136,20 +139,27 @@ func (p *CGGMP21Session) Keygen(ctx context.Context) (types.KeyData, error) {
 	}, nil
 }
 
-func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int) ([]byte, error) {
+func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int, derivationPath []uint32) ([]byte, error) {
 	if p.savedData == nil {
 		return nil, errors.New("no key loaded")
 	}
 
 	logger.Info("starting CGGMP21 sign", "walletID", p.sessionID)
 	msgHash := msg.Bytes()
+	for _, path := range derivationPath {
+		cfg, err := p.savedData.DeriveBIP32(path)
+		if err != nil {
+			return nil, err
+		}
+		p.savedData = cfg
+	}
 
 	var (
 		result any
 		err    error
 	)
 
-	if presign := p.getCachedPresign(); presign != nil {
+	if presign := p.getCachedPresign(); presign != nil && len(derivationPath) == 0 {
 		result, err = p.run(ctx, cmp.PresignOnline(p.savedData, presign, msgHash, p.workerPool))
 		if err != nil {
 			return nil, fmt.Errorf("presign online failed: %w", err)
@@ -171,9 +181,16 @@ func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int) ([]byte, error)
 	return sig.SigEthereum()
 }
 
-func (p *CGGMP21Session) Presign(ctx context.Context, txID string) (bool, error) {
+func (p *CGGMP21Session) Presign(ctx context.Context, txID string, derivationPath []uint32) (bool, error) {
 	if p.savedData == nil {
 		return false, errors.New("no key loaded")
+	}
+	for _, path := range derivationPath {
+		cfg, err := p.savedData.DeriveBIP32(path)
+		if err != nil {
+			return false, err
+		}
+		p.savedData = cfg
 	}
 	logger.Info("Starting to presign message CGGMP21", "walletID", p.sessionID, "txID", txID)
 	result, err := p.run(ctx, cmp.Presign(p.savedData, p.peerIDs, p.workerPool))

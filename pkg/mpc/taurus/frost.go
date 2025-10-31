@@ -13,6 +13,7 @@ import (
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/math/curve"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
@@ -32,6 +33,7 @@ func NewFROSTSession(
 	transport Transport,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
+	ckd *ckd.CKD,
 ) TaurusSession {
 	commonSession := NewCommonSession(
 		sessionID,
@@ -41,6 +43,7 @@ func NewFROSTSession(
 		transport,
 		kvstore,
 		keyinfoStore,
+		ckd,
 	)
 	return &FROSTSession{
 		commonSession: commonSession,
@@ -77,6 +80,8 @@ func (p *FROSTSession) Keygen(ctx context.Context) (types.KeyData, error) {
 	if !ok {
 		return types.KeyData{}, fmt.Errorf("unexpected result type %T", result)
 	}
+	childChainCode := p.ckd.GetChildChainCode(p.sessionID)
+	p.savedData.ChainKey = childChainCode
 	p.savedData = cfg
 
 	// Extract public key coordinates
@@ -128,9 +133,16 @@ func (p *FROSTSession) Keygen(ctx context.Context) (types.KeyData, error) {
 	}, nil
 }
 
-func (p *FROSTSession) Sign(ctx context.Context, msg *big.Int) ([]byte, error) {
+func (p *FROSTSession) Sign(ctx context.Context, msg *big.Int, derivationPath []uint32) ([]byte, error) {
 	if p.savedData == nil {
 		return nil, errors.New("no key loaded")
+	}
+	for _, path := range derivationPath {
+		cfg, err := p.savedData.DeriveChild(path)
+		if err != nil {
+			return nil, err
+		}
+		p.savedData = cfg
 	}
 	logger.Info("Starting to sign message FROST", "walletID", p.sessionID)
 	msgHash := msg.Bytes()

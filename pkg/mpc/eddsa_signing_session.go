@@ -17,6 +17,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/samber/lo"
 )
 
@@ -28,7 +29,7 @@ type eddsaSigningSession struct {
 	txID                string
 	networkInternalCode string
 	derivationPath      []uint32
-	ckd                 *CKD
+	ckd                 *ckd.CKD
 }
 
 func newEDDSASigningSession(
@@ -47,7 +48,7 @@ func newEDDSASigningSession(
 	identityStore identity.Store,
 	derivationPath []uint32,
 	idempotentKey string,
-	ckd *CKD,
+	ckd *ckd.CKD,
 ) *eddsaSigningSession {
 	return &eddsaSigningSession{
 		session: session{

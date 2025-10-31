@@ -22,6 +22,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/fystack/mpcium/pkg/security"
 	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
@@ -194,7 +195,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
 
-	ckd, err := mpc.NewCKD()
+	ckd, err := ckd.NewCKD()
 	if err != nil {
 		logger.Fatal("Failed to create ckd store", err)
 	}

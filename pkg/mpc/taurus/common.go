@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
+	"github.com/fystack/mpcium/pkg/mpc/ckd"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/math/curve"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
@@ -30,9 +31,9 @@ func (p Protocol) String() string {
 type TaurusSession interface {
 	LoadKey(sid string) error
 	Keygen(ctx context.Context) (types.KeyData, error)
-	Sign(ctx context.Context, msg *big.Int) ([]byte, error)
+	Sign(ctx context.Context, msg *big.Int, derivationPath []uint32) ([]byte, error)
 	Reshare(ctx context.Context) (types.ReshareData, error)
-	Presign(ctx context.Context, txID string) (bool, error)
+	Presign(ctx context.Context, txID string, derivationPath []uint32) (bool, error)
 }
 
 type commonSession struct {
@@ -43,6 +44,7 @@ type commonSession struct {
 	network      *NetworkAdapter
 	kvstore      kvstore.KVStore
 	keyinfoStore keyinfo.Store
+	ckd          *ckd.CKD
 }
 
 func NewCommonSession(
@@ -53,6 +55,7 @@ func NewCommonSession(
 	transport Transport,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
+	ckd *ckd.CKD,
 ) *commonSession {
 	net := NewNetworkAdapter(sessionID, selfID, transport, peerIDs)
 	return &commonSession{
@@ -63,10 +66,11 @@ func NewCommonSession(
 		network:      net,
 		kvstore:      kvstore,
 		keyinfoStore: keyinfoStore,
+		ckd:          ckd,
 	}
 }
 
-func (p *commonSession) Presign(ctx context.Context, txID string) (bool, error) {
+func (p *commonSession) Presign(ctx context.Context, txID string, derivationPath []uint32) (bool, error) {
 	return false, errors.New("not implemented")
 }
 

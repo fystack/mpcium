@@ -579,7 +579,7 @@ func (ec *eventConsumer) handleTaurusSigning(keyType types.KeyType, msg types.Si
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	signature, err := session.Sign(ctx, txBigInt)
+	signature, err := session.Sign(ctx, txBigInt, msg.DerivationPath)
 	if err != nil {
 		logger.Error("signing failed", err, "keyType", keyType, "walletID", msg.WalletID, "txID", msg.TxID)
 		ec.handleSigningSessionError(
@@ -1069,7 +1069,7 @@ func (ec *eventConsumer) consumePresignEvent() error {
 		}
 
 		ctx := context.Background()
-		success, err := session.Presign(ctx, msg.TxID)
+		success, err := session.Presign(ctx, msg.TxID, msg.DerivationPath)
 		if err != nil {
 			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
 				err, "Presign operation failed", natMsg)

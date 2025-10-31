@@ -33,7 +33,7 @@ func newTaurusTest(sid string, ids []party.ID) *taurusTest {
 
 	for i, id := range ids {
 		t.parties = append(t.parties,
-			NewTaprootSession(sid, id, ids, 1, transports[i], nil, nil))
+			NewTaprootSession(sid, id, ids, 1, transports[i], nil, nil, nil))
 	}
 
 	return t
@@ -94,7 +94,7 @@ func TestTaurusParty(t *testing.T) {
 	// --- Sign ---
 	msg := big.NewInt(42)
 	test.runAll(func(p TaurusSession) (any, error) {
-		return p.Sign(context.Background(), msg)
+		return p.Sign(context.Background(), msg, []uint32{})
 	}, "sign")
 
 	sigs := drain[[]byte](test.results["sign"])

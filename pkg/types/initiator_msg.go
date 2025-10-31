@@ -54,12 +54,13 @@ type ResharingMessage struct {
 }
 
 type PresignTxMessage struct {
-	KeyType             KeyType `json:"key_type"`
-	WalletID            string  `json:"wallet_id"`
-	NetworkInternalCode string  `json:"network_internal_code"`
-	TxID                string  `json:"tx_id"`
-	Tx                  []byte  `json:"tx"`
-	Signature           []byte  `json:"signature"`
+	KeyType             KeyType  `json:"key_type"`
+	WalletID            string   `json:"wallet_id"`
+	NetworkInternalCode string   `json:"network_internal_code"`
+	TxID                string   `json:"tx_id"`
+	DerivationPath      []uint32 `json:"derivation_path"`
+	Tx                  []byte   `json:"tx"`
+	Signature           []byte   `json:"signature"`
 }
 
 func (m *SignTxMessage) Raw() ([]byte, error) {
