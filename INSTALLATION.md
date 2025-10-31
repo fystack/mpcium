@@ -56,6 +56,29 @@ Detailed steps can be found in [SETUP.md](SETUP.md).
 
 ---
 
+## chain_code setup (required)
+
+Generate one 32-byte hex chain code and set it in all configs:
+
+```bash
+cd /home/carmy/Documents/works/mpcium
+CC=$(openssl rand -hex 32) && echo "$CC" > .chain_code
+sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" config.yaml
+for n in node0 node1 node2; do
+  sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" "$n/config.yaml"
+done
+```
+
+Start nodes normally (no env export needed):
+
+```bash
+cd node0 && mpcium start -n node0
+```
+
+Repeat for `node1` and `node2`. The value must be exactly 64 hex chars (32 bytes).
+
+---
+
 ## Production Deployment (High Security)
 
 1. Use production-grade **NATS** and **Consul** clusters.
