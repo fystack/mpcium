@@ -60,6 +60,23 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     fi
 done
 
+# Distribute event_initiator_pubkey to all node configs
+if [ -f "event_initiator.identity.json" ]; then
+    INITIATOR_PUBKEY=$(grep -o '"public_key": *"[^"]*"' event_initiator.identity.json | cut -d '"' -f4)
+    if [ -n "${INITIATOR_PUBKEY}" ]; then
+        echo "📦 Distributing event_initiator_pubkey to node configs ..."
+        for i in $(seq 0 $((NUM_NODES-1))); do
+            if grep -q '^\s*event_initiator_pubkey:' "node$i/config.yaml"; then
+                if [[ "${OSTYPE:-}" == darwin* ]]; then
+                    sed -i '' -E "s|^([[:space:]]*event_initiator_pubkey:).*|\1 \"${INITIATOR_PUBKEY}\"|" "node$i/config.yaml"
+                else
+                    sed -i -E "s|^([[:space:]]*event_initiator_pubkey:).*|\1 \"${INITIATOR_PUBKEY}\"|" "node$i/config.yaml"
+                fi
+            fi
+        done
+    fi
+fi
+
 # Distribute identity files to all nodes
 echo "🔄 Distributing identity files across nodes..."
 for i in $(seq 0 $((NUM_NODES-1))); do
