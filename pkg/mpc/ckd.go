@@ -33,24 +33,33 @@ type CKD struct {
 	mu              sync.RWMutex
 }
 
-// NewCKD loads chain code from environment variable CHAIN_CODE (hex-encoded).
-func NewCKD() (*CKD, error) {
-	envVal := os.Getenv("CHAIN_CODE")
-	if envVal == "" {
-		return nil, fmt.Errorf("CHAIN_CODE not set in environment")
+// NewCKDFromHex creates CKD from a hex-encoded chain code string (32 bytes).
+func NewCKDFromHex(hexStr string) (*CKD, error) {
+	if hexStr == "" {
+		return nil, fmt.Errorf("chain code is empty")
 	}
 
-	code, err := hex.DecodeString(envVal)
+	code, err := hex.DecodeString(hexStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid CHAIN_CODE hex: %w", err)
+		return nil, fmt.Errorf("invalid chain code hex: %w", err)
 	}
 	if len(code) != chainCodeLength {
 		return nil, fmt.Errorf("%w: got %d, want %d", ErrInvalidChainCode, len(code), chainCodeLength)
 	}
 
-	logger.Info("Loaded static chain code from environment")
+	logger.Info("Loaded static chain code from config")
 
 	return &CKD{masterChainCode: code}, nil
+}
+
+// NewCKD loads chain code from environment variable CHAIN_CODE (hex-encoded).
+// Deprecated: prefer NewCKDFromHex with config-provided value.
+func NewCKD() (*CKD, error) {
+	envVal := os.Getenv("CHAIN_CODE")
+	if envVal == "" {
+		return nil, fmt.Errorf("CHAIN_CODE not set in environment")
+	}
+	return NewCKDFromHex(envVal)
 }
 
 // GetMasterChainCode returns a copy of the chain code.

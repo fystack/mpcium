@@ -30,6 +30,36 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     ( cd "node$i" && mpcium-cli generate-identity --node "node$i" )
 done
 
+# Generate a single chain_code if not present and set it in configs
+if [ ! -f .chain_code ]; then
+    echo "🔐 Generating chain_code (32-byte hex) ..."
+    CC=$(openssl rand -hex 32)
+    echo "$CC" > .chain_code
+else
+    CC=$(cat .chain_code)
+fi
+
+if [ -z "$CC" ]; then
+    echo "❌ Failed to determine chain_code"
+    exit 1
+fi
+
+echo "📝 Setting chain_code in root config.yaml ..."
+if grep -q '^\s*chain_code:' config.yaml; then
+    sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" config.yaml
+else
+    printf '\nchain_code: "%s"\n' "$CC" >> config.yaml
+fi
+
+echo "📦 Distributing chain_code to node configs ..."
+for i in $(seq 0 $((NUM_NODES-1))); do
+    if grep -q '^\s*chain_code:' "node$i/config.yaml"; then
+        sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" "node$i/config.yaml"
+    else
+        printf '\nchain_code: "%s"\n' "$CC" >> "node$i/config.yaml"
+    fi
+done
+
 # Distribute identity files to all nodes
 echo "🔄 Distributing identity files across nodes..."
 for i in $(seq 0 $((NUM_NODES-1))); do
