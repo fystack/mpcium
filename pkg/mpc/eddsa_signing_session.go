@@ -127,7 +127,7 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 
 	if len(s.derivationPath) > 0 {
 		logger.Info("Deriving key from derivation path", "derivationPath", s.derivationPath)
-		il, extendedChildPk, errorDerivation := s.ckd.Derive(data.EDDSAPub, s.derivationPath, tss.Edwards())
+		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
 		if errorDerivation != nil {
 			return errors.Wrap(errorDerivation, "Failed to derive key")
 		}
