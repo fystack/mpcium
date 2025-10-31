@@ -90,6 +90,7 @@ func (e *ecdhSession) ListenKeyExchange() error {
 		}
 
 		if ecdhMsg.From == e.nodeID {
+			logger.Info("To self message successfully received", "nodeID", e.nodeID)
 			return
 		}
 

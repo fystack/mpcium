@@ -194,6 +194,11 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
 
+	ckd, err := mpc.NewCKD()
+	if err != nil {
+		logger.Fatal("Failed to create ckd store", err)
+	}
+
 	mpcNode := mpc.NewNode(
 		nodeID,
 		peerNodeIDs,
@@ -203,6 +208,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		keyinfoStore,
 		peerRegistry,
 		identityStore,
+		ckd,
 	)
 	defer mpcNode.Close()
 
@@ -510,6 +516,7 @@ func GetNATSConnection(environment string, appConfig *config.AppConfig) (*nats.C
 	opts := []nats.Option{
 		nats.MaxReconnects(-1), // retry forever
 		nats.ReconnectWait(2 * time.Second),
+		nats.NoEcho(), // Optimization: avoid echoing messages back to the publisher
 		nats.DisconnectHandler(func(nc *nats.Conn) {
 			logger.Warn("Disconnected from NATS")
 		}),
