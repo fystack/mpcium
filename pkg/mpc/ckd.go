@@ -27,8 +27,8 @@ var (
 
 // CKD handles Child Key Derivation (ENV-based)
 type CKD struct {
-	chainCode []byte
-	mu        sync.RWMutex
+	masterChainCode []byte
+	mu              sync.RWMutex
 }
 
 // NewCKD loads chain code from environment variable CHAIN_CODE (hex-encoded).
@@ -48,20 +48,20 @@ func NewCKD() (*CKD, error) {
 
 	logger.Info("Loaded static chain code from environment")
 
-	return &CKD{chainCode: code}, nil
+	return &CKD{masterChainCode: code}, nil
 }
 
-// GetChainCode returns a copy of the chain code.
-func (c *CKD) GetChainCode() []byte {
+// GetMasterChainCode returns a copy of the chain code.
+func (c *CKD) GetMasterChainCode() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := make([]byte, len(c.chainCode))
-	copy(out, c.chainCode)
+	out := make([]byte, len(c.masterChainCode))
+	copy(out, c.masterChainCode)
 	return out
 }
 
 // Derive derives a child key from the master public key using the given path.
-func (c *CKD) Derive(masterPub *crypto.ECPoint, path []uint32, curve elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
+func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, curve elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
 	if masterPub == nil {
 		return nil, nil, ErrNilPoint
 	}
