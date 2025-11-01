@@ -139,12 +139,13 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 	}
 
 	store := &fileStore{
-		identityDir:     identityDir,
-		currentNodeName: nodeName,
-		publicKeys:      make(map[string][]byte),
-		privateKey:      privateKey,
-		initiatorKey:    initiatorKey,
-		symmetricKeys:   make(map[string][]byte),
+		identityDir:          identityDir,
+		currentNodeName:      nodeName,
+		publicKeys:           make(map[string][]byte),
+		privateKey:           privateKey,
+		initiatorKey:         initiatorKey,
+		symmetricKeys:        make(map[string][]byte),
+		cachedAuthorizerKeys: make(map[AuthorizerID]any),
 	}
 
 	// Check that each node in peers.json has an identity file
@@ -579,9 +580,26 @@ func (s *fileStore) AuthorizeInitiatorMessage(msg types.InitiatorMessage) error 
 	if !s.authConfig.Enabled {
 		return nil
 	}
+
 	sigs := msg.GetAuthorizerSignatures()
+	if len(s.authConfig.RequiredAuthorizers) > 0 {
+		// Build a map of provided signatures for quick lookup
+		providedSigs := make(map[AuthorizerID]types.AuthorizerSignature)
+		for _, sig := range sigs {
+			providedSigs[AuthorizerID(sig.AuthorizerID)] = sig
+		}
+
+		// Verify that ALL required authorizers have provided signatures
+		for _, requiredID := range s.authConfig.RequiredAuthorizers {
+			if _, ok := providedSigs[requiredID]; !ok {
+				return fmt.Errorf("missing required authorizer signature: %s", requiredID)
+			}
+		}
+	}
+
+	// If no signatures provided but none required, that's okay
 	if len(sigs) == 0 {
-		return nil // skip as no signatures
+		return nil
 	}
 
 	authorizerRaw, err := types.ComposeAuthorizerRaw(msg)

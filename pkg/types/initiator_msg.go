@@ -98,6 +98,10 @@ func (m *GenerateKeyMessage) InitiatorID() string {
 	return m.WalletID
 }
 
+func (m *GenerateKeyMessage) GetAuthorizerSignatures() []AuthorizerSignature {
+	return m.AuthorizerSignatures
+}
+
 func (m *ResharingMessage) Raw() ([]byte, error) {
 	copy := *m           // create a shallow copy
 	copy.Signature = nil // modify only the copy
