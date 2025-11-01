@@ -66,7 +66,9 @@ func NewRegistry(
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
 ) *registry {
-	ecdhSession := NewECDHSession(nodeID, peerNodeIDs, pubSub, identityStore)
+	// ECDH session should only exchange keys with other peers, not self
+	peerIDsExceptSelf := getPeerIDsExceptSelf(nodeID, peerNodeIDs)
+	ecdhSession := NewECDHSession(nodeID, peerIDsExceptSelf, pubSub, identityStore)
 	mpcThreshold := viper.GetInt("mpc_threshold")
 	if mpcThreshold < 1 {
 		logger.Fatal("mpc_threshold must be greater than 0", nil)
@@ -75,7 +77,7 @@ func NewRegistry(
 	reg := &registry{
 		consulKV:      consulKV,
 		nodeID:        nodeID,
-		peerNodeIDs:   getPeerIDsExceptSelf(nodeID, peerNodeIDs),
+		peerNodeIDs:   peerIDsExceptSelf,
 		readyMap:      make(map[string]bool),
 		readyCount:    1, // self
 		healthCheck:   directMessaging,
@@ -185,12 +187,15 @@ func (r *registry) Ready() error {
 	}
 
 	_, err = r.healthCheck.Listen(r.composeHealthCheckTopic(r.nodeID), func(data []byte) {
-		peerID, isEcdhReady, _ := parseHealthDataSplit(string(data))
+		peerID, isEcdhReady, parseErr := parseHealthDataSplit(string(data))
+		if parseErr != nil {
+			logger.Error("Failed to parse health check data", parseErr, "data", string(data))
+			return
+		}
 		logger.Debug("Health check ok", "peerID", peerID, "isEcdhReady", isEcdhReady)
 		if !isEcdhReady {
 			logger.Info("[ECDH exchange retriggerd] not all peers are ready", "peerID", peerID)
 			go r.triggerECDHExchange()
-
 		}
 	})
 	if err != nil {

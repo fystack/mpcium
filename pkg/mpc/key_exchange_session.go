@@ -53,6 +53,7 @@ func NewECDHSession(
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
 ) *ecdhSession {
+	logger.Info("Creating ECDH session", "nodeID", nodeID, "peerIDs", peerIDs, "expectedKeys", len(peerIDs))
 	return &ecdhSession{
 		nodeID:        nodeID,
 		peerIDs:       peerIDs,
@@ -92,6 +93,7 @@ func (e *ecdhSession) ListenKeyExchange() error {
 	sub, err := e.pubSub.Subscribe(ECDHExchangeTopic, func(natMsg *nats.Msg) {
 		var ecdhMsg types.ECDHMessage
 		if err := json.Unmarshal(natMsg.Data, &ecdhMsg); err != nil {
+			logger.Error("Failed to unmarshal ECDH message", err)
 			return
 		}
 
@@ -99,8 +101,11 @@ func (e *ecdhSession) ListenKeyExchange() error {
 			return
 		}
 
+		logger.Debug("Received ECDH message", "from", ecdhMsg.From, "to", e.nodeID)
+
 		//TODO: consider how to avoid replay attack
 		if err := e.identityStore.VerifySignature(&ecdhMsg); err != nil {
+			logger.Error("ECDH signature verification failed", err, "from", ecdhMsg.From)
 			e.errCh <- err
 			return
 		}
