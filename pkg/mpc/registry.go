@@ -85,6 +85,11 @@ func NewRegistry(
 		mpcThreshold:  mpcThreshold,
 	}
 
+	// Set up callback to check ready state when ECDH completes
+	ecdhSession.OnKeyExchangeComplete(func() {
+		reg.checkAndUpdateReadyState()
+	})
+
 	go reg.consumeECDHErrors()
 
 	return reg
@@ -126,11 +131,28 @@ func (r *registry) registerReadyPairs(peerIDs []string) {
 		r.readyMap[peerID] = true
 	}
 
-	if len(peerIDs) == len(r.peerNodeIDs) && !r.ready {
+	// Check if we should update ready state
+	r.checkAndUpdateReadyState()
+}
+
+// checkAndUpdateReadyState checks if all conditions are met to mark the registry as ready
+func (r *registry) checkAndUpdateReadyState() {
+	// Count ready peers in readyMap
+	readyPeersCount := 0
+	for _, isReady := range r.readyMap {
+		if isReady {
+			readyPeersCount++
+		}
+	}
+
+	// Only mark as ready when both conditions are met:
+	// 1. All peers are registered in Consul
+	// 2. ECDH key exchange is complete
+	if readyPeersCount == len(r.peerNodeIDs) && r.isECDHReady() && !r.ready {
 		r.mu.Lock()
 		r.ready = true
 		r.mu.Unlock()
-		logger.Info("All peers are ready including ECDH exchange completion")
+		logger.Info("[READY] All peers are ready including ECDH exchange completion")
 	}
 }
 

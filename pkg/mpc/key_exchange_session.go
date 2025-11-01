@@ -32,17 +32,19 @@ type ECDHSession interface {
 	GetReadyPeersCount() int
 	ErrChan() <-chan error
 	Close() error
+	OnKeyExchangeComplete(callback func())
 }
 
 type ecdhSession struct {
-	nodeID        string
-	peerIDs       []string
-	pubSub        messaging.PubSub
-	ecdhSub       messaging.Subscription
-	identityStore identity.Store
-	privateKey    *ecdh.PrivateKey
-	publicKey     *ecdh.PublicKey
-	errCh         chan error
+	nodeID                string
+	peerIDs               []string
+	pubSub                messaging.PubSub
+	ecdhSub               messaging.Subscription
+	identityStore         identity.Store
+	privateKey            *ecdh.PrivateKey
+	publicKey             *ecdh.PublicKey
+	errCh                 chan error
+	onKeyExchangeComplete func()
 }
 
 func NewECDHSession(
@@ -70,6 +72,10 @@ func (e *ecdhSession) GetReadyPeersCount() int {
 
 func (e *ecdhSession) ErrChan() <-chan error {
 	return e.errCh
+}
+
+func (e *ecdhSession) OnKeyExchangeComplete(callback func()) {
+	e.onKeyExchangeComplete = callback
 }
 
 func (e *ecdhSession) ListenKeyExchange() error {
@@ -113,7 +119,15 @@ func (e *ecdhSession) ListenKeyExchange() error {
 		// Derive symmetric key using HKDF
 		symmetricKey := e.deriveSymmetricKey(sharedSecret, ecdhMsg.From)
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
-		logger.Debug("ECDH progress", "peer", ecdhMsg.From, "current", e.identityStore.GetSymetricKeyCount())
+
+		currentKeyCount := e.identityStore.GetSymetricKeyCount()
+		logger.Debug("ECDH progress", "peer", ecdhMsg.From, "current", currentKeyCount, "expected", len(e.peerIDs))
+
+		// Check if ECDH exchange is complete and notify callback
+		if currentKeyCount == len(e.peerIDs) && e.onKeyExchangeComplete != nil {
+			logger.Info("ECDH key exchange completed successfully", "totalKeys", currentKeyCount)
+			e.onKeyExchangeComplete()
+		}
 	})
 
 	e.ecdhSub = sub
