@@ -32,17 +32,19 @@ type ECDHSession interface {
 	GetReadyPeersCount() int
 	ErrChan() <-chan error
 	Close() error
+	OnKeyExchangeComplete(callback func())
 }
 
 type ecdhSession struct {
-	nodeID        string
-	peerIDs       []string
-	pubSub        messaging.PubSub
-	ecdhSub       messaging.Subscription
-	identityStore identity.Store
-	privateKey    *ecdh.PrivateKey
-	publicKey     *ecdh.PublicKey
-	errCh         chan error
+	nodeID                string
+	peerIDs               []string
+	pubSub                messaging.PubSub
+	ecdhSub               messaging.Subscription
+	identityStore         identity.Store
+	privateKey            *ecdh.PrivateKey
+	publicKey             *ecdh.PublicKey
+	errCh                 chan error
+	onKeyExchangeComplete func()
 }
 
 func NewECDHSession(
@@ -51,6 +53,7 @@ func NewECDHSession(
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
 ) *ecdhSession {
+	logger.Info("Creating ECDH session", "nodeID", nodeID, "peerIDs", peerIDs, "expectedKeys", len(peerIDs))
 	return &ecdhSession{
 		nodeID:        nodeID,
 		peerIDs:       peerIDs,
@@ -72,6 +75,10 @@ func (e *ecdhSession) ErrChan() <-chan error {
 	return e.errCh
 }
 
+func (e *ecdhSession) OnKeyExchangeComplete(callback func()) {
+	e.onKeyExchangeComplete = callback
+}
+
 func (e *ecdhSession) ListenKeyExchange() error {
 	// Generate an ephemeral ECDH key pair
 	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -86,6 +93,7 @@ func (e *ecdhSession) ListenKeyExchange() error {
 	sub, err := e.pubSub.Subscribe(ECDHExchangeTopic, func(natMsg *nats.Msg) {
 		var ecdhMsg types.ECDHMessage
 		if err := json.Unmarshal(natMsg.Data, &ecdhMsg); err != nil {
+			logger.Error("Failed to unmarshal ECDH message", err)
 			return
 		}
 
@@ -93,8 +101,11 @@ func (e *ecdhSession) ListenKeyExchange() error {
 			return
 		}
 
+		logger.Debug("Received ECDH message", "from", ecdhMsg.From, "to", e.nodeID)
+
 		//TODO: consider how to avoid replay attack
 		if err := e.identityStore.VerifySignature(&ecdhMsg); err != nil {
+			logger.Error("ECDH signature verification failed", err, "from", ecdhMsg.From)
 			e.errCh <- err
 			return
 		}
@@ -113,7 +124,15 @@ func (e *ecdhSession) ListenKeyExchange() error {
 		// Derive symmetric key using HKDF
 		symmetricKey := e.deriveSymmetricKey(sharedSecret, ecdhMsg.From)
 		e.identityStore.SetSymmetricKey(ecdhMsg.From, symmetricKey)
-		logger.Debug("ECDH progress", "peer", ecdhMsg.From, "current", e.identityStore.GetSymetricKeyCount())
+
+		currentKeyCount := e.identityStore.GetSymetricKeyCount()
+		logger.Debug("ECDH progress", "peer", ecdhMsg.From, "current", currentKeyCount, "expected", len(e.peerIDs))
+
+		// Check if ECDH exchange is complete and notify callback
+		if currentKeyCount == len(e.peerIDs) && e.onKeyExchangeComplete != nil {
+			logger.Info("ECDH key exchange completed successfully", "totalKeys", currentKeyCount)
+			e.onKeyExchangeComplete()
+		}
 	})
 
 	e.ecdhSub = sub

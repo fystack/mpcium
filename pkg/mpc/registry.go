@@ -66,7 +66,9 @@ func NewRegistry(
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
 ) *registry {
-	ecdhSession := NewECDHSession(nodeID, peerNodeIDs, pubSub, identityStore)
+	// ECDH session should only exchange keys with other peers, not self
+	peerIDsExceptSelf := getPeerIDsExceptSelf(nodeID, peerNodeIDs)
+	ecdhSession := NewECDHSession(nodeID, peerIDsExceptSelf, pubSub, identityStore)
 	mpcThreshold := viper.GetInt("mpc_threshold")
 	if mpcThreshold < 1 {
 		logger.Fatal("mpc_threshold must be greater than 0", nil)
@@ -75,7 +77,7 @@ func NewRegistry(
 	reg := &registry{
 		consulKV:      consulKV,
 		nodeID:        nodeID,
-		peerNodeIDs:   getPeerIDsExceptSelf(nodeID, peerNodeIDs),
+		peerNodeIDs:   peerIDsExceptSelf,
 		readyMap:      make(map[string]bool),
 		readyCount:    1, // self
 		healthCheck:   directMessaging,
@@ -84,6 +86,11 @@ func NewRegistry(
 		ecdhSession:   ecdhSession,
 		mpcThreshold:  mpcThreshold,
 	}
+
+	// Set up callback to check ready state when ECDH completes
+	ecdhSession.OnKeyExchangeComplete(func() {
+		reg.checkAndUpdateReadyState()
+	})
 
 	go reg.consumeECDHErrors()
 
@@ -126,11 +133,28 @@ func (r *registry) registerReadyPairs(peerIDs []string) {
 		r.readyMap[peerID] = true
 	}
 
-	if len(peerIDs) == len(r.peerNodeIDs) && !r.ready {
+	// Check if we should update ready state
+	r.checkAndUpdateReadyState()
+}
+
+// checkAndUpdateReadyState checks if all conditions are met to mark the registry as ready
+func (r *registry) checkAndUpdateReadyState() {
+	// Count ready peers in readyMap
+	readyPeersCount := 0
+	for _, isReady := range r.readyMap {
+		if isReady {
+			readyPeersCount++
+		}
+	}
+
+	// Only mark as ready when both conditions are met:
+	// 1. All peers are registered in Consul
+	// 2. ECDH key exchange is complete
+	if readyPeersCount == len(r.peerNodeIDs) && r.isECDHReady() && !r.ready {
 		r.mu.Lock()
 		r.ready = true
 		r.mu.Unlock()
-		logger.Info("All peers are ready including ECDH exchange completion")
+		logger.Info("[READY] All peers are ready including ECDH exchange completion")
 	}
 }
 
@@ -163,12 +187,15 @@ func (r *registry) Ready() error {
 	}
 
 	_, err = r.healthCheck.Listen(r.composeHealthCheckTopic(r.nodeID), func(data []byte) {
-		peerID, isEcdhReady, _ := parseHealthDataSplit(string(data))
+		peerID, isEcdhReady, parseErr := parseHealthDataSplit(string(data))
+		if parseErr != nil {
+			logger.Error("Failed to parse health check data", parseErr, "data", string(data))
+			return
+		}
 		logger.Debug("Health check ok", "peerID", peerID, "isEcdhReady", isEcdhReady)
 		if !isEcdhReady {
 			logger.Info("[ECDH exchange retriggerd] not all peers are ready", "peerID", peerID)
 			go r.triggerECDHExchange()
-
 		}
 	})
 	if err != nil {
