@@ -123,9 +123,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	viper.SetDefault("backup_enabled", true)
 	config.InitViperConfig(configPath)
-
-	appConfig := config.LoadConfig()
-	environment := appConfig.Environment
+	environment := viper.GetString("environment")
 	logger.Init(environment, debug)
 
 	// Print ASCII banner
@@ -140,10 +138,10 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	// Handle configuration based on prompt flag
 	if usePrompts {
 		promptForSensitiveCredentials()
-	} else {
-		// Validate the config values
-		checkRequiredConfigValues(appConfig)
 	}
+	appConfig := config.LoadConfig()
+	// Validate the config values
+	checkRequiredConfigValues(appConfig)
 
 	consulClient := infra.GetConsulClient(environment)
 	keyinfoStore := keyinfo.NewStore(consulClient.KV())
@@ -405,7 +403,7 @@ func maskString(s string) string {
 // Check required configuration values are present
 func checkRequiredConfigValues(appConfig *config.AppConfig) {
 	// Show warning if we're using file-based config but no password is set
-	if appConfig.BadgerPassword == "" {
+	if viper.GetString("badger_password") == "" {
 		logger.Fatal("Badger password is required", nil)
 	}
 
