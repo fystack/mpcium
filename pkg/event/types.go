@@ -57,6 +57,10 @@ const (
 	ErrorCodePreParamsGeneration       ErrorCode = "ERROR_PRE_PARAMS_GENERATION"
 	ErrorCodeTSSPartyCreation          ErrorCode = "ERROR_TSS_PARTY_CREATION"
 
+	// Authorization errors
+	ErrorCodeMissingAuthorizerSignature ErrorCode = "ERROR_MISSING_AUTHORIZER_SIGNATURE"
+	ErrorCodeInvalidAuthorizerSignature ErrorCode = "ERROR_INVALID_AUTHORIZER_SIGNATURE"
+
 	// Data serialization errors
 	ErrorCodeMarshalFailure   ErrorCode = "ERROR_MARSHAL_FAILURE"
 	ErrorCodeUnmarshalFailure ErrorCode = "ERROR_UNMARSHAL_FAILURE"
@@ -105,6 +109,10 @@ func GetErrorCodeFromError(err error) ErrorCode {
 
 	// Check for specific error patterns
 	switch {
+	case contains(errStr, "missing required authorizer signature"):
+		return ErrorCodeMissingAuthorizerSignature
+	case contains(errStr, "authorizer", "verification failed"):
+		return ErrorCodeInvalidAuthorizerSignature
 	case contains(errStr, "validation"):
 		return ErrorCodeMsgValidation
 	case contains(errStr, "timeout", "timed out"):

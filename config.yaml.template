@@ -15,3 +15,19 @@ backup_dir: backups
 max_concurrent_keygen: 2
 max_concurrent_signing: 10
 session_warm_up_delay_ms: 100
+
+# Authorization (optional)
+# authorization:
+#  enabled: true
+#  required_authorizers:
+#    - authorizer1
+#    - authorizer2
+#  # Authorizer public keys configuration (applies to all operations: keygen, signing, reshare)
+#  authorizer_public_keys:
+#    # Example:
+#    authorizer1:
+#      public_key: "4711ec2728feb66f223078140323e0947a70a5fa36615c21382c2a9bc9241524"
+#      algorithm: "ed25519"
+#    authorizer2:
+#      public_key: "33d5b5b3973c9bd46d782bc5488ea1840188234b0cbed66153b691caafe85385"
+#      algorithm: "ed25519"
