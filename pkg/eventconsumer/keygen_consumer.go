@@ -72,6 +72,7 @@ func (sc *keygenConsumer) waitForAllPeersReadyToGenKey(ctx context.Context) erro
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.Canceled {
+				logger.Info("KeygenConsumer: Shutdown signal received during peer readiness wait")
 				return nil
 			}
 			return ctx.Err()
@@ -107,6 +108,10 @@ func (sc *keygenConsumer) Run(ctx context.Context) error {
 		sc.handleKeygenEvent,
 	)
 	if err != nil {
+		if ctx.Err() == context.Canceled {
+			logger.Info("KeygenConsumer: Shutdown during subscription setup")
+			return nil
+		}
 		return fmt.Errorf("failed to subscribe to keygen events: %w", err)
 	}
 	sc.jsSub = sub

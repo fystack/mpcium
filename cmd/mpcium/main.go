@@ -277,8 +277,12 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	go func() {
 		defer wg.Done()
 		if err := keygenConsumer.Run(appContext); err != nil {
-			logger.Error("error running keygen consumer", err)
-			errChan <- fmt.Errorf("keygen consumer error: %w", err)
+			if appContext.Err() != context.Canceled {
+				logger.Error("error running keygen consumer", err)
+				errChan <- fmt.Errorf("keygen consumer error: %w", err)
+			} else {
+				logger.Info("Keygen consumer finished successfully")
+			}
 			return
 		}
 		logger.Info("Keygen consumer finished successfully")
@@ -288,8 +292,12 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	go func() {
 		defer wg.Done()
 		if err := signingConsumer.Run(appContext); err != nil {
-			logger.Error("error running signing consumer", err)
-			errChan <- fmt.Errorf("signing consumer error: %w", err)
+			if appContext.Err() != context.Canceled {
+				logger.Error("error running signing consumer", err)
+				errChan <- fmt.Errorf("signing consumer error: %w", err)
+			} else {
+				logger.Info("Signing consumer finished successfully")
+			}
 			return
 		}
 		logger.Info("Signing consumer finished successfully")
