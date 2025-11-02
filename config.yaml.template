@@ -15,6 +15,10 @@ backup_dir: backups
 max_concurrent_keygen: 2
 max_concurrent_signing: 10
 session_warm_up_delay_ms: 100
+healthcheck:
+  enabled: true  # disabled by default, set to true for cloud deployment
+  address: "0.0.0.0:8080"
+
 
 # Authorization (optional)
 # authorization:
