@@ -140,6 +140,43 @@ func main() {
 				Action: generateInitiatorIdentity,
 			},
 			{
+				Name:  "generate-authorizer",
+				Usage: "Generate identity files for an authorizer node",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "name",
+						Aliases:  []string{"n"},
+						Usage:    "Name for the authorizer (alphanumeric, hyphens, underscores only)",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:    "output-dir",
+						Aliases: []string{"o"},
+						Value:   ".",
+						Usage:   "Output directory for identity files",
+					},
+					&cli.BoolFlag{
+						Name:    "encrypt",
+						Aliases: []string{"e"},
+						Value:   false,
+						Usage:   "Encrypt private key with Age (recommended for production)",
+					},
+					&cli.BoolFlag{
+						Name:    "overwrite",
+						Aliases: []string{"f"},
+						Value:   false,
+						Usage:   "Overwrite identity files if they already exist",
+					},
+					&cli.StringFlag{
+						Name:    "algorithm",
+						Aliases: []string{"a"},
+						Value:   "ed25519",
+						Usage:   "Algorithm to use for key generation (ed25519,p256)",
+					},
+				},
+				Action: generateAuthorizerIdentity,
+			},
+			{
 				Name:  "recover",
 				Usage: "Recover database from encrypted backup files",
 				Flags: []cli.Flag{
