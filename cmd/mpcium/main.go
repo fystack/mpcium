@@ -15,6 +15,7 @@ import (
 	"github.com/fystack/mpcium/pkg/constant"
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/eventconsumer"
+	"github.com/fystack/mpcium/pkg/healthcheck"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/infra"
 	"github.com/fystack/mpcium/pkg/keyinfo"
@@ -241,6 +242,21 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 	logger.Info("[READY] Node is ready", "nodeID", nodeID)
 
+	// Start health check server (disabled by default)
+	var healthServer *healthcheck.Server
+	if viper.GetBool("healthcheck.enabled") {
+		healthAddr := viper.GetString("healthcheck.address")
+		if healthAddr == "" {
+			healthAddr = ":8080"
+		}
+		healthServer = healthcheck.NewServer(healthAddr, peerRegistry, natsConn, consulClient)
+		go func() {
+			if err := healthServer.Start(); err != nil {
+				logger.Error("Health check server error", err)
+			}
+		}()
+	}
+
 	logger.Info("Starting consumers", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
 	//Setup signal handling to cancel context on termination signals.
@@ -250,6 +266,15 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		<-sigChan
 		logger.Warn("Shutdown signal received, canceling context...")
 		cancel()
+
+		// Shutdown health check server if it was started
+		if healthServer != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := healthServer.Shutdown(shutdownCtx); err != nil {
+				logger.Error("Failed to shutdown health check server", err)
+			}
+		}
 
 		// Resign from peer registry first (before closing NATS)
 		if err := peerRegistry.Resign(); err != nil {
