@@ -31,9 +31,19 @@ import (
 )
 
 const (
-	Version                    = "0.3.2"
+	Version                    = "0.3.3"
 	DefaultBackupPeriodSeconds = 300 // (5 minutes)
 )
+
+func printBanner() {
+	banner := fmt.Sprintf(`
+╔══════════════════════════════════════════════════════════════╗
+║                       MPCIUM v%s                          ║
+║      Multi-Party Computation Threshold Signatures Node       ║
+╚══════════════════════════════════════════════════════════════╝
+`, Version)
+	fmt.Print(banner)
+}
 
 func main() {
 	app := &cli.Command{
@@ -118,6 +128,9 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	environment := appConfig.Environment
 	logger.Init(environment, debug)
 
+	// Print ASCII banner
+	printBanner()
+
 	// Handle password file if provided
 	if passwordFile != "" {
 		if err := loadPasswordFromFile(passwordFile); err != nil {
@@ -186,7 +199,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
 	defer reshareResultQueue.Close()
 
-	logger.Info("Node is running", "ID", nodeID, "name", nodeName)
+	logger.Info("Starting mpcium node", "version", Version, "ID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
