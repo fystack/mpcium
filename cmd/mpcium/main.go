@@ -123,9 +123,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	viper.SetDefault("backup_enabled", true)
 	config.InitViperConfig(configPath)
-
-	appConfig := config.LoadConfig()
-	environment := appConfig.Environment
+	environment := viper.GetString("environment")
 	logger.Init(environment, debug)
 
 	// Print ASCII banner
@@ -140,10 +138,10 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	// Handle configuration based on prompt flag
 	if usePrompts {
 		promptForSensitiveCredentials()
-	} else {
-		// Validate the config values
-		checkRequiredConfigValues(appConfig)
 	}
+	appConfig := config.LoadConfig()
+	// Validate the config values
+	checkRequiredConfigValues(appConfig)
 
 	consulClient := infra.GetConsulClient(environment)
 	keyinfoStore := keyinfo.NewStore(consulClient.KV())
