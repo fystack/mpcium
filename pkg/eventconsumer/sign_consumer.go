@@ -75,6 +75,7 @@ func (sc *signingConsumer) waitForSufficientPeers(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.Canceled {
+				logger.Info("SigningConsumer: Shutdown signal received during peer readiness wait")
 				return nil
 			}
 			return ctx.Err()
@@ -110,6 +111,10 @@ func (sc *signingConsumer) Run(ctx context.Context) error {
 		sc.handleSigningEvent,
 	)
 	if err != nil {
+		if ctx.Err() == context.Canceled {
+			logger.Info("SigningConsumer: Shutdown during subscription setup")
+			return nil
+		}
 		return fmt.Errorf("failed to subscribe to signing events: %w", err)
 	}
 	sc.jsSub = sub
