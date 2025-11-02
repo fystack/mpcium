@@ -2,6 +2,12 @@
 
 ## v0.3.3 (2025-11-02)
 
+- Support expose health check endpoint /health for cloud deployment [View](https://github.com/fystack/mpcium/commit/dcc569affcf276945d43222f76196c018b6c5389)
+- Gracefully handle context cancelled [View](https://github.com/fystack/mpcium/commit/d6f5cc651367dc16177c199cbbc09bab53557b31)
+- Change position of loading app config method [View](https://github.com/fystack/mpcium/commit/e05ac61d96b5f48c4468d00e69a93ca85d5eadb4)
+- Fix check required config value [View](https://github.com/fystack/mpcium/commit/59e2582da57b6cbe6e34a187504804c49eb89987)
+- Increase version [View](https://github.com/fystack/mpcium/commit/81cc92f6b8f73c542f424a677a5eaf215bae811f)
+- Update changelog v0.3.3 release [View](https://github.com/fystack/mpcium/commit/4b5438064615242c9e208a0d5ef09010bddccfd0)
 - Add instruction to add authorization configuration [View](https://github.com/fystack/mpcium/commit/dd23e76f0fcc95f68f717f8e99778e6ebb384247)
 - Add examples for generate with authorizers [View](https://github.com/fystack/mpcium/commit/55c41bc0eb2a283312477037cd88beb7b1d32357)
 - Authorize signatures in event consumer [View](https://github.com/fystack/mpcium/commit/a6a2d6116ec6c4df90d67e28b41010a63e8b3552)
