@@ -405,7 +405,7 @@ func maskString(s string) string {
 // Check required configuration values are present
 func checkRequiredConfigValues(appConfig *config.AppConfig) {
 	// Show warning if we're using file-based config but no password is set
-	if appConfig.BadgerPassword == "" {
+	if viper.GetString("badger_password") == "" {
 		logger.Fatal("Badger password is required", nil)
 	}
 
