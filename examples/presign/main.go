@@ -12,7 +12,6 @@ import (
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/types"
-	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
 )
@@ -65,27 +64,20 @@ func main() {
 		Signer:   localSigner,
 	})
 
-	// 2) Once wallet exists, immediately fire a SignTransaction
-	txID := uuid.New().String()
-	dummyTx := []byte("deadbeef") // replace with real transaction bytes
-
 	txMsg := &types.PresignTxMessage{
-		KeyType:             types.KeyTypeCGGMP21,
-		WalletID:            "196c6858-30de-4a49-9134-8bc825d40764", // Use the generated wallet ID
-		NetworkInternalCode: "solana-devnet",
-		TxID:                txID,
-		Tx:                  dummyTx,
+		KeyType:  types.KeyTypeCGGMP21,
+		WalletID: "196c6858-30de-4a49-9134-8bc825d40764", // Use the generated wallet ID
 	}
 	err = mpcClient.PresignTransaction(txMsg)
 	if err != nil {
 		logger.Fatal("PresignTransaction failed", err)
 	}
-	fmt.Printf("PresignTransaction(%q) sent, awaiting result...\n", txID)
+	fmt.Printf("PresignTransaction(%q) sent, awaiting result...\n", txMsg.WalletID)
 
 	// 3) Listen for signing results
 	err = mpcClient.OnPresignResult(func(evt event.PresignResultEvent) {
 		logger.Info("Presign result received",
-			"txID", evt.TxID,
+			"walletID", evt.WalletID,
 			"status", evt.Status,
 		)
 	})

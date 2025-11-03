@@ -8,12 +8,10 @@ const (
 )
 
 type PresignResultEvent struct {
-	ResultType          ResultType `json:"result_type"`
-	ErrorCode           ErrorCode  `json:"error_code"`
-	ErrorReason         string     `json:"error_reason"`
-	IsTimeout           bool       `json:"is_timeout"`
-	NetworkInternalCode string     `json:"network_internal_code"`
-	WalletID            string     `json:"wallet_id"`
-	TxID                string     `json:"tx_id"`
-	Status              string     `json:"status"`
+	ResultType  ResultType `json:"result_type"`
+	ErrorCode   ErrorCode  `json:"error_code"`
+	ErrorReason string     `json:"error_reason"`
+	IsTimeout   bool       `json:"is_timeout"`
+	WalletID    string     `json:"wallet_id"`
+	Status      string     `json:"status"`
 }

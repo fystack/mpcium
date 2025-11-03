@@ -1041,40 +1041,47 @@ func (ec *eventConsumer) consumePresignEvent() error {
 			logger.Error("Failed to unmarshal presign message", err)
 			return
 		}
-		if err := ec.identityStore.VerifyInitiatorMessage(msg); err != nil {
+		if err := ec.identityStore.VerifyInitiatorMessage(&msg); err != nil {
 			logger.Error("Failed to verify initiator message", err)
 			return
 		}
 
 		// Only CGGMP21 supports presign
 		if msg.KeyType != types.KeyTypeCGGMP21 {
-			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+			ec.handlePresignSessionError(msg.WalletID,
 				fmt.Errorf("presign is only supported for CGGMP21 key type"),
-				"Unsupported key type for presign", natMsg)
+				"Unsupported key type for presign",
+				natMsg,
+			)
 			return
 		}
-
 		session, err := ec.node.CreateTaurusSession(msg.WalletID, ec.mpcThreshold, msg.KeyType, taurus.ActPresign)
 		if err != nil {
-			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
-				err, "Failed to create presign session", natMsg)
+			ec.handlePresignSessionError(msg.WalletID,
+				err, "Failed to create presign session",
+				natMsg,
+			)
 			return
 		}
 
 		ctx := context.Background()
-		success, err := session.Presign(ctx, msg.TxID)
+		success, err := session.Presign(ctx, msg.WalletID)
 		if err != nil {
-			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
-				err, "Presign operation failed", natMsg)
+			ec.handlePresignSessionError(msg.WalletID,
+				err, "Presign operation failed",
+				natMsg,
+			)
 			return
 		}
 
 		if success {
-			ec.handlePresignSessionSuccess(msg.WalletID, msg.TxID, msg.NetworkInternalCode, natMsg)
+			ec.handlePresignSessionSuccess(msg.WalletID, natMsg)
 		} else {
-			ec.handlePresignSessionError(msg.WalletID, msg.TxID, msg.NetworkInternalCode,
+			ec.handlePresignSessionError(msg.WalletID,
 				fmt.Errorf("presign operation returned false"),
-				"Presign operation failed", natMsg)
+				"Presign operation failed",
+				natMsg,
+			)
 		}
 	})
 	if err != nil {
@@ -1086,78 +1093,68 @@ func (ec *eventConsumer) consumePresignEvent() error {
 }
 
 // handlePresignSessionSuccess handles successful presign operations
-func (ec *eventConsumer) handlePresignSessionSuccess(walletID, txID, networkInternalCode string, natMsg *nats.Msg) {
+func (ec *eventConsumer) handlePresignSessionSuccess(walletID string, natMsg *nats.Msg) {
 	presignResult := event.PresignResultEvent{
-		ResultType:          event.ResultTypeSuccess,
-		NetworkInternalCode: networkInternalCode,
-		WalletID:            walletID,
-		TxID:                txID,
-		Status:              "success",
+		ResultType: event.ResultTypeSuccess,
+		WalletID:   walletID,
+		Status:     "success",
 	}
 
 	presignResultBytes, err := json.Marshal(presignResult)
 	if err != nil {
 		logger.Error("Failed to marshal presign result event", err,
 			"walletID", walletID,
-			"txID", txID,
 		)
 		return
 	}
 
 	err = ec.presignResultQueue.Enqueue(event.PresignResultTopic, presignResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: composePresignIdempotentKey(txID, natMsg),
+		IdempotententKey: composePresignIdempotentKey(walletID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue presign result event", err,
 			"walletID", walletID,
-			"txID", txID,
 			"payload", string(presignResultBytes),
 		)
 	}
 	// Presign events don't use reply inboxes, so no need to send reply
-	logger.Info("[COMPLETED PRESIGN] Presign completed successfully", "walletID", walletID, "txID", txID)
+	logger.Info("[COMPLETED PRESIGN] Presign completed successfully", "walletID", walletID)
 }
 
 // handlePresignSessionError handles errors that occur during presign operations
-func (ec *eventConsumer) handlePresignSessionError(walletID, txID, networkInternalCode string, err error, contextMsg string, natMsg *nats.Msg) {
+func (ec *eventConsumer) handlePresignSessionError(walletID string, err error, contextMsg string, natMsg *nats.Msg) {
 	fullErrMsg := fmt.Sprintf("%s: %v", contextMsg, err)
 	errorCode := event.GetErrorCodeFromError(err)
 
 	logger.Warn("Presign session error",
 		"walletID", walletID,
-		"txID", txID,
-		"networkInternalCode", networkInternalCode,
 		"error", err.Error(),
 		"errorCode", errorCode,
 		"context", contextMsg,
 	)
 
 	presignResult := event.PresignResultEvent{
-		ResultType:          event.ResultTypeError,
-		ErrorCode:           errorCode,
-		NetworkInternalCode: networkInternalCode,
-		WalletID:            walletID,
-		TxID:                txID,
-		ErrorReason:         fullErrMsg,
-		Status:              "failed",
+		ResultType:  event.ResultTypeError,
+		ErrorCode:   errorCode,
+		WalletID:    walletID,
+		ErrorReason: fullErrMsg,
+		Status:      "failed",
 	}
 
 	presignResultBytes, err := json.Marshal(presignResult)
 	if err != nil {
 		logger.Error("Failed to marshal presign result event", err,
 			"walletID", walletID,
-			"txID", txID,
 		)
 		return
 	}
 
 	err = ec.presignResultQueue.Enqueue(event.PresignResultTopic, presignResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: composePresignIdempotentKey(txID, natMsg),
+		IdempotententKey: composePresignIdempotentKey(walletID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue presign result event", err,
 			"walletID", walletID,
-			"txID", txID,
 			"payload", string(presignResultBytes),
 		)
 	}
@@ -1165,8 +1162,8 @@ func (ec *eventConsumer) handlePresignSessionError(walletID, txID, networkIntern
 }
 
 // composePresignIdempotentKey creates an idempotent key for presign operations
-func composePresignIdempotentKey(txID string, natMsg *nats.Msg) string {
-	return fmt.Sprintf("presign:%s:%s", txID, natMsg.Header.Get("Nats-Msg-Id"))
+func composePresignIdempotentKey(walletID string, natMsg *nats.Msg) string {
+	return fmt.Sprintf("presign:%s:%s", walletID, natMsg.Header.Get("Nats-Msg-Id"))
 }
 
 // Add a cleanup routine that runs periodically
