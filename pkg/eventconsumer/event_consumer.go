@@ -190,13 +190,11 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}
 	cggmp21Session, err := ec.node.CreateTaurusSession(walletID, ec.mpcThreshold, types.KeyTypeCGGMP21, taurus.ActKeygen)
 	if err != nil {
-		logger.Error("Failed to create CMP session", err, "walletID", walletID)
 		ec.handleKeygenSessionError(walletID, err, "Failed to create CMP key generation session", natMsg)
 		return
 	}
 	taprootSession, err := ec.node.CreateTaurusSession(walletID, ec.mpcThreshold, types.KeyTypeTaproot, taurus.ActKeygen)
 	if err != nil {
-		logger.Error("Failed to create Taproot session", err, "walletID", walletID)
 		ec.handleKeygenSessionError(walletID, err, "Failed to create Taproot key generation session", natMsg)
 		return
 	}
