@@ -54,7 +54,7 @@ jobs:
     needs: build
     strategy:
       matrix:
-        testcase: [TestKeyGeneration, TestSigning, TestResharing]
+        testcase: [TestKeyGeneration, TestSigning, TestResharing, TestCKDSigning]
     steps:
       - uses: actions/checkout@v4
 
