@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/constant"
 	"github.com/fystack/mpcium/pkg/event"
@@ -22,7 +23,10 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/presign"
+	"github.com/fystack/mpcium/pkg/presigninfo"
 	"github.com/fystack/mpcium/pkg/security"
+	"github.com/fystack/mpcium/pkg/types"
 	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
@@ -78,6 +82,11 @@ func main() {
 						Usage:   "Path to file containing password for decrypting .age encrypted node private key",
 					},
 					&cli.BoolFlag{
+						Name:  "presign-pool-worker",
+						Usage: "Enable presign pool worker",
+						Value: false,
+					},
+					&cli.BoolFlag{
 						Name:  "debug",
 						Usage: "Enable debug logging",
 						Value: false,
@@ -109,6 +118,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	usePrompts := c.Bool("prompt-credentials")
 	passwordFile := c.String("password-file")
 	agePasswordFile := c.String("identity-password-file")
+	presignPoolWorker := c.Bool("presign-pool-worker")
 	debug := c.Bool("debug")
 
 	viper.SetDefault("backup_enabled", true)
@@ -193,6 +203,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
+	presignInfoStore := presigninfo.NewStore(consulClient.KV())
 
 	mpcNode := mpc.NewNode(
 		nodeID,
@@ -201,6 +212,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		directMessaging,
 		badgerKV,
 		keyinfoStore,
+		presignInfoStore,
 		peerRegistry,
 		identityStore,
 	)
@@ -293,6 +305,37 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		logger.Info("All consumers have finished")
 		close(errChan)
 	}()
+
+	// Start presign pool worker before entering the blocking error loop
+	if presignPoolWorker {
+		presignPoolCtx, presignPoolCancel := context.WithCancel(appContext)
+		defer presignPoolCancel()
+		localSigner, err := client.NewLocalSigner(types.EventInitiatorKeyTypeEd25519, client.LocalSignerOptions{
+			KeyPath: "./event_initiator.key",
+		})
+		if err != nil {
+			logger.Fatal("Failed to create local signer", err)
+		}
+		mpcClient := client.NewMPCClient(client.Options{
+			NatsConn: natsConn,
+			Signer:   localSigner,
+		})
+		presignPool := presign.NewPresignPool(nil, mpcClient, presignInfoStore)
+
+		_, err = pubsub.Subscribe(eventconsumer.MPCHotWalletEvent, func(nm *nats.Msg) {
+			walletID := string(nm.Data)
+			if walletID != "" {
+				presignPool.TouchHot(walletID)
+			}
+		})
+		if err != nil {
+			logger.Warn("Failed to subscribe to hot wallet events", "err", err)
+		}
+
+		presignPool.Start(presignPoolCtx)
+		defer presignPool.Stop()
+	}
+
 	for err := range errChan {
 		if err != nil {
 			logger.Error("Consumer error received", err)
@@ -300,7 +343,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 			return err
 		}
 	}
-
 	return nil
 }
 

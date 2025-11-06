@@ -26,6 +26,9 @@ const (
 	MPCReshareEvent  = "mpc:reshare"
 	MPCPresignEvent  = "mpc:presign"
 
+	// Internal event to notify presign pool of a hot wallet
+	MPCHotWalletEvent = "mpc:wallet_hot"
+
 	DefaultConcurrentKeygen   = 2
 	DefaultConcurrentSigning  = 20
 	DefaultSessionWarmUpDelay = 200
@@ -66,6 +69,12 @@ type eventConsumer struct {
 	cleanupInterval time.Duration // How often to run cleanup
 	sessionTimeout  time.Duration // How long before a session is considered stale
 	cleanupStopChan chan struct{} // Signal to stop cleanup goroutine
+
+	// Track recent signing activity to detect hot wallets
+	hotMu        sync.Mutex
+	recentSigns  map[string][]time.Time // key: walletID|keyType|protocol → timestamps within window
+	hotWindow    time.Duration          // window for counting signs (e.g., 5 minutes)
+	hotThreshold int                    // signs needed to mark as hot
 }
 
 func NewEventConsumer(
@@ -120,6 +129,9 @@ func NewEventConsumer(
 		keygenMsgBuffer:      make(chan *nats.Msg, 100),
 		signingMsgBuffer:     make(chan *nats.Msg, 200), // Larger buffer for signing
 		sessionWarmUpDelayMs: sessionWarmUpDelayMs,
+		recentSigns:          make(map[string][]time.Time),
+		hotWindow:            5 * time.Minute,
+		hotThreshold:         2,
 	}
 
 	go ec.startKeyGenEventWorker()
@@ -393,6 +405,9 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		ec.node.ID(),
 	)
 
+	// Track activity to detect hot wallets
+	ec.trackAndMaybeNotifyHot(msg)
+
 	// Check for duplicate session and track if new
 	if ec.checkDuplicateSession(msg.WalletID, msg.TxID) {
 		duplicateErr := fmt.Errorf(
@@ -658,7 +673,7 @@ func (ec *eventConsumer) consumePresignEvent() error {
 		}
 
 		if success {
-			ec.handlePresignSessionSuccess(msg.WalletID, natMsg)
+			ec.handlePresignSessionSuccess(msg.WalletID, msg.TxID, natMsg)
 		} else {
 			ec.handlePresignSessionError(msg.WalletID,
 				fmt.Errorf("presign operation returned false"),
@@ -676,10 +691,11 @@ func (ec *eventConsumer) consumePresignEvent() error {
 }
 
 // handlePresignSessionSuccess handles successful presign operations
-func (ec *eventConsumer) handlePresignSessionSuccess(walletID string, natMsg *nats.Msg) {
+func (ec *eventConsumer) handlePresignSessionSuccess(walletID string, txID string, natMsg *nats.Msg) {
 	presignResult := event.PresignResultEvent{
 		ResultType: event.ResultTypeSuccess,
 		WalletID:   walletID,
+		TxID:       txID,
 		Status:     "success",
 	}
 
@@ -862,4 +878,39 @@ func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {
 
 func composeReshareIdempotentKey(sessionID string, natMsg *nats.Msg) string {
 	return composeIdempotentKey(sessionID, natMsg, mpc.TypeReshareWalletResultFmt)
+}
+
+// trackAndMaybeNotifyHot records a signing event and publishes a hot wallet event
+// if at least hotThreshold signs occur within hotWindow for the same
+// (walletID, keyType, protocol) tuple.
+func (ec *eventConsumer) trackAndMaybeNotifyHot(msg types.SignTxMessage) {
+	if msg.Protocol != types.ProtocolCGGMP21 {
+		return
+	}
+	key := fmt.Sprintf("%s:%s:%s", msg.WalletID, string(msg.KeyType), string(msg.Protocol))
+	now := time.Now()
+
+	ec.hotMu.Lock()
+	// prune old entries
+	list := ec.recentSigns[key]
+	pruned := list[:0]
+	cutoff := now.Add(-ec.hotWindow)
+	for _, t := range list {
+		if t.After(cutoff) {
+			pruned = append(pruned, t)
+		}
+	}
+
+	ec.recentSigns[key] = append([]time.Time(nil), pruned...)
+	currentCount := len(ec.recentSigns[key])
+
+	// If this push reaches the threshold, publish hot wallet once
+	shouldPublish := currentCount+1 == ec.hotThreshold
+	ec.recentSigns[key] = append(ec.recentSigns[key], now)
+	ec.hotMu.Unlock()
+
+	if shouldPublish {
+		_ = ec.pubsub.Publish(MPCHotWalletEvent, []byte(msg.WalletID))
+		logger.Info("Published hot wallet event", "walletID", msg.WalletID)
+	}
 }

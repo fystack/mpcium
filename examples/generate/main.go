@@ -134,7 +134,11 @@ func main() {
 	for _, walletID := range walletIDs {
 		wg.Add(1) // Add to WaitGroup BEFORE attempting to create wallet
 
-		if err := mpcClient.CreateWallet(walletID); err != nil {
+		if err := mpcClient.CreateWallet(&types.GenerateKeyMessage{
+			WalletID:      walletID,
+			ECDSAProtocol: types.ProtocolCGGMP21,
+			EdDSAProtocol: types.ProtocolGG18,
+		}); err != nil {
 			logger.Error("CreateWallet failed", err)
 			walletStartTimes.Delete(walletID)
 			// Mark this wallet as processed to prevent callback from processing it

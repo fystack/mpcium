@@ -33,25 +33,40 @@ func (p Protocol) String() string {
 	return string(p)
 }
 
+// mapping of key types → supported protocols
+var supportedProtocols = map[KeyType][]Protocol{
+	KeyTypeSecp256k1: {
+		ProtocolGG18,
+		ProtocolCGGMP21,
+		ProtocolFROST,
+		ProtocolTaproot,
+	},
+	KeyTypeEd25519: {
+		ProtocolGG18,
+	},
+}
+
 // ValidateKeyProtocol checks if a key type supports a given protocol.
 func ValidateKeyProtocol(keyType KeyType, protocol Protocol) error {
 	if keyType == "" || protocol == "" {
 		return errors.New("key_type and protocol are required")
 	}
 
-	switch keyType {
-	case KeyTypeSecp256k1:
-		if protocol != ProtocolGG18 && protocol != ProtocolCGGMP21 {
-			return fmt.Errorf("protocol %q not supported for key_type %q; expected gg18 or cggmp21", protocol, keyType)
-		}
-	case KeyTypeEd25519:
-		if protocol != ProtocolFROST && protocol != ProtocolTaproot {
-			return fmt.Errorf("protocol %q not supported for key_type %q; expected frost or taproot", protocol, keyType)
-		}
-	default:
+	supported, ok := supportedProtocols[keyType]
+	if !ok {
 		return fmt.Errorf("unsupported key_type %q", keyType)
 	}
-	return nil
+
+	for _, p := range supported {
+		if p == protocol {
+			return nil // valid combo
+		}
+	}
+
+	return fmt.Errorf(
+		"protocol %q not supported for key_type %q; expected one of %v",
+		protocol, keyType, supported,
+	)
 }
 
 // InitiatorMessage is anything that carries a payload to verify and its signature.

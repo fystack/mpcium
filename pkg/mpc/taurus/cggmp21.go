@@ -3,15 +3,20 @@ package taurus
 import (
 	"context"
 	cryptoEcdsa "crypto/ecdsa"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
+	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/fystack/mpcium/pkg/encoding"
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
+	"github.com/fystack/mpcium/pkg/presigninfo"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/ecdsa"
 	"github.com/taurusgroup/multi-party-sig/pkg/math/curve"
@@ -22,9 +27,9 @@ import (
 
 type CGGMP21Session struct {
 	*commonSession
-	workerPool   *pool.Pool
-	savedData    *cmp.Config
-	presignCache *PresignCache
+	workerPool       *pool.Pool
+	savedData        *cmp.Config
+	presignInfoStore presigninfo.Store
 }
 
 func NewCGGMP21Session(
@@ -32,7 +37,7 @@ func NewCGGMP21Session(
 	selfID party.ID,
 	peerIDs party.IDSlice,
 	threshold int,
-	presignCache *PresignCache,
+	presignInfoStore presigninfo.Store,
 	transport Transport,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
@@ -47,10 +52,10 @@ func NewCGGMP21Session(
 		keyinfoStore,
 	)
 	return &CGGMP21Session{
-		commonSession: commonSession,
-		workerPool:    pool.NewPool(0),
-		savedData:     nil,
-		presignCache:  presignCache,
+		commonSession:    commonSession,
+		workerPool:       pool.NewPool(0),
+		savedData:        nil,
+		presignInfoStore: presignInfoStore,
 	}
 }
 
@@ -149,10 +154,22 @@ func (p *CGGMP21Session) Sign(ctx context.Context, msg *big.Int) ([]byte, error)
 		err    error
 	)
 
-	if presign := p.getCachedPresign(); presign != nil {
-		result, err = p.run(ctx, cmp.PresignOnline(p.savedData, presign, msgHash, p.workerPool))
-		if err != nil {
-			return nil, fmt.Errorf("presign online failed: %w", err)
+	// Try deterministic presign selection across nodes
+	if p.presignInfoStore != nil {
+		presig, txID := p.selectAndLoadPresign(msgHash)
+		if presig != nil && txID != "" {
+			logger.Info("using presign for signing", "walletID", p.sessionID, "txID", txID)
+			result, err = p.run(ctx, cmp.PresignOnline(p.savedData, presig, msgHash, p.workerPool))
+			if err != nil {
+				return nil, fmt.Errorf("presign online failed: %w", err)
+			}
+			// Mark used (best-effort)
+			_ = p.markPresignUsed(txID)
+		} else {
+			result, err = p.run(ctx, cmp.Sign(p.savedData, p.peerIDs, msgHash, p.workerPool))
+			if err != nil {
+				return nil, fmt.Errorf("full sign failed: %w", err)
+			}
 		}
 	} else {
 		result, err = p.run(ctx, cmp.Sign(p.savedData, p.peerIDs, msgHash, p.workerPool))
@@ -187,8 +204,14 @@ func (p *CGGMP21Session) Presign(ctx context.Context, txID string) (bool, error)
 	if err = presig.Validate(); err != nil {
 		return false, errors.New("presign validation failed")
 	}
-
-	p.presignCache.Put(p.sessionID, txID, presig)
+	// Store presign in KV using deterministic key including txID
+	packed, err := cbor.Marshal(presig)
+	if err != nil {
+		return false, fmt.Errorf("marshal presign: %w", err)
+	}
+	if err := p.kvstore.Put(p.composePresignKey(p.sessionID, txID), packed); err != nil {
+		return false, fmt.Errorf("store presign: %w", err)
+	}
 	return true, nil
 }
 
@@ -247,15 +270,60 @@ func (p *CGGMP21Session) composeKey(sid string) string {
 	return fmt.Sprintf("cggmp21:%s", sid)
 }
 
-func (p *CGGMP21Session) getCachedPresign() *ecdsa.PreSignature {
-	if p.presignCache == nil {
-		return nil
-	}
+func (p *CGGMP21Session) composePresignKey(sid, txID string) string {
+	return fmt.Sprintf("cggmp21:%s:%s", sid, txID)
+}
 
-	presig, ok := p.presignCache.Get(p.sessionID)
-	if !ok || presig == nil {
-		return nil
+// selectAndLoadPresign deterministically chooses a presign txID and loads its PreSignature from KV.
+// Selection: sort by CreatedAt asc, TxID asc; pick index = hash(msgHash) mod len(list).
+func (p *CGGMP21Session) selectAndLoadPresign(msgHash []byte) (*ecdsa.PreSignature, string) {
+	infos, err := p.presignInfoStore.ListPendingPresigns(p.sessionID)
+	if err != nil || len(infos) == 0 {
+		return nil, ""
 	}
+	// filter by active + protocol/keytype
+	filtered := make([]*presigninfo.PresignInfo, 0, len(infos))
+	for _, inf := range infos {
+		if inf.Status == presigninfo.PresignStatusActive && inf.Protocol == types.ProtocolCGGMP21 && inf.KeyType == types.KeyTypeSecp256k1 {
+			filtered = append(filtered, inf)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, ""
+	}
+	// sort
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].CreatedAt.Equal(filtered[j].CreatedAt) {
+			return filtered[i].TxID < filtered[j].TxID
+		}
+		return filtered[i].CreatedAt.Before(filtered[j].CreatedAt)
+	})
+	// pick index via hash
+	h := sha256.Sum256(msgHash)
+	idx := int(h[0]) % len(filtered)
+	chosen := filtered[idx]
+	// load material
+	bytes, err := p.kvstore.Get(p.composePresignKey(p.sessionID, chosen.TxID))
+	if err != nil || len(bytes) == 0 {
+		return nil, ""
+	}
+	presig := new(ecdsa.PreSignature)
+	if err := cbor.Unmarshal(bytes, presig); err != nil {
+		return nil, ""
+	}
+	if err := presig.Validate(); err != nil {
+		return nil, ""
+	}
+	return presig, chosen.TxID
+}
 
-	return presig
+func (p *CGGMP21Session) markPresignUsed(txID string) error {
+	info, err := p.presignInfoStore.Get(p.sessionID, txID)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	info.Status = presigninfo.PresignStatusUsed
+	info.UsedAt = &now
+	return p.presignInfoStore.Save(p.sessionID, info)
 }

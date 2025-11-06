@@ -71,8 +71,8 @@ func main() {
 
 	txMsg := &types.SignTxMessage{
 		KeyType:             types.KeyTypeSecp256k1,
-		Protocol:            types.ProtocolFROST,
-		WalletID:            "6d553e80-a1dc-4894-9eaf-b81e3fe0c94a", // Use the generated wallet ID
+		Protocol:            types.ProtocolCGGMP21,
+		WalletID:            "7ae6ae1c-7663-4dc4-b982-33fb0a3602c3", // Use the generated wallet ID
 		NetworkInternalCode: "solana-devnet",
 		TxID:                txID,
 		Tx:                  dummyTx,

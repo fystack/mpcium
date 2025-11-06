@@ -15,6 +15,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc/taurus"
+	"github.com/fystack/mpcium/pkg/presigninfo"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/taurusgroup/multi-party-sig/pkg/party"
 )
@@ -34,13 +35,13 @@ type Node struct {
 	nodeID  string
 	peerIDs []string
 
-	pubSub         messaging.PubSub
-	direct         messaging.DirectMessaging
-	kvstore        kvstore.KVStore
-	keyinfoStore   keyinfo.Store
-	ecdsaPreParams []*keygen.LocalPreParams
-	identityStore  identity.Store
-	presignCache   *taurus.PresignCache
+	pubSub           messaging.PubSub
+	direct           messaging.DirectMessaging
+	kvstore          kvstore.KVStore
+	keyinfoStore     keyinfo.Store
+	presignInfoStore presigninfo.Store
+	ecdsaPreParams   []*keygen.LocalPreParams
+	identityStore    identity.Store
 
 	peerRegistry PeerRegistry
 }
@@ -52,6 +53,7 @@ func NewNode(
 	direct messaging.DirectMessaging,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
+	presignInfoStore presigninfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
 ) *Node {
@@ -60,15 +62,15 @@ func NewNode(
 	logger.Info("Starting new node, preparams is generated successfully!", "elapsed", elapsed.Milliseconds())
 
 	node := &Node{
-		nodeID:        nodeID,
-		peerIDs:       peerIDs,
-		pubSub:        pubSub,
-		direct:        direct,
-		kvstore:       kvstore,
-		keyinfoStore:  keyinfoStore,
-		peerRegistry:  peerRegistry,
-		identityStore: identityStore,
-		presignCache:  taurus.NewPresignCache(10 * time.Minute),
+		nodeID:           nodeID,
+		peerIDs:          peerIDs,
+		pubSub:           pubSub,
+		direct:           direct,
+		kvstore:          kvstore,
+		keyinfoStore:     keyinfoStore,
+		presignInfoStore: presignInfoStore,
+		peerRegistry:     peerRegistry,
+		identityStore:    identityStore,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -157,7 +159,7 @@ func (p *Node) CreateTaurusSession(
 	switch protocol {
 	case types.ProtocolCGGMP21:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignCache, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, nil, tr, p.kvstore, p.keyinfoStore)
 	case types.ProtocolTaproot:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
