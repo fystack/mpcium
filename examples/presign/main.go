@@ -12,6 +12,7 @@ import (
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/types"
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
 )
@@ -65,8 +66,10 @@ func main() {
 	})
 
 	txMsg := &types.PresignTxMessage{
-		KeyType:  types.KeyTypeCGGMP21,
+		KeyType:  types.KeyTypeSecp256k1,
+		Protocol: types.ProtocolCGGMP21,
 		WalletID: "196c6858-30de-4a49-9134-8bc825d40764", // Use the generated wallet ID
+		TxID:     uuid.New().String(),
 	}
 	err = mpcClient.PresignTransaction(txMsg)
 	if err != nil {

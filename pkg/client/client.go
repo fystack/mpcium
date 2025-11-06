@@ -19,7 +19,7 @@ const (
 )
 
 type MPCClient interface {
-	CreateWallet(walletID string) error
+	CreateWallet(msg *types.GenerateKeyMessage) error
 	OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error
 
 	SignTransaction(msg *types.SignTxMessage) error
@@ -110,11 +110,7 @@ func NewMPCClient(opts Options) MPCClient {
 }
 
 // CreateWallet generates a GenerateKeyMessage, signs it, and publishes it.
-func (c *mpcClient) CreateWallet(walletID string) error {
-	// build the message
-	msg := &types.GenerateKeyMessage{
-		WalletID: walletID,
-	}
+func (c *mpcClient) CreateWallet(msg *types.GenerateKeyMessage) error {
 	// compute the canonical raw bytes
 	raw, err := msg.Raw()
 	if err != nil {

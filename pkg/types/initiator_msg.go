@@ -1,15 +1,9 @@
 package types
 
-import "encoding/json"
-
-type KeyType string
-
-const (
-	KeyTypeSecp256k1 KeyType = "secp256k1"
-	KeyTypeEd25519   KeyType = "ed25519"
-	KeyTypeCGGMP21   KeyType = "cggmp21"
-	KeyTypeFROST     KeyType = "frost"
-	KeyTypeTaproot   KeyType = "taproot"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
 )
 
 type EventInitiatorKeyType string
@@ -19,28 +13,69 @@ const (
 	EventInitiatorKeyTypeP256    EventInitiatorKeyType = "p256"
 )
 
+type KeyType string
+
+const (
+	KeyTypeSecp256k1 KeyType = "secp256k1"
+	KeyTypeEd25519   KeyType = "ed25519"
+)
+
+type Protocol string
+
+const (
+	ProtocolGG18    Protocol = "gg18"
+	ProtocolCGGMP21 Protocol = "cggmp21"
+	ProtocolFROST   Protocol = "frost"
+	ProtocolTaproot Protocol = "taproot"
+)
+
+func (p Protocol) String() string {
+	return string(p)
+}
+
+// ValidateKeyProtocol checks if a key type supports a given protocol.
+func ValidateKeyProtocol(keyType KeyType, protocol Protocol) error {
+	if keyType == "" || protocol == "" {
+		return errors.New("key_type and protocol are required")
+	}
+
+	switch keyType {
+	case KeyTypeSecp256k1:
+		if protocol != ProtocolGG18 && protocol != ProtocolCGGMP21 {
+			return fmt.Errorf("protocol %q not supported for key_type %q; expected gg18 or cggmp21", protocol, keyType)
+		}
+	case KeyTypeEd25519:
+		if protocol != ProtocolFROST && protocol != ProtocolTaproot {
+			return fmt.Errorf("protocol %q not supported for key_type %q; expected frost or taproot", protocol, keyType)
+		}
+	default:
+		return fmt.Errorf("unsupported key_type %q", keyType)
+	}
+	return nil
+}
+
 // InitiatorMessage is anything that carries a payload to verify and its signature.
 type InitiatorMessage interface {
-	// Raw returns the canonical byte‐slice that was signed.
 	Raw() ([]byte, error)
-	// Sig returns the signature over Raw().
 	Sig() []byte
-	// InitiatorID returns the ID whose public key we have to look up.
 	InitiatorID() string
 }
 
 type GenerateKeyMessage struct {
-	WalletID  string `json:"wallet_id"`
-	Signature []byte `json:"signature"`
+	WalletID      string   `json:"wallet_id"`
+	ECDSAProtocol Protocol `json:"ecdsa_protocol,omitempty"`
+	EdDSAProtocol Protocol `json:"eddsa_protocol,omitempty"`
+	Signature     []byte   `json:"signature"`
 }
 
 type SignTxMessage struct {
-	KeyType             KeyType `json:"key_type"`
-	WalletID            string  `json:"wallet_id"`
-	NetworkInternalCode string  `json:"network_internal_code"`
-	TxID                string  `json:"tx_id"`
-	Tx                  []byte  `json:"tx"`
-	Signature           []byte  `json:"signature"`
+	KeyType             KeyType  `json:"key_type"`
+	Protocol            Protocol `json:"protocol,omitempty"`
+	WalletID            string   `json:"wallet_id"`
+	NetworkInternalCode string   `json:"network_internal_code"`
+	TxID                string   `json:"tx_id"`
+	Tx                  []byte   `json:"tx"`
+	Signature           []byte   `json:"signature"`
 }
 
 type ResharingMessage struct {
@@ -48,18 +83,41 @@ type ResharingMessage struct {
 	NodeIDs      []string `json:"node_ids"` // new peer IDs
 	NewThreshold int      `json:"new_threshold"`
 	KeyType      KeyType  `json:"key_type"`
+	Protocol     Protocol `json:"protocol,omitempty"`
 	WalletID     string   `json:"wallet_id"`
 	Signature    []byte   `json:"signature,omitempty"`
 }
 
 type PresignTxMessage struct {
-	KeyType   KeyType `json:"key_type"`
-	WalletID  string  `json:"wallet_id"`
-	Signature []byte  `json:"signature"`
+	KeyType   KeyType  `json:"key_type"`
+	Protocol  Protocol `json:"protocol"`
+	WalletID  string   `json:"wallet_id"`
+	TxID      string   `json:"tx_id"`
+	Signature []byte   `json:"signature"`
+}
+
+func (m *GenerateKeyMessage) Raw() ([]byte, error) {
+	payload := struct {
+		WalletID      string   `json:"wallet_id"`
+		ECDSAProtocol Protocol `json:"ecdsa_protocol,omitempty"`
+		EdDSAProtocol Protocol `json:"eddsa_protocol,omitempty"`
+	}{
+		WalletID:      m.WalletID,
+		ECDSAProtocol: m.ECDSAProtocol,
+		EdDSAProtocol: m.EdDSAProtocol,
+	}
+	return json.Marshal(payload)
+}
+
+func (m *GenerateKeyMessage) Sig() []byte {
+	return m.Signature
+}
+
+func (m *GenerateKeyMessage) InitiatorID() string {
+	return m.WalletID
 }
 
 func (m *SignTxMessage) Raw() ([]byte, error) {
-	// omit the Signature field itself when computing the signed‐over data
 	payload := struct {
 		KeyType             KeyType `json:"key_type"`
 		WalletID            string  `json:"wallet_id"`
@@ -84,21 +142,9 @@ func (m *SignTxMessage) InitiatorID() string {
 	return m.TxID
 }
 
-func (m *GenerateKeyMessage) Raw() ([]byte, error) {
-	return []byte(m.WalletID), nil
-}
-
-func (m *GenerateKeyMessage) Sig() []byte {
-	return m.Signature
-}
-
-func (m *GenerateKeyMessage) InitiatorID() string {
-	return m.WalletID
-}
-
 func (m *ResharingMessage) Raw() ([]byte, error) {
-	copy := *m           // create a shallow copy
-	copy.Signature = nil // modify only the copy
+	copy := *m
+	copy.Signature = nil
 	return json.Marshal(&copy)
 }
 
@@ -110,22 +156,25 @@ func (m *ResharingMessage) InitiatorID() string {
 	return m.WalletID
 }
 
-func (m PresignTxMessage) Raw() ([]byte, error) {
-	// omit the Signature field itself when computing the signed‐over data
+func (m *PresignTxMessage) Raw() ([]byte, error) {
 	payload := struct {
-		KeyType  KeyType `json:"key_type"`
-		WalletID string  `json:"wallet_id"`
+		KeyType  KeyType  `json:"key_type"`
+		Protocol Protocol `json:"protocol"`
+		WalletID string   `json:"wallet_id"`
+		TxID     string   `json:"tx_id"`
 	}{
 		KeyType:  m.KeyType,
+		Protocol: m.Protocol,
 		WalletID: m.WalletID,
+		TxID:     m.TxID,
 	}
 	return json.Marshal(payload)
 }
 
-func (m PresignTxMessage) Sig() []byte {
+func (m *PresignTxMessage) Sig() []byte {
 	return m.Signature
 }
 
-func (m PresignTxMessage) InitiatorID() string {
+func (m *PresignTxMessage) InitiatorID() string {
 	return m.WalletID
 }

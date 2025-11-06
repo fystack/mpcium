@@ -148,20 +148,20 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 func (p *Node) CreateTaurusSession(
 	walletID string,
 	threshold int,
-	sessionType types.KeyType,
+	protocol types.Protocol,
 	act taurus.Act,
 ) (taurus.TaurusSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
 	var session taurus.TaurusSession
-	switch sessionType {
-	case types.KeyTypeCGGMP21:
+	switch protocol {
+	case types.ProtocolCGGMP21:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignCache, tr, p.kvstore, p.keyinfoStore)
-	case types.KeyTypeTaproot:
+	case types.ProtocolTaproot:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
-	case types.KeyTypeFROST:
+	case types.ProtocolFROST:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROST, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
 	}

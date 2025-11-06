@@ -13,5 +13,6 @@ type PresignResultEvent struct {
 	ErrorReason string     `json:"error_reason"`
 	IsTimeout   bool       `json:"is_timeout"`
 	WalletID    string     `json:"wallet_id"`
+	TxID        string     `json:"tx_id"`
 	Status      string     `json:"status"`
 }

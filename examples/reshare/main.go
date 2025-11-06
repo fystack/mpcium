@@ -88,6 +88,7 @@ func main() {
 
 		NewThreshold: 1, // t+1 <= len(NodeIDs)
 		KeyType:      types.KeyTypeEd25519,
+		Protocol:     types.ProtocolFROST,
 	}
 	err = mpcClient.Resharing(resharingMsg)
 	if err != nil {

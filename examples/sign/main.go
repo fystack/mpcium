@@ -70,8 +70,9 @@ func main() {
 	dummyTx := []byte("deadbeef") // replace with real transaction bytes
 
 	txMsg := &types.SignTxMessage{
-		KeyType:             types.KeyTypeEd25519,
-		WalletID:            "ad24f678-b04b-4149-bcf6-bf9c90df8e63", // Use the generated wallet ID
+		KeyType:             types.KeyTypeSecp256k1,
+		Protocol:            types.ProtocolFROST,
+		WalletID:            "6d553e80-a1dc-4894-9eaf-b81e3fe0c94a", // Use the generated wallet ID
 		NetworkInternalCode: "solana-devnet",
 		TxID:                txID,
 		Tx:                  dummyTx,
@@ -87,6 +88,8 @@ func main() {
 		logger.Info("Signing result received",
 			"txID", evt.TxID,
 			"signature", fmt.Sprintf("%x", evt.Signature),
+			"error", evt.ErrorReason,
+			"errorCode", evt.ErrorCode,
 		)
 	})
 	if err != nil {
