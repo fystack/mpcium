@@ -326,10 +326,9 @@ func (p *CGGMP21Session) selectAndLoadPresign() (*ecdsa.PreSignature, string) {
 		return filtered[i].CreatedAt.Before(filtered[j].CreatedAt)
 	})
 	h := sha256.Sum256([]byte(p.sessionID))
-	v := binary.BigEndian.Uint64(h[:8])
-	n := uint64(len(filtered))
-	idx := v % n
-	chosen := filtered[int(idx)]
+	hashVal := int64(binary.BigEndian.Uint32(h[:4]))
+	idx := int(hashVal % int64(len(filtered)))
+	chosen := filtered[idx]
 
 	// Load presign from KV
 	key := p.composePresignKey(p.sessionID, chosen.TxID)
