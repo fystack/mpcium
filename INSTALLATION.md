@@ -168,6 +168,8 @@ Update `config.yaml`:
 event_initiator_pubkey: "09be5d070816aadaa1b6638cad33e819a8aed7101626f6bf1e0b427412c3408a"
 ```
 
+> 💡 **Note**: If you plan to use the presign pool worker (see [Presign Pool Worker](#presign-pool-worker) section), you'll need the `event_initiator.key` file (or `event_initiator.key.age` if encrypted) to be available. The private key file is generated alongside the identity file.
+
 ---
 
 ## Configure Node Identities
@@ -271,6 +273,49 @@ mpcium start -n node2
 ---
 
 ![All node ready](images/all-node-ready.png)
+
+---
+
+## Presign Pool Worker
+
+The presign pool worker automatically maintains a pool of presignatures for hot wallets, ensuring they're ready for immediate use.
+
+### Setup
+
+To enable the presign pool worker on a node:
+
+1. **Copy the event initiator private key** to the node directory:
+   
+   If you generated the initiator with encryption:
+   ```bash
+   # Decrypt the key first
+   age --decrypt -o event_initiator.key event_initiator.key.age
+   ```
+   
+   Then copy it to the node directory:
+   ```bash
+   cp event_initiator.key node0/
+   ```
+
+   If you generated the initiator without encryption:
+   ```bash
+   cp event_initiator.key node0/
+   ```
+
+2. **Start the node with the `--presign-pool-worker` flag**:
+   
+   ```bash
+   cd node0
+   mpcium start -n node0 --presign-pool-worker
+   ```
+
+> ⚠️ **Important**: Only one node in the cluster should run the presign pool worker. The node running this worker must have the `event_initiator.key` file in its working directory.
+
+### How It Works
+
+- The worker monitors hot wallet activity and automatically generates presignatures when needed
+- It maintains a pool of presignatures between `MinPoolSize` (default: 5) and `MaxPoolSize` (default: 20)
+- The worker subscribes to hot wallet events and proactively refills the presignature pool
 
 ---
 

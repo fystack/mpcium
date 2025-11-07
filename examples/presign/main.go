@@ -65,36 +65,28 @@ func main() {
 		Signer:   localSigner,
 	})
 
+	txMsg := &types.PresignTxMessage{
+		KeyType:  types.KeyTypeSecp256k1,
+		Protocol: types.ProtocolCGGMP21,
+		WalletID: "196c6858-30de-4a49-9134-8bc825d40764", // Use the generated wallet ID
+		TxID:     uuid.New().String(),
+	}
+	err = mpcClient.PresignTransaction(txMsg)
+	if err != nil {
+		logger.Fatal("PresignTransaction failed", err)
+	}
+	fmt.Printf("PresignTransaction(%q) sent, awaiting result...\n", txMsg.WalletID)
+
 	// 3) Listen for signing results
-	err = mpcClient.OnResharingResult(func(evt event.ResharingResultEvent) {
-		logger.Info("Resharing result received",
+	err = mpcClient.OnPresignResult(func(evt event.PresignResultEvent) {
+		logger.Info("Presign result received",
 			"walletID", evt.WalletID,
-			"pubKey", fmt.Sprintf("%x", evt.PubKey),
-			"newThreshold", evt.NewThreshold,
-			"keyType", evt.KeyType,
+			"status", evt.Status,
 		)
 	})
 	if err != nil {
-		logger.Fatal("Failed to subscribe to OnResharingResult", err)
+		logger.Fatal("Failed to subscribe to OnPresignResult", err)
 	}
-
-	resharingMsg := &types.ResharingMessage{
-		SessionID: uuid.NewString(),
-		WalletID:  "506d2d40-483a-49f1-93c8-27dd4fe9740c",
-		NodeIDs: []string{
-			"c95c340e-5a18-472d-b9b0-5ac68218213a",
-			"ac37e85f-caca-4bee-8a3a-49a0fe35abff",
-		}, // new peer IDs
-
-		NewThreshold: 1, // t+1 <= len(NodeIDs)
-		KeyType:      types.KeyTypeEd25519,
-		Protocol:     types.ProtocolFROST,
-	}
-	err = mpcClient.Resharing(resharingMsg)
-	if err != nil {
-		logger.Fatal("Resharing failed", err)
-	}
-	fmt.Printf("Resharing(%q) sent, awaiting result...\n", resharingMsg.WalletID)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

@@ -25,8 +25,11 @@ const (
 	TypeReshareWalletResultFmt  = "mpc.mpc_reshare_result.%s"
 	TypeSigningResultFmt        = "mpc.mpc_signing_result.%s"
 
-	SessionTypeECDSA SessionType = "session_ecdsa"
-	SessionTypeEDDSA SessionType = "session_eddsa"
+	SessionTypeECDSA   SessionType = "session_ecdsa"
+	SessionTypeEDDSA   SessionType = "session_eddsa"
+	SessionTypeCGGMP21 SessionType = "session_cggmp21"
+	SessionTypeTaproot SessionType = "session_taproot"
+	SessionTypeFROST   SessionType = "session_frost"
 )
 
 var (

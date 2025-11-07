@@ -92,9 +92,19 @@ func main() {
 		walletIDsMu.Unlock()
 	}
 
+	// Track processed results to prevent duplicate processing
+	processedResults := sync.Map{}
+
 	// STEP 2: Register the result handler AFTER all walletIDs are stored
 	err = mpcClient.OnWalletCreationResult(func(event event.KeygenResultEvent) {
 		logger.Info("Received wallet creation result", "event", event)
+
+		// Check if we've already processed this result
+		if _, alreadyProcessed := processedResults.LoadOrStore(event.WalletID, true); alreadyProcessed {
+			logger.Warn("Duplicate wallet result received, ignoring", "walletID", event.WalletID)
+			return
+		}
+
 		now := time.Now()
 		startTimeAny, ok := walletStartTimes.Load(event.WalletID)
 		if ok {
@@ -124,9 +134,15 @@ func main() {
 	for _, walletID := range walletIDs {
 		wg.Add(1) // Add to WaitGroup BEFORE attempting to create wallet
 
-		if err := mpcClient.CreateWallet(walletID); err != nil {
+		if err := mpcClient.CreateWallet(&types.GenerateKeyMessage{
+			WalletID:      walletID,
+			ECDSAProtocol: types.ProtocolCGGMP21,
+			EdDSAProtocol: types.ProtocolGG18,
+		}); err != nil {
 			logger.Error("CreateWallet failed", err)
 			walletStartTimes.Delete(walletID)
+			// Mark this wallet as processed to prevent callback from processing it
+			processedResults.Store(walletID, true)
 			wg.Done() // Now this is safe since we added 1 above
 			continue
 		}

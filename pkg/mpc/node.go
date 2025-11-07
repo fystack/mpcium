@@ -14,6 +14,10 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/mpc/taurus"
+	"github.com/fystack/mpcium/pkg/presigninfo"
+	"github.com/fystack/mpcium/pkg/types"
+	"github.com/taurusgroup/multi-party-sig/pkg/party"
 )
 
 const (
@@ -31,12 +35,13 @@ type Node struct {
 	nodeID  string
 	peerIDs []string
 
-	pubSub         messaging.PubSub
-	direct         messaging.DirectMessaging
-	kvstore        kvstore.KVStore
-	keyinfoStore   keyinfo.Store
-	ecdsaPreParams []*keygen.LocalPreParams
-	identityStore  identity.Store
+	pubSub           messaging.PubSub
+	direct           messaging.DirectMessaging
+	kvstore          kvstore.KVStore
+	keyinfoStore     keyinfo.Store
+	presignInfoStore presigninfo.Store
+	ecdsaPreParams   []*keygen.LocalPreParams
+	identityStore    identity.Store
 
 	peerRegistry PeerRegistry
 }
@@ -48,6 +53,7 @@ func NewNode(
 	direct messaging.DirectMessaging,
 	kvstore kvstore.KVStore,
 	keyinfoStore keyinfo.Store,
+	presignInfoStore presigninfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
 ) *Node {
@@ -56,14 +62,15 @@ func NewNode(
 	logger.Info("Starting new node, preparams is generated successfully!", "elapsed", elapsed.Milliseconds())
 
 	node := &Node{
-		nodeID:        nodeID,
-		peerIDs:       peerIDs,
-		pubSub:        pubSub,
-		direct:        direct,
-		kvstore:       kvstore,
-		keyinfoStore:  keyinfoStore,
-		peerRegistry:  peerRegistry,
-		identityStore: identityStore,
+		nodeID:           nodeID,
+		peerIDs:          peerIDs,
+		pubSub:           pubSub,
+		direct:           direct,
+		kvstore:          kvstore,
+		keyinfoStore:     keyinfoStore,
+		presignInfoStore: presignInfoStore,
+		peerRegistry:     peerRegistry,
+		identityStore:    identityStore,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -137,6 +144,36 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 		resultQueue,
 		p.identityStore,
 	)
+	return session, nil
+}
+
+func (p *Node) CreateTaurusSession(
+	walletID string,
+	threshold int,
+	protocol types.Protocol,
+	act taurus.Act,
+) (taurus.TaurusSession, error) {
+	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
+	selfPartyID, allPartyIDs := p.generateTaurusPartyIDs(PurposeKeygen, readyPeerIDs, DefaultVersion)
+	var session taurus.TaurusSession
+	switch protocol {
+	case types.ProtocolCGGMP21:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignInfoStore, tr, p.kvstore, p.keyinfoStore)
+	case types.ProtocolTaproot:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+	case types.ProtocolFROST:
+		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROST, p.pubSub, p.direct, p.identityStore)
+		session = taurus.NewFROSTSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)
+	}
+
+	if act == taurus.ActSign || act == taurus.ActReshare || act == taurus.ActPresign {
+		err := session.LoadKey(walletID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return session, nil
 }
 
@@ -470,4 +507,28 @@ func sessionKeyPrefix(sessionType SessionType) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported session type: %v", sessionType)
 	}
+}
+
+func (p *Node) generateTaurusPartyIDs(purpose string, peerIDs []string, version int) (party.ID, party.IDSlice) {
+	partyIDs := make(party.IDSlice, len(peerIDs))
+	var selfPartyID party.ID
+
+	for i, peerID := range peerIDs {
+		partyID := createTaurusPartyID(peerID, purpose, version)
+		partyIDs[i] = partyID
+		if peerID == p.nodeID {
+			selfPartyID = partyID
+		}
+	}
+
+	return selfPartyID, partyIDs
+}
+
+func createTaurusPartyID(sessionID string, keyType string, version int) party.ID {
+	if version == 0 {
+		// Backward compatible version - just use sessionID
+		return party.ID(sessionID)
+	}
+	// Include version in party ID
+	return party.ID(fmt.Sprintf("%s:%s:%d", sessionID, keyType, version))
 }
