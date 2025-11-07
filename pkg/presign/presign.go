@@ -15,21 +15,26 @@ import (
 )
 
 type Config struct {
-	MinPoolSize             int
-	MaxPoolSize             int
-	GlobalMaxConcurrency    int
-	PerWalletMaxConcurrency int
-	HotWindowDuration       time.Duration
-	RefillInterval          time.Duration
+	MinPoolSize          int
+	MaxPoolSize          int
+	GlobalMaxConcurrency int
+	HotWindowDuration    time.Duration
+	RefillInterval       time.Duration
+	ThrottleDelay        time.Duration
 }
 
 var DefaultConfig = Config{
-	MinPoolSize:             5,
-	MaxPoolSize:             20,
-	GlobalMaxConcurrency:    20,
-	PerWalletMaxConcurrency: 5,
-	HotWindowDuration:       5 * time.Minute,
-	RefillInterval:          10 * time.Second,
+	MinPoolSize:          5,
+	MaxPoolSize:          20,
+	GlobalMaxConcurrency: 10,
+	HotWindowDuration:    5 * time.Minute,
+	RefillInterval:       15 * time.Second,
+	ThrottleDelay:        5 * time.Second,
+}
+
+type walletState struct {
+	lastTouch    time.Time
+	pendingCount int
 }
 
 type PresignPool struct {
@@ -41,9 +46,7 @@ type PresignPool struct {
 
 	wg        sync.WaitGroup
 	mu        sync.RWMutex
-	hot       map[string]time.Time
-	pending   map[string]int
-	cache     map[string][]*presigninfo.PresignInfo
+	wallets   map[string]*walletState
 	globalSem *semaphore.Weighted
 }
 
@@ -52,7 +55,6 @@ func NewPresignPool(cfg *Config, client client.MPCClient, infoStore presigninfo.
 		tmp := DefaultConfig
 		cfg = &tmp
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PresignPool{
 		cfg:       cfg,
@@ -60,29 +62,23 @@ func NewPresignPool(cfg *Config, client client.MPCClient, infoStore presigninfo.
 		infoStore: infoStore,
 		ctx:       ctx,
 		cancel:    cancel,
-		hot:       make(map[string]time.Time),
-		pending:   make(map[string]int),
-		cache:     make(map[string][]*presigninfo.PresignInfo),
+		wallets:   make(map[string]*walletState),
 		globalSem: semaphore.NewWeighted(int64(cfg.GlobalMaxConcurrency)),
 	}
 
-	// Subscribe to presign completion events
+	// Subscribe to presign completion
 	if err := p.client.OnPresignResult(func(evt event.PresignResultEvent) {
-		p.OnPresignCompleted(evt.WalletID, evt.TxID, evt.ResultType == event.ResultTypeSuccess)
+		p.handlePresignResult(evt.WalletID, evt.TxID, evt.ResultType == event.ResultTypeSuccess)
 	}); err != nil {
-		logger.Error("subscribe presign handler failed", err)
+		logger.Error("[PRESIGN] subscribe handler failed", err)
 	}
-
 	return p
 }
 
 func (p *PresignPool) Start(ctx context.Context) {
-	logger.Info("[PRESIGN] Presign pool worker started")
-
-	p.wg.Add(2)
-	go p.refillLoop()
-	go p.cleanupLoop()
-
+	logger.Info("[PRESIGN] Pool started")
+	p.wg.Add(1)
+	go p.mainLoop()
 	go func() {
 		<-ctx.Done()
 		p.Stop()
@@ -92,17 +88,20 @@ func (p *PresignPool) Start(ctx context.Context) {
 func (p *PresignPool) Stop() {
 	p.cancel()
 	p.wg.Wait()
-	logger.Info("presign pool stopped")
+	logger.Info("[PRESIGN] Pool stopped")
 }
 
 func (p *PresignPool) TouchHot(walletID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.hot[walletID] = time.Now()
-	logger.Info("hot wallet detected", "wallet", walletID)
+	if state, ok := p.wallets[walletID]; ok {
+		state.lastTouch = time.Now()
+	} else {
+		p.wallets[walletID] = &walletState{lastTouch: time.Now()}
+	}
 }
 
-func (p *PresignPool) refillLoop() {
+func (p *PresignPool) mainLoop() {
 	defer p.wg.Done()
 	ticker := time.NewTicker(p.cfg.RefillInterval)
 	defer ticker.Stop()
@@ -110,89 +109,67 @@ func (p *PresignPool) refillLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			p.refill()
+			p.refillAll()
 		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
-func (p *PresignPool) cleanupLoop() {
-	defer p.wg.Done()
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	for {
+func (p *PresignPool) refillAll() {
+	for _, walletID := range p.getHotWallets() {
 		select {
-		case <-ticker.C:
-			p.cleanup()
-			p.syncCache() // refresh cache periodically
 		case <-p.ctx.Done():
 			return
+		default:
+			p.refillWallet(walletID)
+			time.Sleep(2 * time.Second)
 		}
 	}
 }
 
-func (p *PresignPool) refill() {
-	now := time.Now()
+func (p *PresignPool) refillWallet(walletID string) {
+	list, err := p.infoStore.ListPendingPresigns(walletID)
+	if err != nil {
+		logger.Warn("[PRESIGN] list presigns failed", "wallet", walletID, "err", err)
+		return
+	}
+
+	activeCount := 0
+	for _, info := range list {
+		if info.Status == presigninfo.PresignStatusActive {
+			activeCount++
+		}
+	}
 
 	p.mu.RLock()
-	wallets := make([]string, 0, len(p.hot))
-	for w, t := range p.hot {
-		if now.Sub(t) < p.cfg.HotWindowDuration {
-			wallets = append(wallets, w)
-		}
+	pendingCount := 0
+	if st := p.wallets[walletID]; st != nil {
+		pendingCount = st.pendingCount
 	}
 	p.mu.RUnlock()
 
-	// refill sequentially, with delay between wallets
-	for i, wallet := range wallets {
-		if i > 0 {
-			time.Sleep(2 * time.Second) // spacing between wallets
-		}
-		if err := p.refillWallet(wallet); err != nil {
-			logger.Warn("refill failed", "wallet", wallet, "err", err)
-		}
+	total := activeCount + pendingCount
+	if total >= p.cfg.MinPoolSize {
+		return
 	}
-}
-
-func (p *PresignPool) refillWallet(walletID string) error {
-	list := p.getPresignListCached(walletID)
-
-	var ready int
-	for _, m := range list {
-		if m.Status == presigninfo.PresignStatusActive {
-			ready++
-		}
+	if pendingCount > 0 {
+		return
 	}
 
-	if ready >= p.cfg.MinPoolSize {
-		return nil
-	}
-
-	// Skip if there is a pending request
-	p.mu.Lock()
-	if p.pending[walletID] > 0 {
-		p.mu.Unlock()
-		return nil
-	}
-	p.pending[walletID] = 1
-	p.mu.Unlock()
-
-	logger.Info("refilling presign", "wallet", walletID, "current", ready, "target", p.cfg.MinPoolSize)
+	p.incrementPending(walletID)
 	go p.requestPresign(walletID)
-	return nil
 }
 
 func (p *PresignPool) requestPresign(walletID string) {
 	if err := p.globalSem.Acquire(p.ctx, 1); err != nil {
-		p.decrement(walletID)
+		logger.Warn("[PRESIGN] semaphore acquire failed", "wallet", walletID, "err", err)
+		p.decrementPending(walletID)
 		return
 	}
 	defer p.globalSem.Release(1)
 
-	// throttle lightly to allow other operations to continue
-	time.Sleep(3 * time.Second)
+	time.Sleep(p.cfg.ThrottleDelay)
 
 	txID := "presign_" + uuid.NewString()
 	req := &types.PresignTxMessage{
@@ -201,20 +178,20 @@ func (p *PresignPool) requestPresign(walletID string) {
 		WalletID: walletID,
 		TxID:     txID,
 	}
-
 	if err := p.client.PresignTransaction(req); err != nil {
-		logger.Error("publish presign failed", err, "wallet", walletID)
-		p.decrement(walletID)
+		logger.Warn("[PRESIGN] presign publish failed", "wallet", walletID, "tx", txID, "err", err)
+		p.decrementPending(walletID)
 		return
 	}
-
-	logger.Debug("presign request sent", "wallet", walletID, "tx_id", txID)
+	logger.Debug("[PRESIGN] presign sent", "wallet", walletID, "tx", txID)
 }
 
-func (p *PresignPool) OnPresignCompleted(walletID, txID string, success bool) {
-	p.decrement(walletID)
+func (p *PresignPool) handlePresignResult(walletID, txID string, success bool) {
+	p.decrementPending(walletID)
+
 	if !success {
-		logger.Warn("presign failed", "wallet", walletID, "tx_id", txID)
+		logger.Warn("[PRESIGN] presign failed", "wallet", walletID, "tx", txID)
+		_ = p.infoStore.Delete(walletID, txID) // cleanup failed presign
 		return
 	}
 
@@ -226,84 +203,58 @@ func (p *PresignPool) OnPresignCompleted(walletID, txID string, success bool) {
 		Status:    presigninfo.PresignStatusActive,
 		CreatedAt: time.Now(),
 	}
-
-	// update cache
-	p.mu.Lock()
-	p.cache[walletID] = append(p.cache[walletID], info)
-	p.mu.Unlock()
-
-	// async write to Consul KV
-	go func() {
-		if err := p.infoStore.Save(walletID, info); err != nil {
-			logger.Error("save presign info failed", err, "wallet", walletID)
-		}
-	}()
-}
-
-func (p *PresignPool) getPresignListCached(walletID string) []*presigninfo.PresignInfo {
-	p.mu.RLock()
-	cached := p.cache[walletID]
-	p.mu.RUnlock()
-
-	if len(cached) > 0 {
-		return cached
+	if err := p.infoStore.Save(walletID, info); err != nil {
+		logger.Warn("[PRESIGN] save failed", "wallet", walletID, "tx", txID, "err", err)
+		return
 	}
 
-	// cache miss → load from Consul
+	// Clean up expired/used presigns
+	p.cleanupUsed(walletID)
+	logger.Debug("[PRESIGN] presign done", "wallet", walletID, "tx", txID)
+}
+
+func (p *PresignPool) cleanupUsed(walletID string) {
 	list, err := p.infoStore.ListPendingPresigns(walletID)
 	if err != nil {
-		logger.Warn("load presign list failed", "wallet", walletID, "err", err)
-		return nil
+		return
 	}
-
-	p.mu.Lock()
-	p.cache[walletID] = list
-	p.mu.Unlock()
-	return list
-}
-
-// sync cache periodically
-func (p *PresignPool) syncCache() {
-	wallets := p.GetHotWalletsSnapshot()
-	for _, wallet := range wallets {
-		list, err := p.infoStore.ListPendingPresigns(wallet)
-		if err != nil {
-			logger.Warn("sync cache failed", "wallet", wallet, "err", err)
-			continue
+	for _, inf := range list {
+		if inf.Status == presigninfo.PresignStatusUsed {
+			_ = p.infoStore.Delete(walletID, inf.TxID)
+			logger.Debug("[PRESIGN] cleaned used presign", "wallet", walletID, "tx", inf.TxID)
 		}
-		p.mu.Lock()
-		p.cache[wallet] = list
-		p.mu.Unlock()
 	}
 }
 
-func (p *PresignPool) decrement(walletID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if n := p.pending[walletID]; n > 1 {
-		p.pending[walletID] = n - 1
-	} else {
-		delete(p.pending, walletID)
-	}
-}
-
-func (p *PresignPool) cleanup() {
+func (p *PresignPool) getHotWallets() []string {
 	now := time.Now()
-	p.mu.Lock()
-	for w, t := range p.hot {
-		if now.Sub(t) >= p.cfg.HotWindowDuration {
-			delete(p.hot, w)
-		}
-	}
-	p.mu.Unlock()
-}
-
-func (p *PresignPool) GetHotWalletsSnapshot() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	keys := make([]string, 0, len(p.hot))
-	for k := range p.hot {
-		keys = append(keys, k)
+	hot := make([]string, 0, len(p.wallets))
+	for id, st := range p.wallets {
+		if now.Sub(st.lastTouch) < p.cfg.HotWindowDuration {
+			hot = append(hot, id)
+		}
 	}
-	return keys
+	return hot
 }
+
+func (p *PresignPool) incrementPending(walletID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if st, ok := p.wallets[walletID]; ok {
+		st.pendingCount++
+	} else {
+		p.wallets[walletID] = &walletState{lastTouch: time.Now(), pendingCount: 1}
+	}
+}
+
+func (p *PresignPool) decrementPending(walletID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if st, ok := p.wallets[walletID]; ok && st.pendingCount > 0 {
+		st.pendingCount--
+	}
+}
+
+func (p *PresignPool) GetHotWalletsSnapshot() []string { return p.getHotWallets() }

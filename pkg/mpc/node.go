@@ -159,7 +159,7 @@ func (p *Node) CreateTaurusSession(
 	switch protocol {
 	case types.ProtocolCGGMP21:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.CGGMP21, p.pubSub, p.direct, p.identityStore)
-		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, nil, tr, p.kvstore, p.keyinfoStore)
+		session = taurus.NewCGGMP21Session(walletID, selfPartyID, allPartyIDs, threshold, p.presignInfoStore, tr, p.kvstore, p.keyinfoStore)
 	case types.ProtocolTaproot:
 		tr := taurus.NewNATSTransport(walletID, selfPartyID, act, taurus.FROSTTaproot, p.pubSub, p.direct, p.identityStore)
 		session = taurus.NewTaprootSession(walletID, selfPartyID, allPartyIDs, threshold, tr, p.kvstore, p.keyinfoStore)

@@ -663,7 +663,7 @@ func (ec *eventConsumer) consumePresignEvent() error {
 		}
 
 		ctx := context.Background()
-		success, err := session.Presign(ctx, msg.WalletID)
+		success, err := session.Presign(ctx, msg.TxID)
 		if err != nil {
 			ec.handlePresignSessionError(msg.WalletID,
 				err, "Presign operation failed",
@@ -708,7 +708,7 @@ func (ec *eventConsumer) handlePresignSessionSuccess(walletID string, txID strin
 	}
 
 	err = ec.presignResultQueue.Enqueue(event.PresignResultTopic, presignResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: composePresignIdempotentKey(walletID, natMsg),
+		IdempotententKey: composePresignIdempotentKey(txID, natMsg),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue presign result event", err,
@@ -717,7 +717,7 @@ func (ec *eventConsumer) handlePresignSessionSuccess(walletID string, txID strin
 		)
 	}
 	// Presign events don't use reply inboxes, so no need to send reply
-	logger.Info("[COMPLETED PRESIGN] Presign completed successfully", "walletID", walletID)
+	logger.Info("[COMPLETED PRESIGN] Presign completed successfully", "walletID", walletID, "txID", txID)
 }
 
 // handlePresignSessionError handles errors that occur during presign operations

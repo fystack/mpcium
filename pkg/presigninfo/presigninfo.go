@@ -3,6 +3,7 @@ package presigninfo
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fystack/mpcium/pkg/infra"
@@ -36,7 +37,9 @@ func NewStore(consulKV infra.ConsulKV) *store {
 type Store interface {
 	Get(walletID string, txID string) (*PresignInfo, error)
 	Save(walletID string, info *PresignInfo) error
+	Delete(walletID string, txID string) error
 	ListPendingPresigns(walletID string) ([]*PresignInfo, error)
+	ListAllWallets() ([]string, error)
 }
 
 func (s *store) Get(walletID string, txID string) (*PresignInfo, error) {
@@ -101,6 +104,34 @@ func (s *store) ListPendingPresigns(walletID string) ([]*PresignInfo, error) {
 		}
 	}
 	return infos, nil
+}
+
+// ListAllWallets returns all wallet IDs that have presigns in Consul KV
+func (s *store) ListAllWallets() ([]string, error) {
+	entries, _, err := s.consulKV.List("presign_info/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to list all presign info: %w", err)
+	}
+
+	walletMap := make(map[string]bool)
+	for _, entry := range entries {
+		// Key format: presign_info/{walletID}/{txID}
+		// Extract walletID from the key
+		key := entry.Key
+		parts := strings.Split(key, "/")
+		if len(parts) >= 2 && parts[0] == "presign_info" {
+			walletID := parts[1]
+			if walletID != "" {
+				walletMap[walletID] = true
+			}
+		}
+	}
+
+	wallets := make([]string, 0, len(walletMap))
+	for walletID := range walletMap {
+		wallets = append(wallets, walletID)
+	}
+	return wallets, nil
 }
 
 func (s *store) composeKey(walletID string, txID string) string {
