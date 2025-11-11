@@ -1,6 +1,7 @@
 package mpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -37,8 +38,16 @@ type Node struct {
 	keyinfoStore   keyinfo.Store
 	ecdsaPreParams []*keygen.LocalPreParams
 	identityStore  identity.Store
+	peerRegistry   PeerRegistry
+	ckd            *CKD
+}
 
-	peerRegistry PeerRegistry
+func PartyIDToRoutingDest(partyID *tss.PartyID) string {
+	return string(partyID.KeyInt().Bytes())
+}
+
+func ComparePartyIDs(x, y *tss.PartyID) bool {
+	return bytes.Equal(x.KeyInt().Bytes(), y.KeyInt().Bytes())
 }
 
 func NewNode(
@@ -50,6 +59,7 @@ func NewNode(
 	keyinfoStore keyinfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
+	ckd *CKD,
 ) *Node {
 	start := time.Now()
 	elapsed := time.Since(start)
@@ -64,6 +74,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
+		ckd:           ckd,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -146,6 +157,7 @@ func (p *Node) CreateSigningSession(
 	txID string,
 	networkInternalCode string,
 	resultQueue messaging.MessageQueue,
+	derivationPath []uint32,
 	idempotentKey string,
 ) (SigningSession, error) {
 	version := p.getVersion(sessionType, walletID)
@@ -193,7 +205,9 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -211,7 +225,9 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 	}
 

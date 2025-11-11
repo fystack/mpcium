@@ -152,6 +152,8 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	baseCtx, baseCancel := context.WithTimeout(context.Background(), KeyGenTimeOut)
 	defer baseCancel()
 
+	logger.Info("[KEY GEN] Key generation result")
+
 	raw := natMsg.Data
 	var msg types.GenerateKeyMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
@@ -173,6 +175,9 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}
 
 	walletID := msg.WalletID
+
+	logger.Info("[KEY GEN] Key generation result", "walletID", walletID)
+
 	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {
 		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
@@ -402,6 +407,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	case types.KeyTypeEd25519:
@@ -411,6 +417,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	default:
@@ -726,7 +733,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		wg.Wait()
 		logger.Info("Reshare session finished", "walletID", walletID, "pubKey", fmt.Sprintf("%x", successEvent.PubKey))
 
-		if newSession != nil {
+		if newSession != nil && len(successEvent.PubKey) > 0 {
 			successBytes, err := json.Marshal(successEvent)
 			if err != nil {
 				logger.Error("Failed to marshal reshare success event", err)
