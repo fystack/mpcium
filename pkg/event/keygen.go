@@ -15,3 +15,17 @@ type KeygenResultEvent struct {
 	ErrorReason string     `json:"error_reason"`
 	ErrorCode   string     `json:"error_code"`
 }
+
+// CreateKeygenFailureEvent creates a failed keygen event
+func CreateKeygenFailureEvent(walletID string, metadata map[string]any) *KeygenResultEvent {
+	errorMsg := ""
+	if err, ok := metadata["error"].(string); ok {
+		errorMsg = err
+	}
+	return &KeygenResultEvent{
+		WalletID:    walletID,
+		ResultType:  ResultTypeError,
+		ErrorReason: errorMsg,
+		ErrorCode:   string(ErrorCodeKeygenFailure),
+	}
+}
