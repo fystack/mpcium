@@ -100,19 +100,14 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 	}
 
 	// Load peers.json to validate all nodes have identity files
-	// peersData, err := os.ReadFile("peers.json")
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to read peers.json: %w", err)
-	// }
-
-	peers := map[string]string{
-		"node0": "aa4adaea-257d-4337-842a-1d3f966d85c2",
-		"node1": "21ac5259-ac9e-4b81-bd42-d05f584879e4",
-		"node2": "2fff5119-a1f1-4763-8f4c-d7d88c212608",
+	peersData, err := os.ReadFile("peers.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read peers.json: %w", err)
 	}
-	// if err := json.Unmarshal(peersData, &peers); err != nil {
-	// 	return nil, fmt.Errorf("failed to parse peers.json: %w", err)
-	// }
+	peers := make(map[string]string)
+	if err := json.Unmarshal(peersData, &peers); err != nil {
+		return nil, fmt.Errorf("failed to parse peers.json: %w", err)
+	}
 
 	store := &fileStore{
 		identityDir:     identityDir,
