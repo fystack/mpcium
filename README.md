@@ -5,7 +5,7 @@
 > _"Setting up MPC wallets has always been painful, complex, and confusing. With MPCIUM, you can launch a secure MPC node cluster and generate wallets in minutes."_
 
 <p><img title="fystack logo" src="https://avatars.githubusercontent.com/u/149689344?s=400&u=13bed818667eefccd78ca4b4207d088eeb4f6110&v=4" width="320" height="320"></p>
-<p><a href="https://t.me/+IsRhPyWuOFxmNmM9">Join our Telegram community to discuss MPCIUM and Web3 cyber security!</a></p>
+<p><a href="https://t.me/+9AtC0z8sS79iZjFl">Join our Telegram community to discuss MPCIUM and Web3 cyber security!</a></p>
 
 [![Go Version](https://img.shields.io/badge/Go-v1.23+-00ADD8?logo=go&style=for-the-badge)](https://go.dev/)
 [![License](https://img.shields.io/github/license/fystack/mpcium?style=for-the-badge)](./LICENSE)
@@ -287,7 +287,7 @@ configs := []client.KMSSignerOptions{
     },
     // Full ARN
     {
-        Region: "ap-southeast-1", 
+        Region: "ap-southeast-1",
         KeyID:  "arn:aws:kms:ap-southeast-1:123456789012:key/12345678-1234-1234-1234-123456789012",
     },
     // Key alias
@@ -307,13 +307,14 @@ For local development and testing with AWS KMS functionality, you can use LocalS
 ### Setup LocalStack
 
 1. **Install and start LocalStack:**
+
    ```bash
    # Using Docker
    docker run -d \
      -p 4566:4566 \
      -p 4510-4559:4510-4559 \
      localstack/localstack
-   
+
    # Or using LocalStack CLI
    pip install localstack
    localstack start
@@ -329,6 +330,7 @@ For local development and testing with AWS KMS functionality, you can use LocalS
 ### Create P256 Key in LocalStack
 
 1. **Create a P256 keypair in AWS KMS:**
+
    ```bash
    aws kms create-key \
      --endpoint-url=http://localhost:4566 \
@@ -338,33 +340,33 @@ For local development and testing with AWS KMS functionality, you can use LocalS
    ```
 
    Expected response:
+
    ```json
    {
-       "KeyMetadata": {
-           "AWSAccountId": "000000000000",
-           "KeyId": "330a9df7-4fd9-4e86-bfc5-f360b4c4be39",
-           "Arn": "arn:aws:kms:us-east-1:000000000000:key/330a9df7-4fd9-4e86-bfc5-f360b4c4be39",
-           "CreationDate": "2025-08-28T16:42:18.487655+07:00",
-           "Enabled": true,
-           "Description": "Test P-256 keypair for Mpcium",
-           "KeyUsage": "SIGN_VERIFY",
-           "KeyState": "Enabled",
-           "Origin": "AWS_KMS",
-           "KeyManager": "CUSTOMER",
-           "CustomerMasterKeySpec": "ECC_NIST_P256",
-           "KeySpec": "ECC_NIST_P256",
-           "SigningAlgorithms": [
-               "ECDSA_SHA_256"
-           ],
-           "MultiRegion": false
-       }
+     "KeyMetadata": {
+       "AWSAccountId": "000000000000",
+       "KeyId": "330a9df7-4fd9-4e86-bfc5-f360b4c4be39",
+       "Arn": "arn:aws:kms:us-east-1:000000000000:key/330a9df7-4fd9-4e86-bfc5-f360b4c4be39",
+       "CreationDate": "2025-08-28T16:42:18.487655+07:00",
+       "Enabled": true,
+       "Description": "Test P-256 keypair for Mpcium",
+       "KeyUsage": "SIGN_VERIFY",
+       "KeyState": "Enabled",
+       "Origin": "AWS_KMS",
+       "KeyManager": "CUSTOMER",
+       "CustomerMasterKeySpec": "ECC_NIST_P256",
+       "KeySpec": "ECC_NIST_P256",
+       "SigningAlgorithms": ["ECDSA_SHA_256"],
+       "MultiRegion": false
+     }
    }
    ```
 
 2. **Get the public key (save the KeyId from step 1):**
+
    ```bash
    export KMS_KEY_ID="330a9df7-4fd9-4e86-bfc5-f360b4c4be39"  # Replace with your KeyId
-   
+
    aws kms get-public-key \
      --endpoint-url=http://localhost:4566 \
      --key-id $KMS_KEY_ID \
@@ -373,6 +375,7 @@ For local development and testing with AWS KMS functionality, you can use LocalS
    ```
 
    Expected response (hex-encoded public key):
+
    ```
    3059301306072a8648ce3d020106082a8648ce3d030107034200042b7539fc51123c3ba53c71e244be71d2d3138cbed4909fa259b924b56c92148cadd410cf98b789269d7f672c3ba978e99fc1f01c87daee97292d3666357738fd
    ```
@@ -382,7 +385,7 @@ For local development and testing with AWS KMS functionality, you can use LocalS
 Update your `config.yaml` file with the KMS public key and algorithm:
 
 ```yaml
-# MPC Configuration  
+# MPC Configuration
 mpc_threshold: 2
 event_initiator_pubkey: "3059301306072a8648ce3d020106082a8648ce3d030107034200042b7539fc51123c3ba53c71e244be71d2d3138cbed4909fa259b924b56c92148cadd410cf98b789269d7f672c3ba978e99fc1f01c87daee97292d3666357738fd"
 event_initiator_algorithm: "p256"
@@ -404,6 +407,7 @@ go run examples/generate/kms/main.go -n 1
 ```
 
 The example will:
+
 1. Connect to LocalStack KMS endpoint
 2. Load the P256 public key from KMS
 3. Use KMS for signing wallet creation events
@@ -469,6 +473,7 @@ make test
 Test MPC performance with the integrated benchmark tool:
 
 ### Keygen Benchmark
+
 ```bash
 # Test wallet creation
 mpcium-cli benchmark keygen 10
@@ -478,6 +483,7 @@ mpcium-cli benchmark --config config.yaml --output results.txt keygen 50
 ```
 
 ### Signing Benchmark
+
 ```bash
 # Test ECDSA signing
 mpcium-cli benchmark sign-ecdsa 100 wallet-id
