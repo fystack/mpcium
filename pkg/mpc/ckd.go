@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"sync"
 
 	"github.com/bnb-chain/tss-lib/v2/crypto"
@@ -16,7 +15,6 @@ import (
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	eddsaKeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/fystack/mpcium/pkg/logger"
 )
 
 const chainCodeLength = 32
@@ -38,7 +36,6 @@ func NewCKDFromHex(hexStr string) (*CKD, error) {
 	if hexStr == "" {
 		return nil, fmt.Errorf("chain code is empty")
 	}
-
 	code, err := hex.DecodeString(hexStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid chain code hex: %w", err)
@@ -46,20 +43,7 @@ func NewCKDFromHex(hexStr string) (*CKD, error) {
 	if len(code) != chainCodeLength {
 		return nil, fmt.Errorf("%w: got %d, want %d", ErrInvalidChainCode, len(code), chainCodeLength)
 	}
-
-	logger.Info("Loaded static chain code from config")
-
 	return &CKD{masterChainCode: code}, nil
-}
-
-// NewCKD loads chain code from environment variable CHAIN_CODE (hex-encoded).
-// Deprecated: prefer NewCKDFromHex with config-provided value.
-func NewCKD() (*CKD, error) {
-	envVal := os.Getenv("CHAIN_CODE")
-	if envVal == "" {
-		return nil, fmt.Errorf("CHAIN_CODE not set in environment")
-	}
-	return NewCKDFromHex(envVal)
 }
 
 // GetMasterChainCode returns a copy of the chain code.
