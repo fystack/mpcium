@@ -35,7 +35,7 @@ const (
 	solChange   = 0   // External chain
 
 	// Number of addresses to derive; change this to derive more or fewer addresses.
-	addressCount = 2
+	addressCount = uint32(2)
 )
 
 type DerivedAddress struct {
@@ -158,9 +158,8 @@ func main() {
 	}
 
 	addresses := make([]*DerivedAddress, addressCount)
-	for i := 0; i < addressCount; i++ {
-		childIndex := uint32(i)
-		path := []uint32{solPurpose, solCoinType, childIndex, solChange}
+	for i := uint32(0); i < addressCount; i++ {
+		path := []uint32{solPurpose, solCoinType, i, solChange}
 
 		// Derive child public key from master (NO MPC!)
 		childPubKey, err := deriveChildPublicKeyEd25519(masterPubKey, chainCodeHex, path)
@@ -180,7 +179,7 @@ func main() {
 		address := deriveSolanaAddress(childPubKey)
 
 		addresses[i] = &DerivedAddress{
-			Index:          childIndex,
+			Index:          i,
 			DerivationPath: path,
 			PublicKey:      childPubKey,
 			Address:        address,

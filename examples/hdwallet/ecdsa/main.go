@@ -30,6 +30,9 @@ const (
 	ethCoinType = 60 // Ethereum
 	ethAccount  = 0  // Account 0
 	ethChange   = 0  // External chain
+
+	// Number of addresses to derive for the example run.
+	derivedAddressCount = uint32(2)
 )
 
 type DerivedAddress struct {
@@ -151,9 +154,9 @@ func main() {
 		logger.Fatal("chain_code not found in config", fmt.Errorf("required for HD derivation"))
 	}
 
-	addresses := make([]*DerivedAddress, 2)
-	for i := 0; i < 2; i++ {
-		childIndex := uint32(i)
+	addresses := make([]*DerivedAddress, derivedAddressCount)
+	for i := uint32(0); i < derivedAddressCount; i++ {
+		childIndex := i
 		path := []uint32{ethPurpose, ethCoinType, ethAccount, ethChange, childIndex}
 
 		// Derive child public key from master (NO MPC!)
