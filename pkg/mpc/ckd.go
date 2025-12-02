@@ -2,13 +2,10 @@ package mpc
 
 import (
 	"crypto/elliptic"
-	"crypto/hmac"
-	"crypto/sha512"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
-	"sync"
 
 	"github.com/bnb-chain/tss-lib/v2/crypto"
 	"github.com/bnb-chain/tss-lib/v2/crypto/ckd"
@@ -28,7 +25,6 @@ var (
 // CKD handles Child Key Derivation (ENV-based)
 type CKD struct {
 	masterChainCode []byte
-	mu              sync.RWMutex
 }
 
 // NewCKDFromHex creates CKD from a hex-encoded chain code string (32 bytes).
@@ -48,14 +44,14 @@ func NewCKDFromHex(hexStr string) (*CKD, error) {
 
 // GetMasterChainCode returns a copy of the chain code.
 func (c *CKD) GetMasterChainCode() []byte {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	out := make([]byte, len(c.masterChainCode))
 	copy(out, c.masterChainCode)
 	return out
 }
 
 // Derive derives a child key from the master public key using the given path.
+// Uses standard BIP32 derivation: same master key + same path = same child key.
+// Each level in the path automatically gets its own chain code via HMAC(parent_chain_code, pubkey || index).
 func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, curve elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
 	if masterPub == nil {
 		return nil, nil, ErrNilPoint
@@ -64,15 +60,9 @@ func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, 
 		return nil, nil, errors.New("curve cannot be nil")
 	}
 
-	c.mu.RLock()
 	masterCC := append([]byte(nil), c.masterChainCode...)
-	c.mu.RUnlock()
 
-	h := hmac.New(sha512.New, masterCC)
-	h.Write([]byte(walletID))
-	walletCC := h.Sum(nil)
-
-	return c.derivingPubkeyFromPath(masterPub, walletCC, path, curve)
+	return c.derivingPubkeyFromPath(masterPub, masterCC, path, curve)
 }
 
 // derivingPubkeyFromPath performs the actual derivation.
