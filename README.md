@@ -133,17 +133,12 @@ The application uses a YAML configuration file (`config.yaml`) with the followin
 - `event_initiator_pubkey`: Public key of the event initiator
 - `max_concurrent_keygen`: Maximum concurrent key generation operations
 
-#### chain_code (required)
-- Mpcium derives child keys using a master chain code.
-- Provide a single 32-byte hex value in `config.yaml` under `chain_code`, and use the same value for all nodes.
-- Example to generate once and set:
-```bash
-CC=$(openssl rand -hex 32)
-sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" config.yaml
-for n in node0 node1 node2; do
-  sed -i -E "s|^([[:space:]]*chain_code:).*|\1 \"$CC\"|" "$n/config.yaml"
-done
-```
+#### chain_code (REQUIRED)
+- **Required** for Hierarchical Deterministic (HD) wallet functionality to derive child keys
+- Must be a 32-byte hexadecimal string (64 characters)
+- **All nodes MUST use the exact same chain_code value**
+- Generate with: `openssl rand -hex 32`
+- See [INSTALLATION.md](./INSTALLATION.md#chain_code-setup-required) for detailed setup instructions
 
 ## Installation
 

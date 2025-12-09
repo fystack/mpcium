@@ -418,6 +418,27 @@ validate_config_credentials() {
     else
         log_info "✓ event_initiator_pubkey configured"
     fi
+
+    # Check for required chain_code
+    if ! grep -q "^chain_code:" "$config_file" || grep -q "^chain_code: *$" "$config_file" || grep -q '^chain_code: ""' "$config_file"; then
+        log_error "❌ chain_code not configured in config.yaml"
+        log_error "   Generate with: openssl rand -hex 32"
+        log_error "   All nodes MUST use the same chain_code value"
+        ((errors++))
+    else
+        # Validate chain_code is 64 hex characters (32 bytes)
+        local chain_code=$(grep "^chain_code:" "$config_file" | sed 's/chain_code: *//g' | sed 's/"//g' | sed "s/'//g" | sed 's/#.*//g' | sed 's/ *$//g')
+        if [[ ${#chain_code} -ne 64 ]]; then
+            log_error "❌ chain_code must be 64 hex characters (32 bytes), got ${#chain_code} characters"
+            log_error "   Generate with: openssl rand -hex 32"
+            ((errors++))
+        elif ! [[ "$chain_code" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            log_error "❌ chain_code must be hexadecimal (0-9, a-f), got invalid characters"
+            ((errors++))
+        else
+            log_info "✓ chain_code configured (${#chain_code} hex chars)"
+        fi
+    fi
     
     # Check for NATS configuration
     local nats_url=$(grep -A 10 "^nats:" "$config_file" | grep "url:" | sed 's/.*url: *//g' | sed 's/"//g' | sed "s/'//g" | sed 's/#.*//g' | sed 's/ *$//g')
