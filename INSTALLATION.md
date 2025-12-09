@@ -4,7 +4,7 @@
 
 Before starting, ensure you have:
 
-- **Go** 1.23+ installed: [Install Go here](https://go.dev/doc/install)
+- **Go** 1.25.0+ installed: [Install Go here](https://go.dev/doc/install)
 - **NATS** server running
 - **Consul** server running
 
@@ -41,14 +41,44 @@ go install ./cmd/mpcium-cli
 
 ---
 
-### Set everything up in one go
+## Setup Instructions
+
+**For detailed step-by-step instructions, see [SETUP.md](SETUP.md).**
+
+### Quick Reference
+
+#### 1. Generate peers.json
+
+First, generate the peers configuration file:
 
 ```bash
-chmod +x ./setup.sh
-./setup.sh
+mpcium-cli generate-peers -n 3
 ```
 
-Detailed steps can be found in [SETUP.md](SETUP.md).
+This creates a `peers.json` file with 3 peer nodes (node0, node1, node2). Adjust `-n` for a different number of nodes.
+
+#### 2. Set up Event Initiator
+
+```bash
+./setup_initiator.sh
+```
+
+This generates the event initiator identity used to authorize MPC operations.
+
+#### 3. Set up Node Identities
+
+```bash
+./setup_identities.sh
+```
+
+This script:
+
+- Creates node directories (node0, node1, node2)
+- Generates identities for each node
+- Distributes identity files across nodes
+- Configures chain_code for all nodes
+
+**Note:** This script requires `peers.json` to exist. If you see an error about missing peers.json, run step 1 first.
 
 ---
 
@@ -63,6 +93,7 @@ Detailed steps can be found in [SETUP.md](SETUP.md).
 The `chain_code` is a cryptographic parameter used for Hierarchical Deterministic (HD) wallet functionality. It enables mpcium to derive child keys from a parent key, allowing you to generate multiple wallet addresses from a single master key.
 
 **Important Requirements:**
+
 - **All nodes in your MPC cluster MUST use the identical chain_code value**
 - Must be a 32-byte value represented as a 64-character hexadecimal string
 - Should be generated once and stored securely
@@ -92,6 +123,7 @@ echo "Chain code configured: $CC"
 ```
 
 **Example config.yaml entry:**
+
 ```yaml
 chain_code: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 ```

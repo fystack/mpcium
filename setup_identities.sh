@@ -9,7 +9,17 @@ echo "🚀 Setting up Node Identities..."
 # Preconditions
 command -v mpcium-cli >/dev/null 2>&1 || { echo "❌ mpcium-cli not found in PATH"; exit 1; }
 [ -f config.yaml ] || { echo "❌ config.yaml not found in repo root"; exit 1; }
-[ -f peers.json ] || { echo "❌ peers.json not found in repo root"; exit 1; }
+
+# Check if peers.json exists, if not provide helpful instructions
+if [ ! -f peers.json ]; then
+    echo "❌ peers.json not found in repo root"
+    echo ""
+    echo "📝 Please generate peers.json first by running:"
+    echo "   mpcium-cli generate-peers -n $NUM_NODES"
+    echo ""
+    echo "This will create a peers.json file with $NUM_NODES peer nodes."
+    exit 1
+fi
 
 # Create node directories and copy config files
 echo "📁 Creating node directories..."
