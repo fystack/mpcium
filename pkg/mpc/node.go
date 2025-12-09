@@ -37,8 +37,8 @@ type Node struct {
 	keyinfoStore   keyinfo.Store
 	ecdsaPreParams []*keygen.LocalPreParams
 	identityStore  identity.Store
-
-	peerRegistry PeerRegistry
+	peerRegistry   PeerRegistry
+	ckd            *CKD
 }
 
 func NewNode(
@@ -50,6 +50,7 @@ func NewNode(
 	keyinfoStore keyinfo.Store,
 	peerRegistry PeerRegistry,
 	identityStore identity.Store,
+	ckd *CKD,
 ) *Node {
 	start := time.Now()
 	elapsed := time.Since(start)
@@ -64,6 +65,7 @@ func NewNode(
 		keyinfoStore:  keyinfoStore,
 		peerRegistry:  peerRegistry,
 		identityStore: identityStore,
+		ckd:           ckd,
 	}
 	node.ecdsaPreParams = node.generatePreParams()
 
@@ -146,6 +148,7 @@ func (p *Node) CreateSigningSession(
 	txID string,
 	networkInternalCode string,
 	resultQueue messaging.MessageQueue,
+	derivationPath []uint32,
 	idempotentKey string,
 ) (SigningSession, error) {
 	version := p.getVersion(sessionType, walletID)
@@ -193,7 +196,9 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -211,7 +216,9 @@ func (p *Node) CreateSigningSession(
 			p.keyinfoStore,
 			resultQueue,
 			p.identityStore,
+			derivationPath,
 			idempotentKey,
+			p.ckd,
 		), nil
 	}
 

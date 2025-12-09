@@ -47,6 +47,7 @@ type SignTxMessage struct {
 	TxID                 string                `json:"tx_id"`
 	Tx                   []byte                `json:"tx"`
 	Signature            []byte                `json:"signature"`
+	DerivationPath       []uint32              `json:"derivation_path"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
 
