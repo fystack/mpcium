@@ -6,7 +6,6 @@ event_initiator.key
 event_initiator.key.age
 coverage.out
 coverage.html
-node*/
 peers.json
 
 # E2E test artifacts
@@ -24,4 +23,3 @@ node2
 config.yaml
 .vscode
 .vagrant
-.chain_code

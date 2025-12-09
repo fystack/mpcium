@@ -28,11 +28,6 @@ echo "🔐 Generating random password for badger encryption..."
 BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 32)
 echo "✅ Generated password: $BADGER_PASSWORD"
 
-# Generate chain_code (32-byte hex value, 64 hex characters)
-echo "🔐 Generating chain_code (32-byte hex)..."
-CHAIN_CODE=$(openssl rand -hex 32)
-echo "✅ Generated chain_code: $CHAIN_CODE"
-
 # Generate config.test.yaml from template
 echo "📝 Generating config.test.yaml from template..."
 if [ ! -f "config.test.yaml.template" ]; then
@@ -48,7 +43,6 @@ ESCAPED_PASSWORD=$(printf '%s\n' "$BADGER_PASSWORD" | sed 's/[[\.*^$()+?{|]/\\&/
 
 sed -e "s/{{\.BadgerPassword}}/$ESCAPED_PASSWORD/g" \
     -e "s/{{\.EventInitiatorPubkey}}/$TEMP_PUBKEY/g" \
-    -e "s/{{\.CKDChainCode}}/$CHAIN_CODE/g" \
     config.test.yaml.template > config.test.yaml
 
 echo "✅ Generated config.test.yaml from template"
@@ -112,35 +106,20 @@ if [ -f "test_event_initiator.identity.json" ]; then
     PUBKEY=$(cat test_event_initiator.identity.json | jq -r '.public_key')
     echo "📝 Updating config files with event initiator public key and password..."
     
-    # Update all test node config files with the actual public key, password, and chain_code
+    # Update all test node config files with the actual public key and password
     for i in $(seq 0 $((NUM_NODES-1))); do
         # Update public key using sed with | as delimiter (safer than /)
         sed_inplace "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/test_node$i/config.yaml"
         # Update password using sed with | as delimiter and escaped password
         sed_inplace "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/test_node$i/config.yaml"
-        # Update chain_code
-        if grep -q '^\s*chain_code:' "$BASE_DIR/test_node$i/config.yaml"; then
-            sed_inplace "s|chain_code:.*|chain_code: \"$CHAIN_CODE\"|g" "$BASE_DIR/test_node$i/config.yaml"
-        else
-            printf '\nchain_code: "%s"\n' "$CHAIN_CODE" >> "$BASE_DIR/test_node$i/config.yaml"
-        fi
     done
     
     # Also update the main config.test.yaml
     sed_inplace "s|event_initiator_pubkey:.*|event_initiator_pubkey: $PUBKEY|g" "$BASE_DIR/config.test.yaml"
     sed_inplace "s|badger_password:.*|badger_password: $ESCAPED_PASSWORD|g" "$BASE_DIR/config.test.yaml"
-    # Update chain_code in config.test.yaml if it was replaced with placeholder
-    if grep -q '{{\.CKDChainCode}}' "$BASE_DIR/config.test.yaml" 2>/dev/null; then
-        sed_inplace "s|{{\.CKDChainCode}}|$CHAIN_CODE|g" "$BASE_DIR/config.test.yaml"
-    elif grep -q '^\s*chain_code:' "$BASE_DIR/config.test.yaml"; then
-        sed_inplace "s|chain_code:.*|chain_code: \"$CHAIN_CODE\"|g" "$BASE_DIR/config.test.yaml"
-    else
-        printf '\nchain_code: "%s"\n' "$CHAIN_CODE" >> "$BASE_DIR/config.test.yaml"
-    fi
     
     echo "✅ Event initiator public key updated: $PUBKEY"
     echo "✅ Badger password updated: $BADGER_PASSWORD"
-    echo "✅ Chain code updated: $CHAIN_CODE"
 else
     echo "❌ Failed to generate event initiator identity"
     exit 1

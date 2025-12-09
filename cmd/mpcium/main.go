@@ -203,12 +203,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	peerNodeIDs := GetPeerIDs(peers)
 	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
 
-	chainCodeHex := viper.GetString("chain_code")
-	ckd, err := mpc.NewCKDFromHex(chainCodeHex)
-	if err != nil {
-		logger.Fatal("Failed to create ckd store", err)
-	}
-
 	mpcNode := mpc.NewNode(
 		nodeID,
 		peerNodeIDs,
@@ -218,7 +212,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		keyinfoStore,
 		peerRegistry,
 		identityStore,
-		ckd,
 	)
 	defer mpcNode.Close()
 
@@ -449,14 +442,6 @@ func checkRequiredConfigValues(appConfig *config.AppConfig) {
 
 	if viper.GetString("event_initiator_pubkey") == "" {
 		logger.Fatal("Event initiator public key is required", nil)
-	}
-
-	chainCode := strings.TrimSpace(viper.GetString("chain_code"))
-	if chainCode == "" {
-		logger.Fatal("chain_code is required in config.yaml", nil)
-	}
-	if len(chainCode) != 64 { // 32 bytes hex
-		logger.Fatal("chain_code must be 32-byte hex (64 chars)", nil)
 	}
 }
 

@@ -35,8 +35,6 @@ type ecdsaSigningSession struct {
 	tx                  *big.Int
 	txID                string
 	networkInternalCode string
-	derivationPath      []uint32
-	ckd                 *CKD
 }
 
 func newECDSASigningSession(
@@ -54,11 +52,8 @@ func newECDSASigningSession(
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
-	derivationPath []uint32,
 	idempotentKey string,
-	ckd *CKD,
 ) *ecdsaSigningSession {
-
 	return &ecdsaSigningSession{
 		session: session{
 			walletID:           walletID,
@@ -92,10 +87,7 @@ func newECDSASigningSession(
 		endCh:               make(chan *common.SignatureData),
 		txID:                txID,
 		networkInternalCode: networkInternalCode,
-		derivationPath:      derivationPath,
-		ckd:                 ckd,
 	}
-
 }
 
 func (s *ecdsaSigningSession) Init(tx *big.Int) error {
@@ -136,22 +128,7 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
 
-	if len(s.derivationPath) > 0 {
-		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.ECDSAPub, s.derivationPath, tss.S256())
-		if errorDerivation != nil {
-			return errors.Wrap(errorDerivation, fmt.Sprintf("Failed to derive key, derivationPath: %v", s.derivationPath))
-		}
-		keyDerivationDelta := il
-		err = s.ckd.ECDSAUpdateSinglePublicKeyAndAdjustBigXj(keyDerivationDelta, &data, extendedChildPk.PublicKey, tss.S256())
-		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("Failed to update public key, derivationPath: %v", s.derivationPath))
-		}
-
-		s.party = signing.NewLocalPartyWithKDD(tx, params, data, keyDerivationDelta, s.outCh, s.endCh, 0)
-
-	} else {
-		s.party = signing.NewLocalParty(tx, params, data, s.outCh, s.endCh)
-	}
+	s.party = signing.NewLocalParty(tx, params, data, s.outCh, s.endCh)
 	s.data = &data
 	s.version = keyInfo.Version
 	s.tx = tx
