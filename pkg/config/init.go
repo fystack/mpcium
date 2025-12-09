@@ -17,7 +17,6 @@ type AppConfig struct {
 
 	Environment    string `mapstructure:"environment"`
 	BadgerPassword string `mapstructure:"badger_password"`
-	ChainCodeHex   string `mapstructure:"chain_code"`
 }
 
 // Implement masking serializer AppConfig

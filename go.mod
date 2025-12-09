@@ -11,9 +11,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.8
 	github.com/aws/aws-sdk-go-v2/service/kms v1.45.0
 	github.com/bnb-chain/tss-lib/v2 v2.0.2
-	github.com/btcsuite/btcd v0.24.2
-	github.com/btcsuite/btcd/btcec/v2 v2.3.2
-	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3
 	github.com/dgraph-io/badger/v4 v4.7.0
 	github.com/google/uuid v1.6.0
@@ -43,7 +40,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.34.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.1 // indirect
 	github.com/aws/smithy-go v1.23.0 // indirect
+	github.com/btcsuite/btcd v0.24.2 // indirect
+	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
+	github.com/btcsuite/btcutil v1.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
@@ -102,9 +102,8 @@ require (
 	golang.org/x/text v0.24.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
-
-replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3

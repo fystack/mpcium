@@ -1,7 +1,5 @@
 NUM_NODES=3
 
-make build
-
 echo "🚀 Start the services..."
 docker compose up -d
 sleep 3
