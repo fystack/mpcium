@@ -17,7 +17,14 @@ mpc_threshold: 1
 environment: production # Set to production for production environment
 backup_enabled: true
 event_initiator_pubkey: ""
-event_initiator_algorithm: ed25519 # ed25519 or p256 
+event_initiator_algorithm: ed25519 # ed25519 or p256
+
+# Chain Code for HD Wallet Child Key Derivation (REQUIRED)
+# This is used for hierarchical deterministic (HD) wallet functionality to derive child keys.
+# All nodes in the MPC cluster MUST use the same chain_code value.
+# Generate once with: openssl rand -hex 32
+# Store securely and use the same value across all nodes
+chain_code: "" 
 backup_period_seconds: 300 # Seconds
 backup_dir: backups
 max_concurrent_keygen: 2

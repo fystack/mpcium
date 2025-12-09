@@ -7,7 +7,7 @@ on:
     branches: ["*"]
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25.5"
 
 jobs:
   test:
@@ -49,13 +49,11 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Clean Go build cache
-        run: go clean -cache -modcache
-
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
           args: --timeout=5m
 
   # Security vulnerability scanning
@@ -101,8 +99,17 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Clean SARIF file (remove duplicate tags)
+        if: always()
+        run: |
+          # Remove duplicate tags from SARIF rules to fix validation errors
+          jq '(.runs[]?.tool.driver.rules[]?.properties.tags) |= unique' \
+            govulncheck-results.sarif > govulncheck-results-clean.sarif
+          mv govulncheck-results-clean.sarif govulncheck-results.sarif
+          echo "✅ Cleaned govulncheck SARIF file"
+
       - name: Upload govulncheck results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: govulncheck-results.sarif
@@ -116,8 +123,17 @@ jobs:
           gosec -fmt sarif -out gosec-results.sarif -exclude G304 ./...
         continue-on-error: true
 
+      - name: Clean gosec SARIF file (remove duplicate tags)
+        if: always()
+        run: |
+          # Remove duplicate tags from SARIF rules to fix validation errors
+          jq '(.runs[]?.tool.driver.rules[]?.properties.tags) |= unique' \
+            gosec-results.sarif > gosec-results-clean.sarif
+          mv gosec-results-clean.sarif gosec-results.sarif
+          echo "✅ Cleaned gosec SARIF file"
+
       - name: Upload gosec results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: gosec-results.sarif
@@ -151,7 +167,7 @@ jobs:
         run: go mod download
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: +security-and-quality
@@ -162,7 +178,7 @@ jobs:
           go build -v ./cmd/mpcium-cli
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{matrix.language}}"
 
@@ -237,7 +253,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Grype results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: grype-results.sarif

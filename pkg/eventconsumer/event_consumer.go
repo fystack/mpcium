@@ -402,6 +402,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	case types.KeyTypeEd25519:
@@ -411,6 +412,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.TxID,
 			msg.NetworkInternalCode,
 			ec.signingResultQueue,
+			msg.DerivationPath,
 			idempotentKey,
 		)
 	default:
@@ -726,7 +728,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 		wg.Wait()
 		logger.Info("Reshare session finished", "walletID", walletID, "pubKey", fmt.Sprintf("%x", successEvent.PubKey))
 
-		if newSession != nil {
+		if newSession != nil && len(successEvent.PubKey) > 0 {
 			successBytes, err := json.Marshal(successEvent)
 			if err != nil {
 				logger.Error("Failed to marshal reshare success event", err)
