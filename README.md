@@ -7,7 +7,7 @@
 <p><img title="fystack logo" src="https://avatars.githubusercontent.com/u/149689344?s=400&u=13bed818667eefccd78ca4b4207d088eeb4f6110&v=4" width="320" height="320"></p>
 <p><a href="https://t.me/+9AtC0z8sS79iZjFl">Join our Telegram community to discuss MPCIUM and Web3 cyber security!</a></p>
 
-[![Go Version](https://img.shields.io/badge/Go-v1.23+-00ADD8?logo=go&style=for-the-badge)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-v1.25+-00ADD8?logo=go&style=for-the-badge)](https://go.dev/)
 [![License](https://img.shields.io/github/license/fystack/mpcium?style=for-the-badge)](./LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fystack/mpcium?style=for-the-badge)](https://goreportcard.com/report/github.com/fystack/mpcium)
 [![Version](https://img.shields.io/github/v/release/fystack/mpcium?label=version&logo=semantic-release&style=for-the-badge)](https://github.com/fystack/mpcium/releases)
@@ -134,6 +134,7 @@ The application uses a YAML configuration file (`config.yaml`) with the followin
 - `max_concurrent_keygen`: Maximum concurrent key generation operations
 
 #### chain_code (REQUIRED)
+
 - **Required** for Hierarchical Deterministic (HD) wallet functionality to derive child keys
 - Must be a 32-byte hexadecimal string (64 characters)
 - **All nodes MUST use the exact same chain_code value**
