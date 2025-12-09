@@ -8,6 +8,13 @@ environment: development
 badger_password: "F))ysJp?E]ol&I;^"
 event_initiator_algorithm: "ed25519"  # or "ed25519", default: ed25519
 event_initiator_pubkey: "event_initiator_pubkey"
+
+# Chain Code for HD Wallet Child Key Derivation (REQUIRED)
+# This is used for hierarchical deterministic (HD) wallet functionality to derive child keys.
+# All nodes in the MPC cluster MUST use the same chain_code value.
+# Generate once with: openssl rand -hex 32
+# Example: chain_code: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+chain_code: ""
 db_path: "."  
 backup_enabled: true
 backup_period_seconds: 300 # 5 minutes
