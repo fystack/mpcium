@@ -47,6 +47,12 @@ func main() {
 	if bfProjectID == "" {
 		logger.Fatal("BLOCKFROST_PROJECT_ID env var is required", nil)
 	}
+// Fetch latest protocol params for fee calculation
+	params, err := fetchProtocolParams(context.Background(), bfProjectID)
+	if err != nil {
+		logger.Fatal("failed to fetch protocol params", err)
+	}
+	logger.Info("Fetched protocol params", "min_fee_a", params.MinFeeA, "min_fee_b", params.MinFeeB)
 
 	walletID := ""
 	toAddr := ""
@@ -109,7 +115,9 @@ func main() {
 	const minChangeLovelace = uint64(1_000_000) // 1 ADA safe-ish for ADA-only outputs
 
 	sendLovelace := uint64(amountAda * 1_000_000)
-	feeLovelace := uint64(200_000)
+	const estimatedTxSizeBytes = 512 // A safe-ish estimate for a simple tx (1 input, 2 outputs)
+	feeLovelace := uint64(params.MinFeeA*estimatedTxSizeBytes + params.MinFeeB)
+	logger.Info("Calculated fee", "fee_lovelace", feeLovelace, "estimated_tx_size_bytes", estimatedTxSizeBytes)
 	if utxo.Lovelace <= sendLovelace+feeLovelace {
 		logger.Fatal("not enough funds", nil)
 	}

@@ -193,3 +193,24 @@ func trimJSONQuotes(s string) string {
 	s = strings.TrimSpace(s)
 	return strings.Trim(s, "\"\n\r\t ")
 }
+
+type protocolParams struct {
+	MinFeeA int `json:"min_fee_a"`
+	MinFeeB int `json:"min_fee_b"`
+}
+
+func fetchProtocolParams(ctx context.Context, projectID string) (*protocolParams, error) {
+	url := "https://cardano-preprod.blockfrost.io/api/v0/epochs/latest/parameters"
+	b, status, err := blockfrostGET(ctx, projectID, url)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("protocol params HTTP %d: %s", status, prettyJSON(b))
+	}
+	var params protocolParams
+	if err := json.Unmarshal(b, &params); err != nil {
+		return nil, err
+	}
+	return &params, nil
+}
