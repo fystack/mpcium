@@ -30,7 +30,7 @@ import (
 
 func main() {
 	const environment = "development"
-	config.InitViperConfig("")
+	config.InitViperConfig("examples/cardano_poc/config.yaml")
 	logger.Init(environment, true)
 
 	algorithm := viper.GetString("event_initiator_algorithm")

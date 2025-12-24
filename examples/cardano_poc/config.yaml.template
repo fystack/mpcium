@@ -1,0 +1,10 @@
+# Blockfrost API configuration for the Cardano PoC
+blockfrost_project_id: "preprod..." # Replace with your actual preprod project ID
+
+# NATS Jetstream configuration
+nats:
+  url: "nats://localhost:4222"
+
+# Event initiator key algorithm (ed25519 or p256)
+event_initiator_algorithm: "ed25519"
+

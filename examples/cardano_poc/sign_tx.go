@@ -41,11 +41,11 @@ type walletRecord struct {
 
 func main() {
 	logger.Init("development", true)
-	config.InitViperConfig("")
+	config.InitViperConfig("examples/cardano_poc/config.yaml")
 
-	bfProjectID := os.Getenv("BLOCKFROST_PROJECT_ID")
-	if bfProjectID == "" {
-		logger.Fatal("BLOCKFROST_PROJECT_ID env var is required", nil)
+	bfProjectID := viper.GetString("blockfrost_project_id")
+	if bfProjectID == "" || bfProjectID == "preprod..." {
+		logger.Fatal("blockfrost_project_id is not set in examples/cardano_poc/config.yaml", nil)
 	}
 // Fetch latest protocol params for fee calculation
 	params, err := fetchProtocolParams(context.Background(), bfProjectID)
