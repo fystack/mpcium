@@ -27,7 +27,7 @@ import (
 
 // Usage:
 //   $env:BLOCKFROST_PROJECT_ID="..."
-//   go run ./examples/cardano_poc/sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada 1
+//   go run -tags=sign_tx ./examples/cardano_poc/sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada <number ex: 1>
 //
 // Notes:
 // - This file does NOT wait for UTxO. It expects you to fund the deposit address first.

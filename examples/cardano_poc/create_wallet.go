@@ -22,7 +22,7 @@ import (
 )
 
 // Usage:
-//   go run ./examples/cardano_poc/create_wallet.go
+//   go run -tags=create_wallet ./examples/cardano_poc
 // Output:
 //   Prints wallet_id and deposit address (enterprise) to stdout.
 //
