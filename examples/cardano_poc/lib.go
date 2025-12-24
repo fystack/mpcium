@@ -113,8 +113,12 @@ func buildTxBodyCBOR(txHashHex string, txIndex uint32, toAddr string, toLovelace
 		return nil, err
 	}
 	out1 := []any{toBytes, toLovelace}
-	out2 := []any{chgBytes, changeLovelace}
-	body := map[any]any{0: []any{[]any{txHash, txIndex}}, 1: []any{out1, out2}, 2: feeLovelace}
+	outs := []any{out1}
+	if changeLovelace > 0 {
+		out2 := []any{chgBytes, changeLovelace}
+		outs = append(outs, out2)
+	}
+	body := map[any]any{0: []any{[]any{txHash, txIndex}}, 1: outs, 2: feeLovelace}
 	return cbor.Marshal(body)
 }
 

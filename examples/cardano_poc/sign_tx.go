@@ -33,9 +33,10 @@ import (
 // - This file does NOT wait for UTxO. It expects you to fund the deposit address first.
 // - It reads pubkey from examples/cardano_poc/cardano_poc_wallet.json.
 
-type walletFile struct {
+type walletRecord struct {
 	WalletID       string `json:"wallet_id"`
 	EDDSAPubKeyHex string `json:"eddsa_pubkey_hex"`
+	DepositAddress string `json:"deposit_address"`
 }
 
 func main() {
@@ -49,7 +50,7 @@ func main() {
 
 	walletID := ""
 	toAddr := ""
-	amountAda := uint64(1)
+	amountAda := float64(1.0)
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--wallet-id":
@@ -60,24 +61,29 @@ func main() {
 			toAddr = os.Args[i]
 		case "--amount-ada":
 			i++
-			_, _ = fmt.Sscanf(os.Args[i], "%d", &amountAda)
+			_, _ = fmt.Sscanf(os.Args[i], "%f", &amountAda)
 		}
 	}
 	if walletID == "" || toAddr == "" {
 		logger.Fatal("usage: sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada 1", nil)
 	}
 
-	b, err := os.ReadFile("examples/cardano_poc/cardano_poc_wallet.json")
+	const walletFilePath = "examples/cardano_poc/cardano_poc_wallet.json"
+	b, err := os.ReadFile(walletFilePath)
 	if err != nil {
 		logger.Fatal("failed to read wallet file", err)
 	}
-	var wf walletFile
-	if err := json.Unmarshal(b, &wf); err != nil {
-		logger.Fatal("invalid wallet file json", err)
+
+	wallets := make(map[string]walletRecord)
+	if err := json.Unmarshal(b, &wallets); err != nil {
+		logger.Fatal("failed to unmarshal wallets file", err)
 	}
-	if wf.WalletID != walletID {
-		logger.Fatal(fmt.Sprintf("wallet mismatch: file has %s", wf.WalletID), nil)
+
+	wf, ok := wallets[walletID]
+	if !ok {
+		logger.Fatal(fmt.Sprintf("wallet with ID %s not found in %s", walletID, walletFilePath), nil)
 	}
+
 	pubKeyBytes, err := hex.DecodeString(wf.EDDSAPubKeyHex)
 	if err != nil {
 		logger.Fatal("invalid pubkey hex", err)
@@ -87,11 +93,8 @@ func main() {
 	if err != nil {
 		logger.Fatal("normalize pubkey failed", err)
 	}
-	ourAddr, err := deriveEnterpriseAddressPreprod(rawPub)
-	if err != nil {
-		logger.Fatal("derive address failed", err)
-	}
-	logger.Info("Deposit address (must be funded before signing)", "address", ourAddr)
+	ourAddr := wf.DepositAddress // Use address from file
+	logger.Info("Using wallet", "wallet_id", wf.WalletID, "address", ourAddr)
 
 	// Fetch first UTxO once (NO WAIT/RETRY)
 	utxo, err := fetchFirstUtxoOnce(context.Background(), bfProjectID, ourAddr)
@@ -100,12 +103,34 @@ func main() {
 	}
 	logger.Info("Using UTxO", "tx_hash", utxo.TxHash, "tx_index", utxo.TxIndex, "lovelace", utxo.Lovelace)
 
-	sendLovelace := amountAda * 1_000_000
+	// NOTE: Cardano requires each output to be >= min-UTxO (varies by era/protocol).
+	// If the computed change would be below a safe threshold, we add it to fee and omit the change output.
+	// This avoids "BabbageOutputTooSmallUTxO".
+	const minChangeLovelace = uint64(1_000_000) // 1 ADA safe-ish for ADA-only outputs
+
+	sendLovelace := uint64(amountAda * 1_000_000)
 	feeLovelace := uint64(200_000)
 	if utxo.Lovelace <= sendLovelace+feeLovelace {
 		logger.Fatal("not enough funds", nil)
 	}
 	change := utxo.Lovelace - sendLovelace - feeLovelace
+	if change > 0 && change < minChangeLovelace {
+		// This is the "smart wallet" logic.
+		// Instead of burning small change into fees, we adjust the send amount
+		// to ensure the change output is valid.
+		newSendLovelace := utxo.Lovelace - minChangeLovelace - feeLovelace
+		if newSendLovelace <= 0 {
+			logger.Fatal("Not enough funds to create a valid change output after sending", nil)
+		}
+		logger.Info(
+			"Send amount adjusted to ensure valid change output",
+			"original_send", sendLovelace,
+			"new_send", newSendLovelace,
+			"change_set_to", minChangeLovelace,
+		)
+		sendLovelace = newSendLovelace
+		change = minChangeLovelace // Recalculate for consistency, should be minChangeLovelace
+	}
 
 	txBodyCbor, err := buildTxBodyCBOR(utxo.TxHash, utxo.TxIndex, toAddr, sendLovelace, ourAddr, change, feeLovelace)
 	if err != nil {

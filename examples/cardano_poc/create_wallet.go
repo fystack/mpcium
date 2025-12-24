@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -86,10 +87,37 @@ func main() {
 			logger.Fatal("derive address failed", err)
 		}
 
-		// Save to a local file next to this PoC.
-		// This keeps it simple and avoids forcing a "reuse" mode.
-		rec := fmt.Sprintf("{\n  \"wallet_id\": \"%s\",\n  \"eddsa_pubkey_hex\": \"%s\"\n}\n", walletID, hex.EncodeToString(keygen.EDDSAPubKey))
-		if werr := os.WriteFile("examples/cardano_poc/cardano_poc_wallet.json", []byte(rec), 0o644); werr != nil {
+		// Read existing wallets, add the new one, and write back.
+		const walletFilePath = "examples/cardano_poc/cardano_poc_wallet.json"
+		type walletRecord struct {
+			WalletID       string `json:"wallet_id"`
+			EDDSAPubKeyHex string `json:"eddsa_pubkey_hex"`
+			DepositAddress string `json:"deposit_address"`
+		}
+
+		wallets := make(map[string]walletRecord)
+		b, err := os.ReadFile(walletFilePath)
+		if err == nil { // if file exists and is readable
+			if jerr := json.Unmarshal(b, &wallets); jerr != nil {
+				logger.Fatal("failed to unmarshal existing wallet file", jerr)
+			}
+		} else if !os.IsNotExist(err) { // if error is something other than "not found"
+			logger.Fatal("failed to read wallet file", err)
+		}
+
+		// Add new wallet
+		wallets[walletID] = walletRecord{
+			WalletID:       walletID,
+			EDDSAPubKeyHex: hex.EncodeToString(keygen.EDDSAPubKey),
+			DepositAddress: ourAddr,
+		}
+
+		// Write back to file
+		recBytes, err := json.MarshalIndent(wallets, "", "  ")
+		if err != nil {
+			logger.Fatal("failed to marshal wallet file json", err)
+		}
+		if werr := os.WriteFile(walletFilePath, recBytes, 0o644); werr != nil {
 			logger.Fatal("failed to write wallet file", werr)
 		}
 
