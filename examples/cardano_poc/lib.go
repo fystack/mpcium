@@ -10,12 +10,48 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cosmos/btcutil/bech32"
 	"github.com/fxamacker/cbor/v2"
+	"github.com/spf13/viper"
 	"golang.org/x/crypto/blake2b"
 )
 
+type bfConfig struct {
+	ProjectID    string
+	BaseURL      string // e.g. https://cardano-preprod.blockfrost.io/api/v0
+	Network      string // preprod|preview
+	TTLSeconds   uint64
+	MinChangeLov uint64
+}
+
+func loadBFConfig() bfConfig {
+	cfg := bfConfig{}
+	cfg.ProjectID = viper.GetString("blockfrost_project_id")
+	cfg.Network = viper.GetString("network")
+	if cfg.Network == "" {
+		cfg.Network = "preprod"
+	}
+	cfg.BaseURL = viper.GetString("blockfrost_base_url")
+	if cfg.BaseURL == "" {
+		switch strings.ToLower(cfg.Network) {
+		case "preview":
+			cfg.BaseURL = "https://cardano-preview.blockfrost.io/api/v0"
+		default:
+			cfg.BaseURL = "https://cardano-preprod.blockfrost.io/api/v0"
+		}
+	}
+	cfg.TTLSeconds = uint64(viper.GetInt("ttl_seconds"))
+	if cfg.TTLSeconds == 0 {
+		cfg.TTLSeconds = 3600
+	}
+	cfg.MinChangeLov = uint64(viper.GetInt("min_change_lovelace"))
+	if cfg.MinChangeLov == 0 {
+		cfg.MinChangeLov = 1_000_000
+	}
+	return cfg
+}
 // --- shared helpers (used by create_wallet.go and sign_tx.go) ---
 
 type bfUtxo struct {
@@ -28,9 +64,10 @@ type bfUtxo struct {
 }
 
 type simpleUtxo struct {
-	TxHash   string
-	TxIndex  uint32
-	Lovelace uint64
+	TxHash      string
+	TxIndex     uint32
+	Lovelace    uint64
+	LovelaceOnly bool // PoC flag: true if UTxO contains ONLY lovelace
 }
 
 func normalizeEd25519PubKey(pk []byte) ([]byte, error) {
@@ -96,14 +133,12 @@ func decodeCardanoAddressBytes(addrStr string) ([]byte, error) {
 	return data8, nil
 }
 
-func buildTxBodyCBOR(txHashHex string, txIndex uint32, toAddr string, toLovelace uint64, changeAddr string, changeLovelace uint64, feeLovelace uint64) ([]byte, error) {
-	txHash, err := hex.DecodeString(txHashHex)
-	if err != nil {
-		return nil, err
-	}
-	if len(txHash) != 32 {
-		return nil, fmt.Errorf("tx hash must be 32 bytes, got %d", len(txHash))
-	}
+type txInput struct {
+	TxHashHex string
+	TxIndex   uint32
+}
+
+func buildTxBodyCBOR(inputs []txInput, toAddr string, toLovelace uint64, changeAddr string, changeLovelace uint64, feeLovelace uint64, ttlSlot uint64) ([]byte, error) {
 	toBytes, err := decodeCardanoAddressBytes(toAddr)
 	if err != nil {
 		return nil, err
@@ -112,14 +147,72 @@ func buildTxBodyCBOR(txHashHex string, txIndex uint32, toAddr string, toLovelace
 	if err != nil {
 		return nil, err
 	}
+
+	cborInputs := make([]any, 0, len(inputs))
+	for _, in := range inputs {
+		txHash, err := hex.DecodeString(in.TxHashHex)
+		if err != nil {
+			return nil, err
+		}
+		if len(txHash) != 32 {
+			return nil, fmt.Errorf("tx hash must be 32 bytes, got %d", len(txHash))
+		}
+		cborInputs = append(cborInputs, []any{txHash, in.TxIndex})
+	}
+
 	out1 := []any{toBytes, toLovelace}
 	outs := []any{out1}
 	if changeLovelace > 0 {
 		out2 := []any{chgBytes, changeLovelace}
 		outs = append(outs, out2)
 	}
-	body := map[any]any{0: []any{[]any{txHash, txIndex}}, 1: outs, 2: feeLovelace}
+	body := map[any]any{0: cborInputs, 1: outs, 2: feeLovelace}
+	if ttlSlot > 0 {
+		// 3 = ttl/invalid_hereafter
+		body[uint64(3)] = ttlSlot
+	}
 	return cbor.Marshal(body)
+}
+func blockfrostGETWithRetry(ctx context.Context, projectID, url string) ([]byte, int, error) {
+	// Simple PoC retry for 429/5xx
+	var lastErr error
+	for i := 0; i < 4; i++ {
+		b, status, err := blockfrostGET(ctx, projectID, url)
+		if err == nil && status >= 200 && status < 300 {
+			return b, status, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("HTTP %d: %s", status, prettyJSON(b))
+			// no retry for 4xx except 429
+			if status >= 400 && status < 500 && status != 429 {
+				return b, status, lastErr
+			}
+		}
+		time.Sleep(time.Duration(250*(i+1)) * time.Millisecond)
+	}
+	return nil, 0, lastErr
+}
+
+func blockfrostPOSTCBORWithRetry(ctx context.Context, projectID, url string, cborBody []byte) ([]byte, int, error) {
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		b, status, err := blockfrostPOSTCBOR(ctx, projectID, url, cborBody)
+		if err == nil && status >= 200 && status < 300 {
+			return b, status, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("HTTP %d: %s", status, prettyJSON(b))
+			if status >= 400 && status < 500 && status != 429 {
+				return b, status, lastErr
+			}
+		}
+		time.Sleep(time.Duration(300*(i+1)) * time.Millisecond)
+	}
+	return nil, 0, lastErr
 }
 
 func buildSignedTxCBOR(txBodyCbor []byte, pubKey []byte, sig []byte) ([]byte, error) {
@@ -195,22 +288,46 @@ func trimJSONQuotes(s string) string {
 }
 
 type protocolParams struct {
-	MinFeeA int `json:"min_fee_a"`
-	MinFeeB int `json:"min_fee_b"`
+	MinFeeA    int `json:"min_fee_a"`
+	MinFeeB    int `json:"min_fee_b"`
+	Epoch      int `json:"epoch"`
+	Slot       int `json:"slot"`
 }
 
-func fetchProtocolParams(ctx context.Context, projectID string) (*protocolParams, error) {
-	url := "https://cardano-preprod.blockfrost.io/api/v0/epochs/latest/parameters"
-	b, status, err := blockfrostGET(ctx, projectID, url)
+func fetchProtocolParams(ctx context.Context, cfg bfConfig) (*protocolParams, error) {
+	url := cfg.BaseURL + "/epochs/latest/parameters"
+	b, status, err := blockfrostGET(ctx, cfg.ProjectID, url)
 	if err != nil {
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("protocol params HTTP %d: %s", status, prettyJSON(b))
 	}
+
 	var params protocolParams
 	if err := json.Unmarshal(b, &params); err != nil {
 		return nil, err
 	}
 	return &params, nil
+}
+// fetchCurrentSlot returns the latest known slot number from Blockfrost.
+func fetchCurrentSlot(ctx context.Context, cfg bfConfig) (uint64, error) {
+	url := cfg.BaseURL + "/blocks/latest"
+	b, status, err := blockfrostGET(ctx, cfg.ProjectID, url)
+	if err != nil {
+		return 0, err
+	}
+	if status < 200 || status >= 300 {
+		return 0, fmt.Errorf("blocks/latest HTTP %d: %s", status, prettyJSON(b))
+	}
+	var resp struct {
+		Slot uint64 `json:"slot"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return 0, err
+	}
+	if resp.Slot == 0 {
+		return 0, errors.New("blockfrost returned slot=0")
+	}
+	return resp.Slot, nil
 }

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,12 +26,11 @@ import (
 )
 
 // Usage:
-//   $env:BLOCKFROST_PROJECT_ID="..."
-//   go run -tags=sign_tx ./examples/cardano_poc/sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada <number ex: 1>
+//   go run -tags=sign_tx ./examples/cardano_poc --wallet-id <uuid> --to <addr_test...> --amount-ada <number ex: 1>
 //
 // Notes:
 // - This file does NOT wait for UTxO. It expects you to fund the deposit address first.
-// - It reads pubkey from examples/cardano_poc/cardano_poc_wallet.json.
+// - It reads pubkey/address from examples/cardano_poc/cardano_poc_wallet.json.
 
 type walletRecord struct {
 	WalletID       string `json:"wallet_id"`
@@ -39,121 +38,37 @@ type walletRecord struct {
 	DepositAddress string `json:"deposit_address"`
 }
 
+
+
 func main() {
 	logger.Init("development", true)
 	config.InitViperConfig("examples/cardano_poc/config.yaml")
 
-	bfProjectID := viper.GetString("blockfrost_project_id")
-	if bfProjectID == "" || bfProjectID == "preprod..." {
+	bfCfg := loadBFConfig()
+	if bfCfg.ProjectID == "" {
 		logger.Fatal("blockfrost_project_id is not set in examples/cardano_poc/config.yaml", nil)
 	}
-// Fetch latest protocol params for fee calculation
-	params, err := fetchProtocolParams(context.Background(), bfProjectID)
+
+	params, err := fetchProtocolParams(context.Background(), bfCfg)
 	if err != nil {
 		logger.Fatal("failed to fetch protocol params", err)
 	}
-	logger.Info("Fetched protocol params", "min_fee_a", params.MinFeeA, "min_fee_b", params.MinFeeB)
+	logger.Info("Fetched protocol params", "min_fee_a", params.MinFeeA, "min_fee_b", params.MinFeeB, "network", bfCfg.Network, "base_url", bfCfg.BaseURL)
 
-	walletID := ""
-	toAddr := ""
-	amountAda := float64(1.0)
-	for i := 1; i < len(os.Args); i++ {
-		switch os.Args[i] {
-		case "--wallet-id":
-			i++
-			walletID = os.Args[i]
-		case "--to":
-			i++
-			toAddr = os.Args[i]
-		case "--amount-ada":
-			i++
-			_, _ = fmt.Sscanf(os.Args[i], "%f", &amountAda)
-		}
-	}
-	if walletID == "" || toAddr == "" {
-		logger.Fatal("usage: sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada 1", nil)
-	}
-
-	const walletFilePath = "examples/cardano_poc/cardano_poc_wallet.json"
-	b, err := os.ReadFile(walletFilePath)
-	if err != nil {
-		logger.Fatal("failed to read wallet file", err)
-	}
-
-	wallets := make(map[string]walletRecord)
-	if err := json.Unmarshal(b, &wallets); err != nil {
-		logger.Fatal("failed to unmarshal wallets file", err)
-	}
-
-	wf, ok := wallets[walletID]
-	if !ok {
-		logger.Fatal(fmt.Sprintf("wallet with ID %s not found in %s", walletID, walletFilePath), nil)
-	}
-
-	pubKeyBytes, err := hex.DecodeString(wf.EDDSAPubKeyHex)
-	if err != nil {
-		logger.Fatal("invalid pubkey hex", err)
-	}
-
-	rawPub, err := normalizeEd25519PubKey(pubKeyBytes)
-	if err != nil {
-		logger.Fatal("normalize pubkey failed", err)
-	}
-	ourAddr := wf.DepositAddress // Use address from file
+	walletID, toAddr, amountAda := parseArgsOrFatal()
+	wf, rawPub, ourAddr := loadWalletOrFatal(walletID)
 	logger.Info("Using wallet", "wallet_id", wf.WalletID, "address", ourAddr)
 
-	// Fetch first UTxO once (NO WAIT/RETRY)
-	utxo, err := fetchFirstUtxoOnce(context.Background(), bfProjectID, ourAddr)
-	if err != nil {
-		logger.Fatal("fetch utxo failed", err)
-	}
-	logger.Info("Using UTxO", "tx_hash", utxo.TxHash, "tx_index", utxo.TxIndex, "lovelace", utxo.Lovelace)
-
-	// NOTE: Cardano requires each output to be >= min-UTxO (varies by era/protocol).
-	// If the computed change would be below a safe threshold, we add it to fee and omit the change output.
-	// This avoids "BabbageOutputTooSmallUTxO".
-	const minChangeLovelace = uint64(1_000_000) // 1 ADA safe-ish for ADA-only outputs
-
+	minChangeLovelace := bfCfg.MinChangeLov
 	sendLovelace := uint64(amountAda * 1_000_000)
-	const estimatedTxSizeBytes = 512 // A safe-ish estimate for a simple tx (1 input, 2 outputs)
-	feeLovelace := uint64(params.MinFeeA*estimatedTxSizeBytes + params.MinFeeB)
-	logger.Info("Calculated fee", "fee_lovelace", feeLovelace, "estimated_tx_size_bytes", estimatedTxSizeBytes)
-	if utxo.Lovelace <= sendLovelace+feeLovelace {
-		logger.Fatal("not enough funds", nil)
+	// Fail fast: ADA-only outputs must be >= min-UTxO. We use min_change_lovelace as PoC guard.
+	if sendLovelace < minChangeLovelace {
+		logger.Fatal(fmt.Sprintf("amount too small: send_lovelace=%d < min_change_lovelace=%d (increase --amount-ada)", sendLovelace, minChangeLovelace), nil)
 	}
-	change := utxo.Lovelace - sendLovelace - feeLovelace
-	if change > 0 && change < minChangeLovelace {
-		// This is the "smart wallet" logic.
-		// Instead of burning small change into fees, we adjust the send amount
-		// to ensure the change output is valid.
-		newSendLovelace := utxo.Lovelace - minChangeLovelace - feeLovelace
-		if newSendLovelace <= 0 {
-			logger.Fatal("Not enough funds to create a valid change output after sending", nil)
-		}
-		logger.Info(
-			"Send amount adjusted to ensure valid change output",
-			"original_send", sendLovelace,
-			"new_send", newSendLovelace,
-			"change_set_to", minChangeLovelace,
-		)
-		sendLovelace = newSendLovelace
-		change = minChangeLovelace // Recalculate for consistency, should be minChangeLovelace
-	}
-
-	txBodyCbor, err := buildTxBodyCBOR(utxo.TxHash, utxo.TxIndex, toAddr, sendLovelace, ourAddr, change, feeLovelace)
-	if err != nil {
-		logger.Fatal("buildTxBodyCBOR failed", err)
-	}
-	h := blake2b.Sum256(txBodyCbor)
-	txHash := h[:]
-	logger.Info("Prepared tx hash", "tx_hash_hex", hex.EncodeToString(txHash))
 
 	algorithm := viper.GetString("event_initiator_algorithm")
 	if algorithm == "" {
 		algorithm = string(types.EventInitiatorKeyTypeEd25519)
-	}
-	if !slices.Contains([]string{string(types.EventInitiatorKeyTypeEd25519), string(types.EventInitiatorKeyTypeP256)}, algorithm) {
-		logger.Fatal(fmt.Sprintf("invalid algorithm: %s", algorithm), nil)
 	}
 
 	natsURL := viper.GetString("nats.url")
@@ -171,15 +86,175 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{NatsConn: natsConn, Signer: localSigner})
 
 	signResultCh := make(chan event.SigningResultEvent, 1)
-	err = mpcClient.OnSignResult(func(evt event.SigningResultEvent) {
+	if err := mpcClient.OnSignResult(func(evt event.SigningResultEvent) {
 		if evt.WalletID == walletID {
 			signResultCh <- evt
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		logger.Fatal("OnSignResult subscribe failed", err)
 	}
 
+	submitURL := bfCfg.BaseURL + "/tx/submit"
+	maxAttempts := 2
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		submittedHash, retryableErr, err := buildSignSubmitOnce(context.Background(), bfCfg, params, mpcClient, signResultCh, submitURL, walletID, rawPub, ourAddr, toAddr, sendLovelace, minChangeLovelace)
+		if err == nil {
+			fmt.Println(submittedHash)
+			fmt.Println("explorer:", "https://preprod.cardanoscan.io/transaction/"+submittedHash)
+			return
+		}
+		logger.Info("Submit attempt failed", "attempt", attempt, "retryable", retryableErr, "error", err.Error())
+		if !retryableErr || attempt == maxAttempts {
+			logger.Fatal("submit failed", err)
+		}
+		logger.Info("Rebuilding tx after failure", "next_attempt", attempt+1)
+	}
+}
+
+func parseArgsOrFatal() (walletID string, toAddr string, amountAda float64) {
+	amountAda = 1.0
+	for i := 1; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--wallet-id":
+			i++
+			walletID = os.Args[i]
+		case "--to":
+			i++
+			toAddr = os.Args[i]
+		case "--amount-ada":
+			i++
+			_, _ = fmt.Sscanf(os.Args[i], "%f", &amountAda)
+		}
+	}
+	if walletID == "" || toAddr == "" {
+		logger.Fatal("usage: sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada 1", nil)
+	}
+	return
+}
+
+func loadWalletOrFatal(walletID string) (walletRecord, []byte, string) {
+	const walletFilePath = "examples/cardano_poc/cardano_poc_wallet.json"
+	b, err := os.ReadFile(walletFilePath)
+	if err != nil {
+		logger.Fatal("failed to read wallet file", err)
+	}
+	wallets := make(map[string]walletRecord)
+	if err := json.Unmarshal(b, &wallets); err != nil {
+		logger.Fatal("failed to unmarshal wallets file", err)
+	}
+	wf, ok := wallets[walletID]
+	if !ok {
+		logger.Fatal(fmt.Sprintf("wallet with ID %s not found in %s", walletID, walletFilePath), nil)
+	}
+	pubKeyBytes, err := hex.DecodeString(wf.EDDSAPubKeyHex)
+	if err != nil {
+		logger.Fatal("invalid pubkey hex", err)
+	}
+	rawPub, err := normalizeEd25519PubKey(pubKeyBytes)
+	if err != nil {
+		logger.Fatal("normalize pubkey failed", err)
+	}
+	return wf, rawPub, wf.DepositAddress
+}
+
+func buildSignSubmitOnce(
+	ctx context.Context,
+	bfCfg bfConfig,
+	params *protocolParams,
+	mpcClient client.MPCClient,
+	signResultCh <-chan event.SigningResultEvent,
+	submitURL string,
+	walletID string,
+	rawPub []byte,
+	ourAddr string,
+	toAddr string,
+	sendLovelace uint64,
+	minChangeLovelace uint64,
+) (submittedHash string, retryable bool, err error) {
+	// 1) Fetch UTxOs
+	utxos, err := fetchAllUtxosOnce(ctx, bfCfg, ourAddr)
+	if err != nil {
+		return "", true, err
+	}
+	filtered := make([]simpleUtxo, 0, len(utxos))
+	for _, u := range utxos {
+		if u.LovelaceOnly {
+			filtered = append(filtered, u)
+		}
+	}
+	if len(filtered) == 0 {
+		return "", false, errors.New("no ADA-only UTxO at address")
+	}
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].Lovelace > filtered[j].Lovelace })
+
+	// 2) TTL
+	currentSlot, err := fetchCurrentSlot(ctx, bfCfg)
+	if err != nil {
+		return "", true, err
+	}
+	ttlSlot := currentSlot + bfCfg.TTLSeconds
+	logger.Info("Using TTL", "current_slot", currentSlot, "ttl_slot", ttlSlot)
+
+	// 3) Coin selection (simple)
+	const feeUpperBound uint64 = 600_000
+	target := sendLovelace + feeUpperBound + minChangeLovelace
+	var total uint64
+	inputs := make([]txInput, 0, len(filtered))
+	for _, u := range filtered {
+		total += u.Lovelace
+		inputs = append(inputs, txInput{TxHashHex: u.TxHash, TxIndex: u.TxIndex})
+		if total >= target {
+			break
+		}
+	}
+	logger.Info("Selected UTxOs", "selected", len(inputs), "total_lovelace", total, "target_lovelace", target)
+	if total < sendLovelace+minChangeLovelace {
+		return "", false, errors.New("not enough funds")
+	}
+
+	// 4) Fee converge with dummy witness
+	dummySig := make([]byte, 64)
+	var feeLovelace uint64
+	var change uint64
+	var txBodyCbor []byte
+	for iter := 0; iter < 3; iter++ {
+		if total <= sendLovelace+feeLovelace {
+			return "", false, errors.New("not enough funds after fee")
+		}
+		change = total - sendLovelace - feeLovelace
+		if change > 0 && change < minChangeLovelace {
+			// omit change output by folding into fee
+			feeLovelace += change
+			change = 0
+		}
+		body, err := buildTxBodyCBOR(inputs, toAddr, sendLovelace, ourAddr, change, feeLovelace, ttlSlot)
+		if err != nil {
+			return "", false, err
+		}
+		dummySigned, err := buildSignedTxCBOR(body, rawPub, dummySig)
+		if err != nil {
+			return "", false, err
+		}
+		size := len(dummySigned)
+		newFee := uint64(params.MinFeeA*size + params.MinFeeB)
+		logger.Info("Calculated fee", "iter", iter, "fee_lovelace", newFee, "signed_tx_size_bytes", size)
+		if newFee == feeLovelace {
+			txBodyCbor = body
+			break
+		}
+		feeLovelace = newFee
+		txBodyCbor = body
+	}
+	if txBodyCbor == nil {
+		return "", false, errors.New("failed to build tx body")
+	}
+
+	// 5) Tx hash
+	h := blake2b.Sum256(txBodyCbor)
+	txHash := h[:]
+	logger.Info("Prepared tx hash", "tx_hash_hex", hex.EncodeToString(txHash))
+
+	// 6) Sign
 	txID := uuid.New().String()
 	if err := mpcClient.SignTransaction(&types.SignTxMessage{
 		KeyType:             types.KeyTypeEd25519,
@@ -188,44 +263,45 @@ func main() {
 		TxID:                txID,
 		Tx:                  txHash,
 	}); err != nil {
-		logger.Fatal("SignTransaction failed", err)
+		return "", true, err
 	}
 	logger.Info("SignTransaction sent", "txID", txID)
 
+	var res event.SigningResultEvent
 	select {
-	case res := <-signResultCh:
+	case res = <-signResultCh:
 		if res.ResultType == event.ResultTypeError {
-			logger.Fatal("Signing failed: "+res.ErrorReason, nil)
+			return "", false, errors.New("signing failed: "+res.ErrorReason)
 		}
-
-		signedTxCbor, err := buildSignedTxCBOR(txBodyCbor, rawPub, res.Signature)
-		if err != nil {
-			logger.Fatal("buildSignedTxCBOR failed", err)
-		}
-
-		submitURL := "https://cardano-preprod.blockfrost.io/api/v0/tx/submit"
-		respBody, status, err := blockfrostPOSTCBOR(context.Background(), bfProjectID, submitURL, signedTxCbor)
-		if err != nil {
-			logger.Fatal("submit failed", err)
-		}
-		if status < 200 || status >= 300 {
-			logger.Fatal(fmt.Sprintf("submit HTTP %d: %s", status, prettyJSON(respBody)), nil)
-		}
-		var submittedHash string
-		_ = json.Unmarshal(respBody, &submittedHash)
-		if submittedHash == "" {
-			submittedHash = strings.TrimSpace(string(respBody))
-		}
-		fmt.Println(submittedHash)
-		logger.Info("Submitted tx", "tx_hash", submittedHash)
 	case <-time.After(60 * time.Second):
-		logger.Fatal("Timeout waiting for signing result", errors.New("timeout"))
+		return "", true, errors.New("timeout waiting for signing result")
 	}
+
+	// 7) Submit
+	signedTxCbor, err := buildSignedTxCBOR(txBodyCbor, rawPub, res.Signature)
+	if err != nil {
+		return "", false, err
+	}
+	respBody, status, err := blockfrostPOSTCBORWithRetry(ctx, bfCfg.ProjectID, submitURL, signedTxCbor)
+	if err != nil {
+		return "", true, err
+	}
+	if status < 200 || status >= 300 {
+		msg := prettyJSON(respBody)
+		retryable = strings.Contains(msg, "BadInputsUTxO") || strings.Contains(msg, "InvalidWitnessesUTXOW") || strings.Contains(msg, "ValueNotConservedUTxO") || strings.Contains(msg, "OutsideValidityIntervalUTxO")
+		return "", retryable, fmt.Errorf("submit HTTP %d: %s", status, msg)
+	}
+	_ = json.Unmarshal(respBody, &submittedHash)
+	if submittedHash == "" {
+		submittedHash = strings.TrimSpace(string(respBody))
+	}
+	return submittedHash, false, nil
 }
 
-func fetchFirstUtxoOnce(ctx context.Context, projectID, addr string) (*simpleUtxo, error) {
-	url := "https://cardano-preprod.blockfrost.io/api/v0/addresses/" + addr + "/utxos"
-	b, status, err := blockfrostGET(ctx, projectID, url)
+
+func fetchAllUtxosOnce(ctx context.Context, cfg bfConfig, addr string) ([]simpleUtxo, error) {
+	url := cfg.BaseURL + "/addresses/" + addr + "/utxos"
+	b, status, err := blockfrostGETWithRetry(ctx, cfg.ProjectID, url)
 	if err != nil {
 		return nil, err
 	}
@@ -235,16 +311,22 @@ func fetchFirstUtxoOnce(ctx context.Context, projectID, addr string) (*simpleUtx
 	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("utxo HTTP %d: %s", status, prettyJSON(b))
 	}
-	var utxos []bfUtxo
-	if err := json.Unmarshal(b, &utxos); err != nil {
+	var raw []bfUtxo
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, err
 	}
-	if len(utxos) == 0 {
+	if len(raw) == 0 {
 		return nil, errors.New("no UTxO at address - fund it first")
 	}
-	lovelace, err := findLovelace(utxos[0].Amount)
-	if err != nil {
-		return nil, err
+
+	out := make([]simpleUtxo, 0, len(raw))
+	for _, u := range raw {
+		lovelace, err := findLovelace(u.Amount)
+		if err != nil {
+			return nil, err
+		}
+		lovelaceOnly := len(u.Amount) == 1
+		out = append(out, simpleUtxo{TxHash: u.TxHash, TxIndex: uint32(u.TxIndex), Lovelace: lovelace, LovelaceOnly: lovelaceOnly})
 	}
-	return &simpleUtxo{TxHash: utxos[0].TxHash, TxIndex: uint32(utxos[0].TxIndex), Lovelace: lovelace}, nil
+	return out, nil
 }
