@@ -1,0 +1,22 @@
+# Blockfrost API configuration for the Cardano PoC
+blockfrost_project_id: "preprod....." # Replace with your actual preprod project ID
+# Network / endpoints
+# Supported: preprod (default), preview
+network: "preprod"
+
+# Override Blockfrost base URL if needed
+# blockfrost_base_url: "https://cardano-preprod.blockfrost.io/api/v0"
+
+# TTL in seconds (slot length is 1s on these testnets)
+ttl_seconds: 3600
+
+# PoC safety threshold for change output (ADA-only).
+min_change_lovelace: 1000000
+
+# NATS Jetstream configuration
+nats:
+  url: "nats://localhost:4222"
+
+# Event initiator key algorithm (ed25519 or p256)
+event_initiator_algorithm: "ed25519"
+
