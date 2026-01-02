@@ -29,8 +29,9 @@ import (
 //   go run -tags=sign_tx ./examples/cardano_poc --wallet-id <uuid> --to <addr_test...> --amount-ada <number ex: 1>
 //
 // Notes:
-// - This file does NOT wait for UTxO. It expects you to fund the deposit address first.
+// - This binary does NOT wait for UTxO confirmation. Fund the deposit address first.
 // - It reads pubkey/address from examples/cardano_poc/cardano_poc_wallet.json.
+// - For sending native tokens, use sign_tx_token.
 
 type walletRecord struct {
 	WalletID       string `json:"wallet_id"`
@@ -99,7 +100,9 @@ func main() {
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		submittedHash, retryableErr, err := buildSignSubmitOnce(context.Background(), bfCfg, params, mpcClient, signResultCh, submitURL, walletID, rawPub, ourAddr, toAddr, sendLovelace, minChangeLovelace)
 		if err != nil && strings.Contains(err.Error(), "no ADA-only UTxO") {
-			// Fallback: wallet may only have multi-asset UTxOs; preserve tokens in change.
+			// Fallback: the wallet may only have multi-asset UTxOs.
+			// Build a multi-asset tx body that sends only ADA to the recipient,
+			// while returning all non-ADA assets back to our change output.
 			submittedHash, retryableErr, err = buildSignSubmitMultiAssetAdaFallback(context.Background(), bfCfg, params, mpcClient, signResultCh, submitURL, walletID, rawPub, ourAddr, toAddr, sendLovelace, minChangeLovelace)
 		}
 		if err == nil {
@@ -131,7 +134,10 @@ func parseArgsOrFatal() (walletID string, toAddr string, amountAda float64) {
 		}
 	}
 	if walletID == "" || toAddr == "" {
-		logger.Fatal("usage: sign_tx.go --wallet-id <uuid> --to <addr_test...> --amount-ada 1", nil)
+		logger.Fatal(`Invalid arguments. Usage:
+  --wallet-id <uuid>      Wallet ID from cardano_poc_wallet.json
+  --to <addr_test...>     Recipient address
+  --amount-ada <number>   ADA amount to send`, nil)
 	}
 	return
 }

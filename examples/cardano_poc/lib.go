@@ -53,7 +53,7 @@ func loadBFConfig() bfConfig {
 	}
 	return cfg
 }
-// --- shared helpers (used by create_wallet.go and sign_tx.go) ---
+// --- Shared helpers (used by the Cardano PoC binaries) ---
 
 type bfUtxo struct {
 	TxHash  string `json:"tx_hash"`
@@ -347,11 +347,11 @@ func trimJSONQuotes(s string) string {
 }
 
 type protocolParams struct {
-    MinFeeA          int    `json:"min_fee_a"`
-    MinFeeB          int    `json:"min_fee_b"`
-    CoinsPerUTXOWord string `json:"coins_per_utxo_word"` // Sửa từ int sang string
-    Epoch            int    `json:"epoch"`
-    Slot             int    `json:"slot"`
+	MinFeeA          int    `json:"min_fee_a"`
+	MinFeeB          int    `json:"min_fee_b"`
+	CoinsPerUTXOWord string `json:"coins_per_utxo_word"` // Blockfrost returns this as a string
+	Epoch            int    `json:"epoch"`
+	Slot             int    `json:"slot"`
 }
 
 func fetchProtocolParams(ctx context.Context, cfg bfConfig) (*protocolParams, error) {
@@ -391,7 +391,7 @@ func fetchCurrentSlot(ctx context.Context, cfg bfConfig) (uint64, error) {
 	}
 	return resp.Slot, nil
 }
-// --- Cardano multi-asset (token) helpers for PoC ---
+// --- Cardano multi-asset (token) helpers for the PoC ---
 
 // cardanoAmount represents an amount in a tx output.
 // - For ADA-only: uint64 lovelace
@@ -515,79 +515,44 @@ func buildTxBodyCBORMultiAsset(
 	return cbor.Marshal(body)
 }
 
-func buildOutputAmount(lovelace uint64, assets []cardanoAsset) (any, error) {
-	if len(assets) == 0 {
-		return lovelace, nil
-	}
 
-	policies := make(map[string]map[string]uint64)
-	for _, a := range assets {
-		if a.Quantity == 0 {
-			continue
-		}
-		policyHex := strings.TrimPrefix(a.PolicyIDHex, "0x")
-		assetHex := strings.TrimPrefix(a.AssetNameHex, "0x")
-		inner, ok := policies[policyHex]
-		if !ok {
-			inner = make(map[string]uint64)
-			policies[policyHex] = inner
-		}
-		inner[assetHex] += a.Quantity
-	}
-
-	cborPolicies := make(map[any]any)
-	for policyHex, assetsByName := range policies {
-		pidBytes, _ := hex.DecodeString(policyHex)
-		cborInner := make(map[any]any)
-		for assetHex, qty := range assetsByName {
-			nameBytes := []byte{}
-			if assetHex != "" {
-				nameBytes, _ = hex.DecodeString(assetHex)
-			}
-			cborInner[cbor.ByteString(nameBytes)] = qty
-		}
-		cborPolicies[cbor.ByteString(pidBytes)] = cborInner
-	}
-
-	return []any{lovelace, cborPolicies}, nil
-}
 
 func estimateMinAdaForOutput(params *protocolParams, addrBech32 string, lovelace uint64, assets []cardanoAsset) (uint64, error) {
-    const (
-        fallback       uint64 = 2_000_000
-        minAdaWithToken uint64 = 1_200_000  // Tối thiểu 1.2 ADA khi có token
-    )
+	const (
+		fallback        uint64 = 2_000_000
+		minAdaWithToken uint64 = 1_200_000 // Minimum 1.2 ADA is a safe bet for outputs with native tokens.
+	)
 
-    if len(assets) > 0 {
-        // Nếu có token, trả về ít nhất 1.2 ADA
-        return minAdaWithToken, nil
-    }
+	if len(assets) > 0 {
+		// If the output includes any native tokens, enforce the minimum ADA requirement for such outputs.
+		return minAdaWithToken, nil
+	}
 
-    // Phần còn lại giữ nguyên cho trường hợp không có token
-    coinsPerUTXOWord := 0
-    if params != nil {
-        coinsPerUTXOWord, _ = strconv.Atoi(strings.TrimSpace(params.CoinsPerUTXOWord))
-    }
-    if coinsPerUTXOWord == 0 {
-        return fallback, nil
-    }
+	// The rest of this function is for ADA-only outputs, which have a lower min-ADA requirement.
+	coinsPerUTXOWord := 0
+	if params != nil {
+		coinsPerUTXOWord, _ = strconv.Atoi(strings.TrimSpace(params.CoinsPerUTXOWord))
+	}
+	if coinsPerUTXOWord == 0 {
+		return fallback, nil
+	}
 
-    addrBytes, err := decodeCardanoAddressBytes(addrBech32)
-    if err != nil {
-        return fallback, nil
-    }
+	addrBytes, err := decodeCardanoAddressBytes(addrBech32)
+	if err != nil {
+		return fallback, nil
+	}
 
-    output := []any{addrBytes, lovelace}
-    ser, err := cbor.Marshal(output)
-    if err != nil {
-        return fallback, nil
-    }
+	output := []any{addrBytes, lovelace}
+	ser, err := cbor.Marshal(output)
+	if err != nil {
+		return fallback, nil
+	}
 
-    minAda := (160 + uint64(len(ser))) * uint64(coinsPerUTXOWord) / 8
-    if minAda == 0 {
-        return fallback, nil
-    }
-    return minAda, nil
+	minAda := (160 + uint64(len(ser))) * uint64(coinsPerUTXOWord) / 8
+	if minAda == 0 {
+		return fallback, nil
+	}
+	return minAda, nil
 }
 
 func parseCardanoAssetArg(s string) (cardanoAsset, error) {
@@ -618,7 +583,7 @@ func parseCardanoAssetArg(s string) (cardanoAsset, error) {
         policy = sp[0]
         assetName = sp[1]
         
-        // Convert ASCII to hex if needed
+        // Convert ASCII asset names to hex (Blockfrost uses hex-encoded asset names).
         if assetName != "" && !isHex(assetName) {
             assetName = hex.EncodeToString([]byte(assetName))
         }
@@ -631,7 +596,7 @@ func parseCardanoAssetArg(s string) (cardanoAsset, error) {
     return out, nil
 }
 
-// Add this helper function in lib.go
+// isHex reports whether s contains only hexadecimal characters.
 func isHex(s string) bool {
     for _, c := range s {
         if !((c >= '0' && c <= '9') || 
