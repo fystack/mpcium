@@ -244,11 +244,23 @@ func buildSignSubmitTokenOnce(
 	ttlSlot := currentSlot + bfCfg.TTLSeconds
 	logger.Info("Using TTL", "current_slot", currentSlot, "ttl_slot", ttlSlot)
 
-	// 3) Coin selection (real multi-asset)
+	// 3) Coin selection & min-ADA calculation (multi-asset)
 	const feeUpperBound uint64 = 900_000
 	tokenUnit, err := assetUnitFromPolicyAndName(token.PolicyIDHex, token.AssetNameHex)
 	if err != nil {
 		return "", false, fmt.Errorf("invalid token spec: %w", err)
+	}
+
+	// 4) Ensure receiver output has enough ADA (min-UTxO) BEFORE selecting ADA-only inputs
+	// NOTE: --ada is optional; we treat it as a *minimum* (can be 0).
+	minToAda, err := estimateMinAdaForOutput(params, toAddr, 0, []cardanoAsset{token})
+	if err != nil || minToAda == 0 {
+		// Fallback to minChangeLovelace if calculation fails
+		minToAda = minChangeLovelace
+	}
+	if toAdaLovelace < minToAda {
+		logger.Info("Auto-bumping receiver ADA to satisfy min-UTxO", "min_required", minToAda, "requested", toAdaLovelace)
+		toAdaLovelace = minToAda
 	}
 
 	// Find UTxOs with the target token, and other UTxOs for ADA
@@ -257,14 +269,18 @@ func buildSignSubmitTokenOnce(
 	for _, u := range utxos {
 		if u.Assets[tokenUnit] > 0 {
 			tokenUtxos = append(tokenUtxos, u)
-		} else if u.LovelaceOnly {
+		}
+		// Any UTxO that does NOT contain the target token can be used to top up lovelace for fees/min-ADA,
+		// not only "lovelace-only" ones. This fixes the case where the wallet has ADA but it's sitting in
+		// UTxOs that also contain other tokens.
+		if u.Assets[tokenUnit] == 0 {
 			adaOnlyUtxos = append(adaOnlyUtxos, u)
 		}
 	}
 	sort.Slice(tokenUtxos, func(i, j int) bool { return tokenUtxos[i].Assets[tokenUnit] > tokenUtxos[j].Assets[tokenUnit] })
 	sort.Slice(adaOnlyUtxos, func(i, j int) bool { return adaOnlyUtxos[i].Lovelace > adaOnlyUtxos[j].Lovelace })
 
-	// Select inputs
+	// Select token inputs first
 	inputs := make([]txInput, 0)
 	totalInputAssets := make(map[string]uint64)
 	for _, u := range tokenUtxos {
@@ -278,7 +294,7 @@ func buildSignSubmitTokenOnce(
 		return "", false, fmt.Errorf("insufficient token balance for %s: have %d, need %d", tokenUnit, totalInputAssets[tokenUnit], token.Quantity)
 	}
 
-	// Add ADA-only UTxOs if needed for fee + ADA output
+	// Add ADA-only UTxOs if needed for fee + receiver min-ADA + change min-ADA
 	neededLovelace := toAdaLovelace + feeUpperBound + minChangeLovelace
 	if totalInputAssets["lovelace"] < neededLovelace {
 		for _, u := range adaOnlyUtxos {
@@ -289,19 +305,13 @@ func buildSignSubmitTokenOnce(
 			}
 		}
 	}
-	logger.Info("Selected UTxOs", "count", len(inputs), "total_input_lovelace", totalInputAssets["lovelace"], "total_input_token", totalInputAssets[tokenUnit])
-
-// 4) Ensure receiver output has enough ADA (min-UTxO)
-	// NOTE: --ada is optional; we treat it as a *minimum* (can be 0).
-	minToAda, err := estimateMinAdaForOutput(params, toAddr, 0, []cardanoAsset{token})
-	if err != nil || minToAda == 0 {
-		// Fallback to minChangeLovelace if calculation fails
-		minToAda = minChangeLovelace
-	}
-	if toAdaLovelace < minToAda {
-		logger.Info("Auto-bumping receiver ADA to satisfy min-UTxO", "min_required", minToAda, "requested", toAdaLovelace)
-		toAdaLovelace = minToAda
-	}
+	logger.Info(
+		"Selected UTxOs",
+		"count", len(inputs),
+		"total_input_lovelace", totalInputAssets["lovelace"],
+		"total_input_token", totalInputAssets[tokenUnit],
+		"needed_lovelace_upper_bound", neededLovelace,
+	)
 
 	// 5) Fee & Change Calculation
 	dummySig := make([]byte, 64)

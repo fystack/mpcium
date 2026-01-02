@@ -570,10 +570,11 @@ func parseCardanoAssetArg(s string) (cardanoAsset, error) {
     idPart := strings.TrimSpace(parts[0])
     qtyPart := strings.TrimSpace(parts[1])
 
-    var qty uint64
-    if _, err := fmt.Sscanf(qtyPart, "%d", &qty); err != nil {
+    var qtyF float64
+    if _, err := fmt.Sscanf(qtyPart, "%f", &qtyF); err != nil {
         return out, fmt.Errorf("invalid quantity: %w", err)
     }
+    qty := uint64(qtyF * 1_000_000)
 
     policy := idPart
     var assetName string
