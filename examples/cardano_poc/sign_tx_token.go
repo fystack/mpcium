@@ -26,12 +26,7 @@ import (
 )
 
 // Usage:
-//   go run -tags=sign_tx_token ./examples/cardano_poc --wallet-id <uuid> --to <addr_test...> --token <policyIdHex>.<assetNameHex>:<qty> [--ada 1.5]
-//
-// Notes (PoC limitations):
-// - Only supports sending ONE token (native asset) in this tx.
-// - Only supports simple outputs (no datum/script, no stake addr).
-// - Change address is always our own deposit address.
+//   go run -tags=sign_tx_token ./examples/cardano_poc --wallet-id <uuid> --to <addr_test...> --token <policyIdHex>.<assetNameHex>:<qty>
 
 type tokenArgs struct {
 	WalletID string
