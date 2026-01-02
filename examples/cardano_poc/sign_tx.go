@@ -98,6 +98,10 @@ func main() {
 	maxAttempts := 2
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		submittedHash, retryableErr, err := buildSignSubmitOnce(context.Background(), bfCfg, params, mpcClient, signResultCh, submitURL, walletID, rawPub, ourAddr, toAddr, sendLovelace, minChangeLovelace)
+		if err != nil && strings.Contains(err.Error(), "no ADA-only UTxO") {
+			// Fallback: wallet may only have multi-asset UTxOs; preserve tokens in change.
+			submittedHash, retryableErr, err = buildSignSubmitMultiAssetAdaFallback(context.Background(), bfCfg, params, mpcClient, signResultCh, submitURL, walletID, rawPub, ourAddr, toAddr, sendLovelace, minChangeLovelace)
+		}
 		if err == nil {
 			fmt.Println(submittedHash)
 			fmt.Println("explorer:", "https://preprod.cardanoscan.io/transaction/"+submittedHash)
@@ -176,6 +180,11 @@ func buildSignSubmitOnce(
 	if err != nil {
 		return "", true, err
 	}
+	if len(utxos) == 0 {
+		return "", false, errors.New("no UTxO at address")
+	}
+	// For ADA-only send, we must NOT spend UTxOs that also carry tokens.
+	// If we do, we'd need to reproduce those tokens in outputs; otherwise ValueNotConservedUTxO.
 	filtered := make([]simpleUtxo, 0, len(utxos))
 	for _, u := range utxos {
 		if u.LovelaceOnly {
@@ -297,6 +306,163 @@ func buildSignSubmitOnce(
 	}
 	return submittedHash, false, nil
 }
+// buildSignSubmitMultiAssetAdaFallback builds an ADA-send tx but allows selecting multi-asset UTxOs.
+// Any non-lovelace assets present in the selected inputs are returned back to ourAddr as change,
+// so ValueNotConservedUTxO is satisfied.
+func buildSignSubmitMultiAssetAdaFallback(
+	ctx context.Context,
+	bfCfg bfConfig,
+	params *protocolParams,
+	mpcClient client.MPCClient,
+	signResultCh <-chan event.SigningResultEvent,
+	submitURL string,
+	walletID string,
+	rawPub []byte,
+	ourAddr string,
+	toAddr string,
+	sendLovelace uint64,
+	minChangeLovelace uint64,
+) (submittedHash string, retryable bool, err error) {
+	utxos, err := fetchAllUtxosOnce(ctx, bfCfg, ourAddr)
+	if err != nil {
+		return "", true, err
+	}
+	if len(utxos) == 0 {
+		return "", false, errors.New("no UTxO at address")
+	}
+
+	currentSlot, err := fetchCurrentSlot(ctx, bfCfg)
+	if err != nil {
+		return "", true, err
+	}
+	ttlSlot := currentSlot + bfCfg.TTLSeconds
+	logger.Info("Using TTL", "current_slot", currentSlot, "ttl_slot", ttlSlot)
+
+	// coin selection over total lovelace (can include token-carrying utxos)
+	const feeUpperBound uint64 = 900_000
+	target := sendLovelace + feeUpperBound + minChangeLovelace
+	sort.Slice(utxos, func(i, j int) bool { return utxos[i].Lovelace > utxos[j].Lovelace })
+
+	inputs := make([]txInput, 0)
+	totalInputAssets := make(map[string]uint64)
+	for _, u := range utxos {
+		inputs = append(inputs, txInput{TxHashHex: u.TxHash, TxIndex: u.TxIndex})
+		sumAssetsMaps(totalInputAssets, u.Assets)
+		if totalInputAssets["lovelace"] >= target {
+			break
+		}
+	}
+	logger.Info("Selected UTxOs (fallback)", "selected", len(inputs), "total_lovelace", totalInputAssets["lovelace"], "target_lovelace", target)
+	if totalInputAssets["lovelace"] < sendLovelace+minChangeLovelace {
+		return "", false, errors.New("not enough funds")
+	}
+
+	// outputs: receiver gets only lovelace; all other assets go back to change
+	outputAssets := map[string]uint64{"lovelace": sendLovelace}
+
+	dummySig := make([]byte, 64)
+	var feeLovelace uint64
+	var txBodyCbor []byte
+
+	for iter := 0; iter < 3; iter++ {
+		changeAssets := make(map[string]uint64)
+		sumAssetsMaps(changeAssets, totalInputAssets)
+
+		if err := subAssetsMaps(changeAssets, outputAssets); err != nil {
+			return "", false, fmt.Errorf("value conservation error (outputs): %w", err)
+		}
+		if changeAssets["lovelace"] < feeLovelace {
+			return "", false, errors.New("not enough lovelace for fee")
+		}
+		changeAssets["lovelace"] -= feeLovelace
+
+		// dust change handling
+		if changeAssets["lovelace"] > 0 && changeAssets["lovelace"] < minChangeLovelace {
+			feeLovelace += changeAssets["lovelace"]
+			changeAssets["lovelace"] = 0
+		}
+		if changeAssets["lovelace"] == 0 {
+			delete(changeAssets, "lovelace")
+		}
+
+		changeAssetsSlice, err := assetsMapToCardanoAssets(changeAssets)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to convert change map to slice: %w", err)
+		}
+
+		body, err := buildTxBodyCBORMultiAsset(
+			inputs,
+			toAddr, sendLovelace, nil,
+			ourAddr, changeAssets["lovelace"], changeAssetsSlice,
+			feeLovelace,
+			ttlSlot,
+		)
+		if err != nil {
+			return "", false, err
+		}
+		dummySigned, err := buildSignedTxCBOR(body, rawPub, dummySig)
+		if err != nil {
+			return "", false, err
+		}
+		size := len(dummySigned)
+		newFee := uint64(params.MinFeeA*size + params.MinFeeB)
+		logger.Info("Calculated fee", "iter", iter, "fee_lovelace", newFee, "signed_tx_size_bytes", size)
+		if newFee == feeLovelace {
+			txBodyCbor = body
+			break
+		}
+		feeLovelace = newFee
+		txBodyCbor = body
+	}
+	if txBodyCbor == nil {
+		return "", false, errors.New("failed to build tx body")
+	}
+
+	h := blake2b.Sum256(txBodyCbor)
+	txHash := h[:]
+	logger.Info("Prepared tx hash", "tx_hash_hex", hex.EncodeToString(txHash))
+
+	txID := uuid.New().String()
+	if err := mpcClient.SignTransaction(&types.SignTxMessage{
+		KeyType:             types.KeyTypeEd25519,
+		WalletID:            walletID,
+		NetworkInternalCode: "cardano-testnet",
+		TxID:                txID,
+		Tx:                  txHash,
+	}); err != nil {
+		return "", true, err
+	}
+	logger.Info("SignTransaction sent", "txID", txID)
+
+	var res event.SigningResultEvent
+	select {
+	case res = <-signResultCh:
+		if res.ResultType == event.ResultTypeError {
+			return "", false, errors.New("signing failed: " + res.ErrorReason)
+		}
+	case <-time.After(60 * time.Second):
+		return "", true, errors.New("timeout waiting for signing result")
+	}
+
+	signedTxCbor, err := buildSignedTxCBOR(txBodyCbor, rawPub, res.Signature)
+	if err != nil {
+		return "", false, err
+	}
+	respBody, status, err := blockfrostPOSTCBORWithRetry(ctx, bfCfg.ProjectID, submitURL, signedTxCbor)
+	if err != nil {
+		return "", true, err
+	}
+	if status < 200 || status >= 300 {
+		msg := prettyJSON(respBody)
+		retryable = strings.Contains(msg, "BadInputsUTxO") || strings.Contains(msg, "InvalidWitnessesUTXOW") || strings.Contains(msg, "ValueNotConservedUTxO") || strings.Contains(msg, "OutsideValidityIntervalUTxO")
+		return "", retryable, fmt.Errorf("submit HTTP %d: %s", status, msg)
+	}
+	_ = json.Unmarshal(respBody, &submittedHash)
+	if submittedHash == "" {
+		submittedHash = strings.TrimSpace(string(respBody))
+	}
+	return submittedHash, false, nil
+}
 
 
 func fetchAllUtxosOnce(ctx context.Context, cfg bfConfig, addr string) ([]simpleUtxo, error) {
@@ -325,8 +491,12 @@ func fetchAllUtxosOnce(ctx context.Context, cfg bfConfig, addr string) ([]simple
 		if err != nil {
 			return nil, err
 		}
+		assets, err := parseAmountToAssetsMap(u.Amount)
+		if err != nil {
+			return nil, err
+		}
 		lovelaceOnly := len(u.Amount) == 1
-		out = append(out, simpleUtxo{TxHash: u.TxHash, TxIndex: uint32(u.TxIndex), Lovelace: lovelace, LovelaceOnly: lovelaceOnly})
+		out = append(out, simpleUtxo{TxHash: u.TxHash, TxIndex: uint32(u.TxIndex), Lovelace: lovelace, LovelaceOnly: lovelaceOnly, Assets: assets})
 	}
 	return out, nil
 }
