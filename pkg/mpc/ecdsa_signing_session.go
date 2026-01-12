@@ -17,6 +17,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/security"
 	"github.com/samber/lo"
 )
 
@@ -129,6 +130,7 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to get wallet data from KVStore")
 	}
+	defer security.ZeroBytes(keyData)
 	// Check if all the participants of the key are present
 	var data keygen.LocalPartySaveData
 	err = json.Unmarshal(keyData, &data)
