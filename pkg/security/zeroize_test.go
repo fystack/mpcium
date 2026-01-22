@@ -7,6 +7,28 @@ import (
 	ecdsakeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	eddsakeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 )
+func TestZeroBigInt_OverwritesBackingWords(t *testing.T) {
+	x := new(big.Int).Lsh(big.NewInt(1), 2048)
+	wordsBefore := append([]big.Word(nil), x.Bits()...)
+	if len(wordsBefore) == 0 {
+		t.Fatal("expected non-empty big.Int words")
+	}
+
+	zeroBigInt(x)
+
+	for i, w := range wordsBefore {
+		if w == 0 {
+			continue
+		}
+		if i < len(x.Bits()) && x.Bits()[i] != 0 {
+			t.Fatalf("expected big.Int word %d to be overwritten", i)
+		}
+	}
+
+	if x.Sign() != 0 {
+		t.Fatalf("expected big.Int value to be zero, got %v", x)
+	}
+}
 
 func TestZeroEcdsaKeygenLocalPartySaveData_Nil(t *testing.T) {
 	ZeroEcdsaKeygenLocalPartySaveData(nil)

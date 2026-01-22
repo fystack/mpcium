@@ -1,6 +1,8 @@
 package security
 
 import (
+	"math/big"
+
 	ecdsakeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	eddsakeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
 )
@@ -11,12 +13,11 @@ func ZeroEcdsaKeygenLocalPartySaveData(data *ecdsakeygen.LocalPartySaveData) {
 	if data == nil {
 		return
 	}
-	// Zero out the private key share and share ID.
 	if data.Xi != nil {
-		data.Xi.SetInt64(0)
+		zeroBigInt(data.Xi)
 	}
 	if data.ShareID != nil {
-		data.ShareID.SetInt64(0)
+		zeroBigInt(data.ShareID)
 	}
 }
 
@@ -26,10 +27,24 @@ func ZeroEddsaKeygenLocalPartySaveData(data *eddsakeygen.LocalPartySaveData) {
 		return
 	}
 	if data.Xi != nil {
-		data.Xi.SetInt64(0)
+		zeroBigInt(data.Xi)
 	}
 	if data.ShareID != nil {
-		data.ShareID.SetInt64(0)
+		zeroBigInt(data.ShareID)
 	}
+}
+
+func zeroBigInt(x *big.Int) {
+	if x == nil {
+		return
+	}
+	words := x.Bits()
+	for i := range words {
+		words[i] = 0
+	}
+	x.SetInt64(0)
+}
+func ZeroBigIntForensic(x *big.Int) {
+	zeroBigInt(x)
 }
 
