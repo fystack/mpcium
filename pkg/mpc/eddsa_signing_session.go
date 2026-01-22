@@ -126,6 +126,7 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
+	defer security.ZeroEddsaKeygenLocalPartySaveData(&data)
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
@@ -211,4 +212,42 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 		}
 
 	}
+}
+// Close cleans up the EDDSA signing session by zeroing all sensitive data.
+func (s *eddsaSigningSession) Close() error {
+	if s == nil {
+		return nil
+	}
+
+	// Zero out sensitive data
+	if s.data != nil {
+		security.ZeroEddsaKeygenLocalPartySaveData(s.data)
+		s.data = nil
+	}
+
+	// Clear other sensitive fields
+	if s.tx != nil {
+		s.tx.SetInt64(0)
+		s.tx = nil
+	}
+
+	// Clear the derivation path
+	if s.derivationPath != nil {
+		for i := range s.derivationPath {
+			s.derivationPath[i] = 0
+		}
+		s.derivationPath = nil
+	}
+
+	// Clear CKD reference
+	s.ckd = nil
+
+	// Close channel if it exists
+	if s.endCh != nil {
+		close(s.endCh)
+		s.endCh = nil
+	}
+
+	// Call parent's Close() to handle cleanup of subscriptions
+	return s.session.Close()
 }

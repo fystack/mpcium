@@ -137,6 +137,7 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
+	defer security.ZeroEcdsaKeygenLocalPartySaveData(&data)
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.ECDSAPub, s.derivationPath, tss.S256())
@@ -170,7 +171,6 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 	}()
 
 	for {
-
 		select {
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
@@ -209,7 +209,6 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 			})
 			if err != nil {
 				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
-
 				return
 			}
 
@@ -222,6 +221,37 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 			onSuccess(bytes)
 			return
 		}
-
 	}
+}
+
+func (s *ecdsaSigningSession) Close() error {
+	if s == nil {
+		return nil
+	}
+
+	if s.data != nil {
+		security.ZeroEcdsaKeygenLocalPartySaveData(s.data)
+		s.data = nil
+	}
+
+	if s.tx != nil {
+		s.tx.SetInt64(0)
+		s.tx = nil
+	}
+
+	if s.derivationPath != nil {
+		for i := range s.derivationPath {
+			s.derivationPath[i] = 0
+		}
+		s.derivationPath = nil
+	}
+
+	s.ckd = nil
+
+	if s.endCh != nil {
+		close(s.endCh)
+		s.endCh = nil
+	}
+
+	return s.session.Close()
 }

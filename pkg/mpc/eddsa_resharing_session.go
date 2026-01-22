@@ -158,7 +158,9 @@ func (s *eddsaReshareSession) Reshare(done func()) {
 		select {
 		case saveData := <-s.endCh:
 			if saveData.EDDSAPub != nil {
-				keyBytes, err := json.Marshal(saveData)
+				defer security.ZeroEddsaKeygenLocalPartySaveData(saveData)
+
+					keyBytes, err := json.Marshal(saveData)
 				if err != nil {
 					s.ErrCh <- err
 					return

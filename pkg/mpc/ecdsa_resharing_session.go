@@ -173,6 +173,8 @@ func (s *ecdsaReshareSession) Reshare(done func()) {
 			// skip for old committee
 			if saveData.ECDSAPub != nil {
 
+				defer security.ZeroEcdsaKeygenLocalPartySaveData(saveData)
+
 				keyBytes, err := json.Marshal(saveData)
 				if err != nil {
 					s.ErrCh <- err

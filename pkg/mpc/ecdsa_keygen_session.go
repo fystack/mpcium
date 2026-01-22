@@ -99,6 +99,7 @@ func (s *ecdsaKeygenSession) GenerateKey(done func()) {
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case saveData := <-s.endCh:
+			defer security.ZeroEcdsaKeygenLocalPartySaveData(saveData)
 			keyBytes, err := json.Marshal(saveData)
 			if err != nil {
 				s.ErrCh <- err
@@ -150,3 +151,4 @@ func (s *ecdsaKeygenSession) GenerateKey(done func()) {
 		}
 	}
 }
+
