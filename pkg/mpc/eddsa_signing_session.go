@@ -242,11 +242,9 @@ func (s *eddsaSigningSession) Close() error {
 	// Clear CKD reference
 	s.ckd = nil
 
-	// Close channel if it exists
-	if s.endCh != nil {
-		close(s.endCh)
-		s.endCh = nil
-	}
+	// Avoid closing endCh here to prevent send-on-closed-channel panics.
+	// Let the producer side (tss-lib) own channel lifetime.
+	s.endCh = nil
 
 	// Call parent's Close() to handle cleanup of subscriptions
 	return s.session.Close()

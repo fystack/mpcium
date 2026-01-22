@@ -248,10 +248,9 @@ func (s *ecdsaSigningSession) Close() error {
 
 	s.ckd = nil
 
-	if s.endCh != nil {
-		close(s.endCh)
-		s.endCh = nil
-	}
+	// Avoid closing endCh here to prevent send-on-closed-channel panics.
+	// Let the producer side (tss-lib) own channel lifetime.
+	s.endCh = nil
 
 	return s.session.Close()
 }
