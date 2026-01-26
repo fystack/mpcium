@@ -354,7 +354,8 @@ func (p *Node) CreateReshareSession(
 	case SessionTypeECDSA:
 		preParams := p.ecdsaPreParams[0]
 		if isNewPeer {
-			preParams = p.ecdsaPreParams[1]
+			// Alternate pre-params for new nodes based on version: v1->1, v2->0, v3->1...
+			preParams = p.ecdsaPreParams[version%2]
 			participantPeerIDs = newPeerIDs
 		} else {
 			participantPeerIDs = oldKeyInfo.ParticipantPeerIDs
