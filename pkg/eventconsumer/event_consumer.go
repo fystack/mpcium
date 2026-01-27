@@ -675,11 +675,17 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				return
 			}
 			newSession.ListenToIncomingMessageAsync()
-			// In resharing process, we need to ensure that the new session is aware of the old committee peers.
-			// Then new committee peers can start listening to the old committee peers
-			// and thus enable receiving direct messages from them.
-			extraOldCommiteePeers := newSession.GetLegacyCommitteePeers()
-			newSession.ListenToPeersAsync(extraOldCommiteePeers)
+
+			// New committee peers MUST listen to all old committee peers to receive their shares
+			// We use the union of msg.NodeIDs and old committee IDs is already partially covered by ListenToIncomingMessageAsync,
+			// but we ensure all legacy peers are covered.
+			newSession.ListenToPeersAsync(newSession.GetLegacyCommitteePeers())
+		}
+
+		if oldSession != nil {
+			// Old committee peers MUST listen to new committee peers (in case of ACKs or back-and-forth in later rounds)
+			// msg.NodeIDs contains all nodes in the new committee
+			oldSession.ListenToPeersAsync(msg.NodeIDs)
 		}
 
 		ec.warmUpSession()
