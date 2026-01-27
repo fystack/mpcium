@@ -14,6 +14,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/security"
 )
 
 type ReshareSession interface {
@@ -172,11 +173,14 @@ func (s *ecdsaReshareSession) Reshare(done func()) {
 			// skip for old committee
 			if saveData.ECDSAPub != nil {
 
+				defer security.ZeroEcdsaKeygenLocalPartySaveData(saveData)
+
 				keyBytes, err := json.Marshal(saveData)
 				if err != nil {
 					s.ErrCh <- err
 					return
 				}
+				defer security.ZeroBytes(keyBytes)
 
 				newVersion := s.GetVersion() + 1
 				key := s.composeKey(walletIDWithVersion(s.walletID, newVersion))

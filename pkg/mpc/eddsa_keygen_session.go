@@ -12,6 +12,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/security"
 )
 
 type eddsaKeygenSession struct {
@@ -86,11 +87,13 @@ func (s *eddsaKeygenSession) GenerateKey(done func()) {
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case saveData := <-s.endCh:
+			defer security.ZeroEddsaKeygenLocalPartySaveData(saveData)
 			keyBytes, err := json.Marshal(saveData)
 			if err != nil {
 				s.ErrCh <- err
 				return
 			}
+			defer security.ZeroBytes(keyBytes)
 
 			err = s.kvstore.Put(s.composeKey(walletIDWithVersion(s.walletID, s.GetVersion())), keyBytes)
 			if err != nil {

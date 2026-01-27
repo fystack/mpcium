@@ -17,6 +17,7 @@ import (
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/security"
 	"github.com/samber/lo"
 )
 
@@ -121,9 +122,11 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	// Check if all the participants of the key are present
 	var data keygen.LocalPartySaveData
 	err = json.Unmarshal(keyData, &data)
+	security.ZeroBytes(keyData)
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
+	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
@@ -209,4 +212,40 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 		}
 
 	}
+}
+// Close cleans up the EDDSA signing session by zeroing all sensitive data.
+func (s *eddsaSigningSession) Close() error {
+	if s == nil {
+		return nil
+	}
+
+	// Zero out sensitive data
+	if s.data != nil {
+		security.ZeroEddsaKeygenLocalPartySaveData(s.data)
+		s.data = nil
+	}
+
+	// Clear other sensitive fields
+	if s.tx != nil {
+		s.tx.SetInt64(0)
+		s.tx = nil
+	}
+
+	// Clear the derivation path
+	if s.derivationPath != nil {
+		for i := range s.derivationPath {
+			s.derivationPath[i] = 0
+		}
+		s.derivationPath = nil
+	}
+
+	// Clear CKD reference
+	s.ckd = nil
+
+	// Avoid closing endCh here to prevent send-on-closed-channel panics.
+	// Let the producer side (tss-lib) own channel lifetime.
+	s.endCh = nil
+
+	// Call parent's Close() to handle cleanup of subscriptions
+	return s.session.Close()
 }
