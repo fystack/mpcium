@@ -130,8 +130,6 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to get wallet data from KVStore")
 	}
-	// Do not `defer` zeroization here: Init() returns before Sign() runs.
-	// Zeroize immediately after unmarshal since keyData is not used afterward.
 	// Check if all the participants of the key are present
 	var data keygen.LocalPartySaveData
 	err = json.Unmarshal(keyData, &data)
@@ -139,7 +137,7 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	//`data` is used by Sign() via `s.data`.
+	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.ECDSAPub, s.derivationPath, tss.S256())
