@@ -38,11 +38,11 @@ const (
 
 func printBanner() {
 	banner := fmt.Sprintf(`
-41: ╔══════════════════════════════════════════════════════════════╗
-42: ║                       MPCIUM v%s                          ║
-43: ║      Multi-Party Computation Threshold Signatures Node       ║
-44: ╚══════════════════════════════════════════════════════════════╝
-45: `, Version)
+╔══════════════════════════════════════════════════════════════╗
+║                       MPCIUM v%s                          ║
+║      Multi-Party Computation Threshold Signatures Node       ║
+╚══════════════════════════════════════════════════════════════╝
+`, Version)
 	fmt.Print(banner)
 }
 

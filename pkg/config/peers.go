@@ -11,11 +11,9 @@ type Peer struct {
 	Name string
 }
 
-func LoadPeersFromNatsKV(kv infra.NatsKV) ([]Peer, error) {
+func LoadPeersFromNatsKV(peersKV infra.NatsKV) ([]Peer, error) {
 	// Retrieve node IDs from the bucket
-	// Since NATS KV buckets isolate keys, we can just list all keys in the bucket.
-	// We pass empty string to list all keys.
-	pairs, err := kv.List("")
+	pairs, err := peersKV.List("")
 	if err != nil {
 		return nil, err
 	}

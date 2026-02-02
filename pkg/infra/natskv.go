@@ -102,10 +102,7 @@ func (s *NatsKVStore) Keys(prefix string) ([]string, error) {
 }
 
 // List returns a map of key-value pairs matching the prefix
-// accurate emulation of Consul's List but returning a map for easier usage
 func (s *NatsKVStore) List(prefix string) (map[string][]byte, error) {
-	// For NATS KV, listing keys and then getting them might be expensive if many keys.
-	// But `Keys` is lightweight as it comes from a stream view.
 	keys, err := s.Keys(prefix)
 	if err != nil {
 		return nil, err

@@ -23,8 +23,7 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 		inputPath = "peers.json"
 	}
 
-	// Prefix for MPC peers in NATS KV (empty as bucket namespace is sufficient)
-	prefix := ""
+	bucketName := "mpc-peers"
 
 	// Validate the input file path for security
 	if err := pathutil.ValidateFilePath(inputPath); err != nil {
@@ -61,7 +60,6 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 	logger.Init(environment, true)
 
 	// Connect to NATS
-	// reusing getNATSConnection from benchmark.go which is in the same package
 	nc, err := getNATSConnection(environment, appConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -80,7 +78,7 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 
 	// Register peers in NATS KV
 	for nodeName, nodeID := range peerMap {
-		key := prefix + nodeName
+		key := nodeName
 
 		// Check if the key already exists
 		existing, err := peersKV.Get(key)
@@ -105,6 +103,6 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 		fmt.Printf("Registered peer %s with ID %s to NATS KV\n", nodeName, nodeID)
 	}
 
-	logger.Info("Successfully registered peers to NATS KV", "peers", peerMap, "bucket", "mpc-peers")
+	logger.Info("Successfully registered peers to NATS KV", "peers", peerMap, "bucket", bucketName)
 	return nil
 }
