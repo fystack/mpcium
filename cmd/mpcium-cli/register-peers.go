@@ -10,7 +10,7 @@ import (
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/infra"
 	"github.com/fystack/mpcium/pkg/logger"
-	"github.com/hashicorp/consul/api"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/urfave/cli/v3"
 )
 
@@ -23,8 +23,8 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 		inputPath = "peers.json"
 	}
 
-	// Hardcoded prefix for MPC peers in Consul
-	prefix := "mpc_peers/"
+	// Prefix for MPC peers in NATS KV (empty as bucket namespace is sufficient)
+	prefix := ""
 
 	// Validate the input file path for security
 	if err := pathutil.ValidateFilePath(inputPath); err != nil {
@@ -57,24 +57,39 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 
 	// Initialize config and logger
 	config.InitViperConfig(c.String("config"))
+	appConfig := config.LoadConfig()
 	logger.Init(environment, true)
 
-	// Connect to Consul
-	client := infra.GetConsulClient(environment)
-	kv := client.KV()
+	// Connect to NATS
+	// reusing getNATSConnection from benchmark.go which is in the same package
+	nc, err := getNATSConnection(environment, appConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+	defer nc.Close()
 
-	// Register peers in Consul
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return fmt.Errorf("failed to get JetStream context: %w", err)
+	}
+
+	peersKV, err := infra.NewNatsKVStore(js, "mpc-peers")
+	if err != nil {
+		return fmt.Errorf("failed to init mpc-peers KV bucket: %w", err)
+	}
+
+	// Register peers in NATS KV
 	for nodeName, nodeID := range peerMap {
 		key := prefix + nodeName
 
 		// Check if the key already exists
-		existing, _, err := kv.Get(key, nil)
+		existing, err := peersKV.Get(key)
 		if err != nil {
 			return fmt.Errorf("failed to check existing key %s: %w", key, err)
 		}
 
 		if existing != nil {
-			existingID := string(existing.Value)
+			existingID := string(existing)
 			if existingID != nodeID {
 				return fmt.Errorf("conflict detected: peer %s already exists with ID %s, but trying to register with different ID %s", nodeName, existingID, nodeID)
 			}
@@ -82,16 +97,14 @@ func registerPeers(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 
-		p := &api.KVPair{Key: key, Value: []byte(nodeID)}
-
 		// Store the key-value pair
-		_, err = kv.Put(p, nil)
+		err = peersKV.Put(key, []byte(nodeID))
 		if err != nil {
 			return fmt.Errorf("failed to store key %s: %w", key, err)
 		}
-		fmt.Printf("Registered peer %s with ID %s to Consul\n", nodeName, nodeID)
+		fmt.Printf("Registered peer %s with ID %s to NATS KV\n", nodeName, nodeID)
 	}
 
-	logger.Info("Successfully registered peers to Consul", "peers", peerMap, "prefix", prefix)
+	logger.Info("Successfully registered peers to NATS KV", "peers", peerMap, "bucket", "mpc-peers")
 	return nil
 }

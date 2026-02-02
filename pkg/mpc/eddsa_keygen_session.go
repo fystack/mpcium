@@ -54,8 +54,11 @@ func newEDDSAKeygenSession(
 				return fmt.Sprintf("keygen:direct:eddsa:%s:%s:%s", fromID, toID, walletID)
 			},
 		},
-		composeKey: func(waleltID string) string {
-			return fmt.Sprintf("eddsa:%s", waleltID)
+		composeShareKey: func(walletID string) string {
+			return fmt.Sprintf("eddsa:%s", walletID)
+		},
+		composeInfoKey: func(walletID string) string {
+			return fmt.Sprintf("eddsa-%s", walletID)
 		},
 		getRoundFunc:  GetEddsaMsgRound,
 		resultQueue:   resultQueue,
@@ -95,7 +98,7 @@ func (s *eddsaKeygenSession) GenerateKey(done func()) {
 			}
 			defer security.ZeroBytes(keyBytes)
 
-			err = s.kvstore.Put(s.composeKey(walletIDWithVersion(s.walletID, s.GetVersion())), keyBytes)
+			err = s.kvstore.Put(s.composeShareKey(walletIDWithVersion(s.walletID, s.GetVersion())), keyBytes)
 			if err != nil {
 				logger.Error("Failed to save key", err, "walletID", s.walletID)
 				s.ErrCh <- err
@@ -108,7 +111,7 @@ func (s *eddsaKeygenSession) GenerateKey(done func()) {
 				Version:            s.GetVersion(),
 			}
 
-			err = s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo)
+			err = s.keyinfoStore.Save(s.composeInfoKey(s.walletID), &keyInfo)
 			if err != nil {
 				logger.Error("Failed to save keyinfo", err, "walletID", s.walletID)
 				s.ErrCh <- err

@@ -229,9 +229,9 @@ func (p *Node) getKeyInfo(sessionType SessionType, walletID string) (*keyinfo.Ke
 	var keyID string
 	switch sessionType {
 	case SessionTypeECDSA:
-		keyID = fmt.Sprintf("ecdsa:%s", walletID)
+		keyID = fmt.Sprintf("ecdsa-%s", walletID)
 	case SessionTypeEDDSA:
-		keyID = fmt.Sprintf("eddsa:%s", walletID)
+		keyID = fmt.Sprintf("eddsa-%s", walletID)
 	default:
 		return nil, errors.New("unsupported session type")
 	}
@@ -292,7 +292,7 @@ func (p *Node) CreateReshareSession(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session key prefix: %w", err)
 	}
-	keyInfoKey := fmt.Sprintf("%s:%s", keyPrefix, walletID)
+	keyInfoKey := fmt.Sprintf("%s-%s", keyPrefix, walletID)
 	oldKeyInfo, err := p.keyinfoStore.Get(keyInfoKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get old key info: %w", err)
@@ -455,9 +455,9 @@ func (p *Node) getVersion(sessionType SessionType, walletID string) int {
 	var composeKey string
 	switch sessionType {
 	case SessionTypeECDSA:
-		composeKey = fmt.Sprintf("ecdsa:%s", walletID)
+		composeKey = fmt.Sprintf("ecdsa-%s", walletID)
 	case SessionTypeEDDSA:
-		composeKey = fmt.Sprintf("eddsa:%s", walletID)
+		composeKey = fmt.Sprintf("eddsa-%s", walletID)
 	default:
 		logger.Fatal("Unknown session type", errors.New("Unknown session type"))
 	}

@@ -12,8 +12,7 @@ import (
 )
 
 type AppConfig struct {
-	Consul *ConsulConfig `mapstructure:"consul"`
-	NATs   *NATsConfig   `mapstructure:"nats"`
+	NATs *NATsConfig `mapstructure:"nats"`
 
 	Environment    string `mapstructure:"environment"`
 	BadgerPassword string `mapstructure:"badger_password"`
@@ -24,22 +23,15 @@ type AppConfig struct {
 func (c AppConfig) MarshalJSONMask() string {
 	// clone app config
 	c.BadgerPassword = strings.Repeat("*", len(c.BadgerPassword))
-	c.Consul.Password = strings.Repeat("*", len(c.Consul.Password))
-	c.Consul.Token = strings.Repeat("*", len(c.Consul.Token))
-	c.NATs.Password = strings.Repeat("*", len(c.NATs.Password))
+	if c.NATs != nil {
+		c.NATs.Password = strings.Repeat("*", len(c.NATs.Password))
+	}
 
 	bytes, err := json.Marshal(c)
 	if err != nil {
 		logger.Error("Failed to marshal app config", err)
 	}
 	return string(bytes)
-}
-
-type ConsulConfig struct {
-	Address  string `mapstructure:"address"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	Token    string `mapstructure:"token"`
 }
 
 type NATsConfig struct {

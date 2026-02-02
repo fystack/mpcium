@@ -81,8 +81,11 @@ func NewECDSAReshareSession(
 				return fmt.Sprintf("resharing:direct:ecdsa:%s:%s:%s", fromID, toID, walletID)
 			},
 		},
-		composeKey: func(walletID string) string {
+		composeShareKey: func(walletID string) string {
 			return fmt.Sprintf("ecdsa:%s", walletID)
+		},
+		composeInfoKey: func(walletID string) string {
+			return fmt.Sprintf("ecdsa-%s", walletID)
 		},
 		getRoundFunc:  GetEcdsaMsgRound,
 		resultQueue:   resultQueue,
@@ -183,7 +186,7 @@ func (s *ecdsaReshareSession) Reshare(done func()) {
 				defer security.ZeroBytes(keyBytes)
 
 				newVersion := s.GetVersion() + 1
-				key := s.composeKey(walletIDWithVersion(s.walletID, newVersion))
+				key := s.composeShareKey(walletIDWithVersion(s.walletID, newVersion))
 				if err := s.kvstore.Put(key, keyBytes); err != nil {
 					s.ErrCh <- err
 					return
@@ -196,7 +199,7 @@ func (s *ecdsaReshareSession) Reshare(done func()) {
 				}
 
 				// Save key info with resharing flag
-				if err := s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo); err != nil {
+				if err := s.keyinfoStore.Save(s.composeInfoKey(s.walletID), &keyInfo); err != nil {
 					s.ErrCh <- err
 					return
 				}

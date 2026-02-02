@@ -17,10 +17,11 @@ import (
 	"github.com/dgraph-io/badger/v4/options"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/infra"
 	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/fystack/mpcium/pkg/types"
-	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 )
@@ -35,9 +36,6 @@ type TestConfig struct {
 	Nats struct {
 		URL string `yaml:"url"`
 	} `yaml:"nats"`
-	Consul struct {
-		Address string `yaml:"address"`
-	} `yaml:"consul"`
 	MPCThreshold         int    `yaml:"mpc_threshold"`
 	Environment          string `yaml:"environment"`
 	BadgerPassword       string `yaml:"badger_password"`
@@ -49,7 +47,7 @@ type TestConfig struct {
 
 type E2ETestSuite struct {
 	ctx              context.Context
-	consulClient     *api.Client
+	cancel           context.CancelFunc
 	natsConn         *nats.Conn
 	mpcClient        client.MPCClient
 	testDir          string
@@ -62,9 +60,10 @@ type E2ETestSuite struct {
 }
 
 func NewE2ETestSuite(testDir string) *E2ETestSuite {
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	return &E2ETestSuite{
 		ctx:              ctx,
+		cancel:           cancel,
 		testDir:          testDir,
 		walletIDs:        make([]string, 0),
 		keygenResults:    make(map[string]*event.KeygenResultEvent),
@@ -148,18 +147,7 @@ func (s *E2ETestSuite) setupClients(t *testing.T) {
 	var err error
 
 	// Use the fixed ports from docker-compose.test.yaml
-	consulPort := 8501 // consul-test service maps 8501:8500
-	natsPort := 4223   // nats-server-test service maps 4223:4222
-
-	// Setup Consul client
-	consulConfig := api.DefaultConfig()
-	consulConfig.Address = fmt.Sprintf("localhost:%d", consulPort)
-	s.consulClient, err = api.NewClient(consulConfig)
-	require.NoError(t, err, "Failed to create Consul client")
-
-	// Test Consul connection
-	_, err = s.consulClient.Agent().Self()
-	require.NoError(t, err, "Failed to connect to Consul")
+	natsPort := 4223 // nats-server-test service maps 4223:4222
 
 	// Setup NATS client
 	natsConn, err := nats.Connect(fmt.Sprintf("nats://localhost:%d", natsPort))
@@ -216,13 +204,7 @@ func (s *E2ETestSuite) SetupTestNodes(t *testing.T) {
 }
 
 func (s *E2ETestSuite) RegisterPeers(t *testing.T) {
-	t.Log("Registering peers in Consul...")
-
-	// Check Consul health before proceeding
-	t.Log("Checking Consul health...")
-	_, err := s.consulClient.Status().Leader()
-	require.NoError(t, err, "Consul is not healthy")
-	t.Log("Consul is healthy")
+	t.Log("Registering peers in NATS KV...")
 
 	// Use mpcium register-peers command instead of manual registration
 	t.Log("Running mpcium-cli register-peers...")
@@ -237,20 +219,24 @@ func (s *E2ETestSuite) RegisterPeers(t *testing.T) {
 		require.NoError(t, err, "Failed to register peers")
 	}
 
-	t.Log("Peers registered in Consul")
+	t.Log("Peers registered in NATS KV")
 
 	// List current peers to verify registration
-	t.Log("Listing current peers in Consul...")
-	kv := s.consulClient.KV()
+	t.Log("Listing current peers in NATS KV...")
+	js, err := jetstream.New(s.natsConn)
+	require.NoError(t, err, "Failed to get JetStream context")
 
-	// Get all keys under the mpc_peers/ prefix (matches register-peers command)
-	pairs, _, err := kv.List("mpc_peers/", nil)
+	peersKV, err := infra.NewNatsKVStore(js, "mpc-peers")
+	require.NoError(t, err, "Failed to init mpc-peers KV bucket")
+
+	// Get all keys (empty prefix)
+	pairs, err := peersKV.List("")
 	if err != nil {
 		t.Logf("Failed to list peers: %v", err)
 	} else {
-		t.Logf("Found %d peer entries in Consul under 'mpc_peers/':", len(pairs))
-		for _, pair := range pairs {
-			t.Logf("  - Key: %s, Value: %s", pair.Key, string(pair.Value))
+		t.Logf("Found %d peer entries in NATS KV under 'mpc_peers/':", len(pairs))
+		for k, v := range pairs {
+			t.Logf("  - Key: %s, Value: %s", k, string(v))
 		}
 	}
 
@@ -267,13 +253,12 @@ func (s *E2ETestSuite) RegisterPeers(t *testing.T) {
 func (s *E2ETestSuite) StartNodes(t *testing.T) {
 	t.Log("Starting MPC nodes...")
 
-	// Double-check that Consul is still accessible before starting nodes
-	t.Log("Verifying Consul is still accessible...")
-	_, err := s.consulClient.Status().Leader()
-	if err != nil {
-		t.Logf("Consul connection test failed: %v", err)
+	// Double-check that NATS is still accessible before starting nodes
+	t.Log("Verifying NATS is still accessible...")
+	if !s.natsConn.IsConnected() {
+		t.Log("NATS connection lost")
 	} else {
-		t.Log("Consul is still accessible")
+		t.Log("NATS is still accessible")
 	}
 
 	s.mpciumProcesses = make([]*exec.Cmd, numNodes)
@@ -318,12 +303,11 @@ func (s *E2ETestSuite) StartNodes(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// Verify containers are still accessible
-	t.Log("Final verification that Consul is still accessible...")
-	_, err = s.consulClient.Status().Leader()
-	if err != nil {
-		t.Logf("Consul connection test failed after starting nodes: %v", err)
+	t.Log("Final verification that NATS is still accessible...")
+	if !s.natsConn.IsConnected() {
+		t.Log("NATS connection lost after starting nodes")
 	} else {
-		t.Log("Consul is still accessible after starting nodes")
+		t.Log("NATS is still accessible after starting nodes")
 	}
 
 	// Show recent logs from each node
@@ -560,6 +544,11 @@ func (s *E2ETestSuite) Cleanup(t *testing.T) {
 	// Close MPC client connections
 	if s.natsConn != nil {
 		s.natsConn.Close()
+	}
+
+	// Cancel the context to release resources
+	if s.cancel != nil {
+		s.cancel()
 	}
 
 	// Stop Docker Compose stack

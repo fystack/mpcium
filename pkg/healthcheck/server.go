@@ -10,7 +10,6 @@ import (
 
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/mpc"
-	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
 )
 
@@ -19,23 +18,21 @@ type Server struct {
 	httpServer   *http.Server
 	peerRegistry mpc.PeerRegistry
 	natsConn     *nats.Conn
-	consulClient *api.Client
 }
 
 // HealthResponse represents the JSON response for health check endpoints
 type HealthResponse struct {
-	Status    string         `json:"status"`
-	Live      bool           `json:"live"`
-	Ready     bool           `json:"ready"`
-	Details   map[string]any `json:"details,omitempty"`
+	Status  string         `json:"status"`
+	Live    bool           `json:"live"`
+	Ready   bool           `json:"ready"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // NewServer creates a new health check HTTP server
-func NewServer(addr string, peerRegistry mpc.PeerRegistry, natsConn *nats.Conn, consulClient *api.Client) *Server {
+func NewServer(addr string, peerRegistry mpc.PeerRegistry, natsConn *nats.Conn) *Server {
 	s := &Server{
 		peerRegistry: peerRegistry,
 		natsConn:     natsConn,
-		consulClient: consulClient,
 	}
 
 	mux := http.NewServeMux()
@@ -93,18 +90,6 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	natsConnected := s.natsConn != nil && s.natsConn.IsConnected()
 	details["nats_connected"] = natsConnected
 	if !natsConnected {
-		ready = false
-	}
-
-	// Check Consul connection
-	consulConnected := false
-	if s.consulClient != nil {
-		if leader, err := s.consulClient.Status().Leader(); err == nil && leader != "" {
-			consulConnected = true
-		}
-	}
-	details["consul_connected"] = consulConnected
-	if !consulConnected {
 		ready = false
 	}
 
