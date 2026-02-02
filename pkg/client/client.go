@@ -24,6 +24,7 @@ type MPCClient interface {
 	OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error
 
 	SignTransaction(msg *types.SignTxMessage) error
+	SignTransactionSync(ctx context.Context, msg *types.SignTxMessage) (*event.SigningResultEvent, error)
 	OnSignResult(callback func(event event.SigningResultEvent)) error
 
 	Resharing(msg *types.ResharingMessage) error
@@ -178,6 +179,63 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 		return fmt.Errorf("SignTransaction: publish error: %w", err)
 	}
 	return nil
+}
+
+// SignTransactionSync builds a SignTxMessage, signs it, and publishes it using Request-Reply pattern.
+func (c *mpcClient) SignTransactionSync(ctx context.Context, msg *types.SignTxMessage) (*event.SigningResultEvent, error) {
+	// compute the canonical raw bytes (omitting Signature field)
+	raw, err := msg.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("SignTransactionSync: raw payload error: %w", err)
+	}
+	signature, err := c.signer.Sign(raw)
+	if err != nil {
+		return nil, fmt.Errorf("SignTransactionSync: failed to sign message: %w", err)
+	}
+	msg.Signature = signature
+
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("SignTransactionSync: marshal error: %w", err)
+	}
+
+	// Create a unique reply subject (ephemeral inbox)
+	replySubject := nats.NewInbox()
+
+	// Subscribe to the reply subject
+	respChan := make(chan *nats.Msg, 1)
+	sub, err := c.pubsub.Subscribe(replySubject, func(msg *nats.Msg) {
+		respChan <- msg
+	})
+	if err != nil {
+		return nil, fmt.Errorf("SignTransactionSync: subscribe error: %w", err)
+	}
+	defer sub.Unsubscribe()
+
+	publishSubject := fmt.Sprintf("mpc.signing_request.%s", msg.TxID)
+
+	// Use Headers for Reply to avoid NATS JetStream PubAck on the reply subject
+	headers := map[string]string{
+		"Mpc-Reply-To": replySubject,
+	}
+
+	// Pass empty string for reply argument so NATS doesn't expect a transport-level reply (avoids PubAck)
+	err = c.pubsub.PublishWithReply(publishSubject, "", bytes, headers)
+	if err != nil {
+		return nil, fmt.Errorf("SignTransactionSync: publish error: %w", err)
+	}
+
+	// Wait for response
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case m := <-respChan:
+		var result event.SigningResultEvent
+		if err := json.Unmarshal(m.Data, &result); err != nil {
+			return nil, fmt.Errorf("SignTransactionSync: unmarshal response error: %w", err)
+		}
+		return &result, nil
+	}
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {

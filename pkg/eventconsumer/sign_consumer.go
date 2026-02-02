@@ -205,6 +205,32 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 		}
 		if replyMsg != nil {
 			logger.Info("SigningConsumer: Completed signing event; reply received")
+
+			err = sc.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, replyMsg.Data, &messaging.EnqueueOptions{
+				IdempotententKey: buildIdempotentKey(signingMsg.TxID, sessionID, mpc.TypeSigningResultFmt),
+			})
+			if err != nil {
+				logger.Error("SigningConsumer: Failed to enqueue signing result", err,
+					"walletID", signingMsg.WalletID,
+					"txID", signingMsg.TxID,
+				)
+			}
+
+			// If the original message has a reply header (Mpc-Reply-To), forward the result there
+			clientReplySubject := msg.Headers().Get("Mpc-Reply-To")
+			if clientReplySubject != "" {
+				if err := sc.natsConn.Publish(clientReplySubject, replyMsg.Data); err != nil {
+					logger.Error("SigningConsumer: Failed to forward result to client", err, "replySubject", clientReplySubject)
+				} else {
+					logger.Debug("SigningConsumer: Forwarded result to client", "replySubject", clientReplySubject)
+				}
+			} else if msg.Reply() != "" {
+				// Fallback to msg.Reply() if header not present, but note that this might conflict with JS PubAck
+				if err := sc.natsConn.Publish(msg.Reply(), replyMsg.Data); err != nil {
+					logger.Warn("SigningConsumer: Failed to forward result to msg.Reply()", "error", err)
+				}
+			}
+
 			if ackErr := msg.Ack(); ackErr != nil {
 				logger.Error("SigningConsumer: ACK failed", ackErr)
 			}

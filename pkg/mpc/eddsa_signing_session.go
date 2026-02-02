@@ -126,7 +126,6 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
@@ -192,12 +191,14 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 				return
 			}
 
-			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
-				IdempotententKey: s.idempotentKey,
-			})
-			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
-				return
+			if s.resultQueue != nil {
+				err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
+					IdempotententKey: s.idempotentKey,
+				})
+				if err != nil {
+					s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
+					return
+				}
 			}
 
 			logger.Info("[SIGN] Sign successfully", "walletID", s.walletID)
@@ -213,6 +214,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 	}
 }
+
 // Close cleans up the EDDSA signing session by zeroing all sensitive data.
 func (s *eddsaSigningSession) Close() error {
 	if s == nil {

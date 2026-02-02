@@ -137,7 +137,6 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.ECDSAPub, s.derivationPath, tss.S256())
@@ -204,12 +203,14 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 				return
 			}
 
-			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
-				IdempotententKey: s.idempotentKey,
-			})
-			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
-				return
+			if s.resultQueue != nil {
+				err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
+					IdempotententKey: s.idempotentKey,
+				})
+				if err != nil {
+					s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
+					return
+				}
 			}
 
 			logger.Info("[SIGN] Sign successfully", "walletID", s.walletID)
