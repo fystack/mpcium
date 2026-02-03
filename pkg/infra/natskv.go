@@ -84,16 +84,19 @@ func (s *NatsKVStore) Keys(prefix string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	keys, err := s.kv.Keys(ctx)
+	lister, err := s.kv.ListKeys(ctx)
 	if err != nil {
 		if err == jetstream.ErrNoKeysFound {
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
+	defer func() {
+		_ = lister.Stop()
+	}()
 
 	var matchedKeys []string
-	for _, k := range keys {
+	for k := range lister.Keys() {
 		if strings.HasPrefix(k, prefix) || prefix == "" {
 			matchedKeys = append(matchedKeys, k)
 		}
