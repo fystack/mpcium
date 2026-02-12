@@ -2,6 +2,49 @@
 
 BIN_DIR := bin
 
+# Detect OS
+UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
+ifeq ($(UNAME_S),Linux)
+	DETECTED_OS := linux
+	INSTALL_DIR := /usr/local/bin
+	SUDO := sudo
+	RM := rm -f
+endif
+ifeq ($(UNAME_S),Darwin)
+	DETECTED_OS := darwin
+	INSTALL_DIR := /usr/local/bin
+	SUDO := sudo
+	RM := rm -f
+endif
+ifeq ($(UNAME_S),Windows)
+	DETECTED_OS := windows
+	INSTALL_DIR := $(USERPROFILE)/bin
+	SUDO :=
+	RM := del /Q
+endif
+# Fallback for Windows (Git Bash, MSYS2, etc.)
+ifeq ($(OS),Windows_NT)
+	DETECTED_OS := windows
+	INSTALL_DIR := $(HOME)/bin
+	SUDO :=
+	RM := rm -f
+endif
+
+# Detect architecture
+UNAME_M := $(shell uname -m 2>/dev/null || echo amd64)
+ifeq ($(UNAME_M),x86_64)
+	GOARCH := amd64
+endif
+ifeq ($(UNAME_M),amd64)
+	GOARCH := amd64
+endif
+ifeq ($(UNAME_M),arm64)
+	GOARCH := arm64
+endif
+ifeq ($(UNAME_M),aarch64)
+	GOARCH := arm64
+endif
+
 # Default target
 all: build
 
@@ -16,15 +59,25 @@ mpcium:
 mpc:
 	go install ./cmd/mpcium-cli
 
-# Install binaries to /usr/local/bin (auto-detects architecture)
+# Install binaries (auto-detects OS and architecture)
 install:
-	@echo "Building and installing mpcium binaries for Linux..."
-	GOOS=linux go build -o /tmp/mpcium ./cmd/mpcium
-	GOOS=linux go build -o /tmp/mpcium-cli ./cmd/mpcium-cli
-	sudo install -m 755 /tmp/mpcium /usr/local/bin/
-	sudo install -m 755 /tmp/mpcium-cli /usr/local/bin/
-	rm -f /tmp/mpcium /tmp/mpcium-cli
-	@echo "Successfully installed mpcium and mpcium-cli to /usr/local/bin/"
+	@echo "Detected OS: $(DETECTED_OS)"
+	@echo "Building and installing mpcium binaries..."
+ifeq ($(DETECTED_OS),windows)
+	@echo "Building for Windows..."
+	GOOS=windows GOARCH=$(GOARCH) go build -o $(BIN_DIR)/mpcium.exe ./cmd/mpcium
+	GOOS=windows GOARCH=$(GOARCH) go build -o $(BIN_DIR)/mpcium-cli.exe ./cmd/mpcium-cli
+	@echo "Binaries built in $(BIN_DIR)/"
+	@echo "Please add $(BIN_DIR) to your PATH or manually copy the binaries to a location in your PATH"
+else
+	@mkdir -p /tmp/mpcium-install
+	GOOS=$(DETECTED_OS) GOARCH=$(GOARCH) go build -o /tmp/mpcium-install/mpcium ./cmd/mpcium
+	GOOS=$(DETECTED_OS) GOARCH=$(GOARCH) go build -o /tmp/mpcium-install/mpcium-cli ./cmd/mpcium-cli
+	$(SUDO) install -m 755 /tmp/mpcium-install/mpcium $(INSTALL_DIR)/
+	$(SUDO) install -m 755 /tmp/mpcium-install/mpcium-cli $(INSTALL_DIR)/
+	rm -rf /tmp/mpcium-install
+	@echo "Successfully installed mpcium and mpcium-cli to $(INSTALL_DIR)/"
+endif
 
 # Run all tests
 test:
