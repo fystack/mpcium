@@ -12,7 +12,6 @@ import (
 	"github.com/fystack/mpcium/pkg/infra"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
-	"github.com/hashicorp/consul/api"
 	"github.com/samber/lo"
 	"github.com/spf13/viper"
 )
@@ -46,7 +45,7 @@ type registry struct {
 	mu          sync.RWMutex
 	ready       bool // ready is true when all peers are ready
 
-	consulKV      infra.ConsulKV
+	natsKV        infra.NatsKV
 	healthCheck   messaging.DirectMessaging
 	pubSub        messaging.PubSub
 	identityStore identity.Store
@@ -61,7 +60,7 @@ type registry struct {
 func NewRegistry(
 	nodeID string,
 	peerNodeIDs []string,
-	consulKV infra.ConsulKV,
+	natsKV infra.NatsKV,
 	directMessaging messaging.DirectMessaging,
 	pubSub messaging.PubSub,
 	identityStore identity.Store,
@@ -75,7 +74,7 @@ func NewRegistry(
 	}
 
 	reg := &registry{
-		consulKV:      consulKV,
+		natsKV:        natsKV,
 		nodeID:        nodeID,
 		peerNodeIDs:   peerIDsExceptSelf,
 		readyMap:      make(map[string]bool),
@@ -176,12 +175,7 @@ func (r *registry) Ready() error {
 
 	k := r.readyKey(r.nodeID)
 
-	kv := &api.KVPair{
-		Key:   k,
-		Value: []byte("true"),
-	}
-
-	_, err := r.consulKV.Put(kv, nil)
+	err := r.natsKV.Put(k, []byte("true"))
 	if err != nil {
 		return fmt.Errorf("Put ready key failed: %w", err)
 	}
@@ -210,12 +204,12 @@ func (r *registry) WatchPeersReady() {
 	ticker := time.NewTicker(ReadinessCheckPeriod)
 	// first tick is executed immediately
 	for ; true; <-ticker.C {
-		pairs, _, err := r.consulKV.List("ready/", nil)
+		keys, err := r.natsKV.Keys("ready/")
 		if err != nil {
 			logger.Error("List ready keys failed", err)
 		}
 
-		newReadyPeerIDs := r.getReadyPeersFromKVStore(pairs)
+		newReadyPeerIDs := r.getReadyPeersFromKVStore(keys)
 		if len(newReadyPeerIDs) != len(r.peerNodeIDs) {
 			r.mu.Lock()
 			r.ready = false
@@ -258,19 +252,19 @@ func (r *registry) checkPeersHealth() {
 			logger.Info("Peers are not ready yet", "ready", r.GetReadyPeersCount(), "expected", len(r.peerNodeIDs)+1)
 		}
 
-		pairs, _, err := r.consulKV.List("ready/", nil)
+		keys, err := r.natsKV.Keys("ready/")
 		if err != nil {
 			logger.Error("List ready keys failed", err)
 			continue
 		}
-		readyPeerIDs := r.getReadyPeersFromKVStore(pairs)
+		readyPeerIDs := r.getReadyPeersFromKVStore(keys)
 		for _, peerID := range readyPeerIDs {
 			err := r.healthCheck.SendToOtherWithRetry(r.composeHealthCheckTopic(peerID), []byte(r.composeHealthData()), messaging.RetryConfig{
 				RetryAttempt: 2,
 			})
 			if err != nil && strings.Contains(err.Error(), "no responders") {
 				logger.Info("No response from peer", "peerID", peerID)
-				_, err := r.consulKV.Delete(r.readyKey(peerID), nil)
+				err := r.natsKV.Delete(r.readyKey(peerID))
 				if err != nil {
 					logger.Error("Delete ready key failed", err)
 				}
@@ -297,11 +291,11 @@ func (r *registry) GetReadyPeersIncludeSelf() []string {
 	return peerIDs
 }
 
-func (r *registry) getReadyPeersFromKVStore(kvPairs api.KVPairs) []string {
+func (r *registry) getReadyPeersFromKVStore(keys []string) []string {
 	var peers []string
-	for _, k := range kvPairs {
+	for _, key := range keys {
 		var peerNodeID string
-		_, err := fmt.Sscanf(k.Key, "ready/%s", &peerNodeID)
+		_, err := fmt.Sscanf(key, "ready/%s", &peerNodeID)
 		if err != nil {
 			logger.Error("Parse ready key failed", err)
 		}
@@ -340,7 +334,7 @@ func (r *registry) GetTotalPeersCount() int64 {
 func (r *registry) Resign() error {
 	k := r.readyKey(r.nodeID)
 
-	_, err := r.consulKV.Delete(k, nil)
+	err := r.natsKV.Delete(k)
 	if err != nil {
 		return fmt.Errorf("Delete ready key failed: %w", err)
 	}

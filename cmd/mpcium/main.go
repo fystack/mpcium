@@ -24,8 +24,8 @@ import (
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/fystack/mpcium/pkg/security"
-	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/spf13/viper"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
@@ -144,9 +144,33 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	// Validate the config values
 	checkRequiredConfigValues(appConfig)
 
-	consulClient := infra.GetConsulClient(environment)
-	keyinfoStore := keyinfo.NewStore(consulClient.KV())
-	peers := LoadPeersFromConsul(consulClient)
+	natsConn, err := GetNATSConnection(environment, appConfig)
+	if err != nil {
+		logger.Fatal("Failed to connect to NATS", err)
+	}
+
+	js, err := jetstream.New(natsConn)
+	if err != nil {
+		logger.Fatal("Failed to get JetStream context", err)
+	}
+
+	readyKV, err := infra.NewNatsKVStore(js, "mpc-ready")
+	if err != nil {
+		logger.Fatal("Failed to init mpc-ready KV bucket", err)
+	}
+
+	keyinfoKV, err := infra.NewNatsKVStore(js, "mpc-keyinfo")
+	if err != nil {
+		logger.Fatal("Failed to init mpc-keyinfo KV bucket", err)
+	}
+
+	peersKV, err := infra.NewNatsKVStore(js, "mpc-peers")
+	if err != nil {
+		logger.Fatal("Failed to init mpc-peers KV bucket", err)
+	}
+
+	keyinfoStore := keyinfo.NewStore(keyinfoKV)
+	peers := LoadPeersFromNatsKV(peersKV)
 	nodeID := GetIDFromName(nodeName, peers)
 
 	badgerKV := NewBadgerKV(nodeName, nodeID, appConfig)
@@ -163,11 +187,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	identityStore, err := identity.NewFileStore("identity", nodeName, decryptPrivateKey, agePasswordFile)
 	if err != nil {
 		logger.Fatal("Failed to create identity store", err)
-	}
-
-	natsConn, err := GetNATSConnection(environment, appConfig)
-	if err != nil {
-		logger.Fatal("Failed to connect to NATS", err)
 	}
 
 	pubsub := messaging.NewNATSPubSub(natsConn)
@@ -201,7 +220,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	logger.Info("Starting mpcium node", "version", Version, "ID", nodeID, "name", nodeName)
 
 	peerNodeIDs := GetPeerIDs(peers)
-	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, consulClient.KV(), directMessaging, pubsub, identityStore)
+	peerRegistry := mpc.NewRegistry(nodeID, peerNodeIDs, readyKV, directMessaging, pubsub, identityStore)
 
 	chainCodeHex := viper.GetString("chain_code")
 	ckd, err := mpc.NewCKDFromHex(chainCodeHex)
@@ -256,7 +275,7 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		if healthAddr == "" {
 			healthAddr = ":8080"
 		}
-		healthServer = healthcheck.NewServer(healthAddr, peerRegistry, natsConn, consulClient)
+		healthServer = healthcheck.NewServer(healthAddr, peerRegistry, natsConn)
 		go func() {
 			if err := healthServer.Start(); err != nil {
 				logger.Error("Health check server error", err)
@@ -460,25 +479,12 @@ func checkRequiredConfigValues(appConfig *config.AppConfig) {
 	}
 }
 
-func NewConsulClient(addr string) *api.Client {
-	// Create a new Consul client
-	consulConfig := api.DefaultConfig()
-	consulConfig.Address = addr
-	consulClient, err := api.NewClient(consulConfig)
+func LoadPeersFromNatsKV(peersKV infra.NatsKV) []config.Peer {
+	peers, err := config.LoadPeersFromNatsKV(peersKV)
 	if err != nil {
-		logger.Fatal("Failed to create consul client", err)
+		logger.Fatal("Failed to load peers from NATS KV", err)
 	}
-	logger.Info("Connected to consul!")
-	return consulClient
-}
-
-func LoadPeersFromConsul(consulClient *api.Client) []config.Peer { // Create a Consul Key-Value store client
-	kv := consulClient.KV()
-	peers, err := config.LoadPeersFromConsul(kv, "mpc_peers/")
-	if err != nil {
-		logger.Fatal("Failed to load peers from Consul", err)
-	}
-	logger.Info("Loaded peers from consul", "peers", peers)
+	logger.Info("Loaded peers from NATS KV", "peers", peers)
 
 	return peers
 }

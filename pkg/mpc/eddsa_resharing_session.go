@@ -70,8 +70,11 @@ func NewEDDSAReshareSession(
 				return fmt.Sprintf("reshare:direct:eddsa:%s:%s:%s", fromID, toID, walletID)
 			},
 		},
-		composeKey: func(walletID string) string {
+		composeShareKey: func(walletID string) string {
 			return fmt.Sprintf("eddsa:%s", walletID)
+		},
+		composeInfoKey: func(walletID string) string {
+			return fmt.Sprintf("eddsa-%s", walletID)
 		},
 		getRoundFunc:  GetEddsaMsgRound,
 		resultQueue:   resultQueue,
@@ -160,7 +163,7 @@ func (s *eddsaReshareSession) Reshare(done func()) {
 			if saveData.EDDSAPub != nil {
 				defer security.ZeroEddsaKeygenLocalPartySaveData(saveData)
 
-					keyBytes, err := json.Marshal(saveData)
+				keyBytes, err := json.Marshal(saveData)
 				if err != nil {
 					s.ErrCh <- err
 					return
@@ -168,7 +171,7 @@ func (s *eddsaReshareSession) Reshare(done func()) {
 				defer security.ZeroBytes(keyBytes)
 
 				newVersion := s.GetVersion() + 1
-				key := s.composeKey(walletIDWithVersion(s.walletID, newVersion))
+				key := s.composeShareKey(walletIDWithVersion(s.walletID, newVersion))
 				if err := s.kvstore.Put(key, keyBytes); err != nil {
 					s.ErrCh <- err
 					return
@@ -181,7 +184,7 @@ func (s *eddsaReshareSession) Reshare(done func()) {
 				}
 
 				// Save key info with resharing flag
-				if err := s.keyinfoStore.Save(s.composeKey(s.walletID), &keyInfo); err != nil {
+				if err := s.keyinfoStore.Save(s.composeInfoKey(s.walletID), &keyInfo); err != nil {
 					s.ErrCh <- err
 					return
 				}

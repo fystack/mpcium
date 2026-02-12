@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/hashicorp/consul/api"
+	"github.com/fystack/mpcium/pkg/infra"
 )
 
 type Peer struct {
@@ -11,23 +11,22 @@ type Peer struct {
 	Name string
 }
 
-func LoadPeersFromConsul(kv *api.KV, prefix string) ([]Peer, error) {
-	// Retrieve node IDs with the "peers" prefix
-	pairs, _, err := kv.List(prefix, nil)
+func LoadPeersFromNatsKV(peersKV infra.NatsKV) ([]Peer, error) {
+	// Retrieve node IDs from the bucket
+	pairs, err := peersKV.List("")
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Println("List of node IDs with the prefix: " + prefix)
+	fmt.Println("List of node IDs in bucket:")
 	peers := make([]Peer, 0, len(pairs))
-	for _, pair := range pairs {
+	for key, value := range pairs {
 		peers = append(peers, Peer{
-			ID: string(pair.Value),
-			// remove prefix from key
-			Name: pair.Key[len(prefix):],
+			ID:   string(value),
+			Name: key,
 		})
 
-		fmt.Printf("Key: %s, Value: %s\n", pair.Key, pair.Value)
+		fmt.Printf("Key: %s, Value: %s\n", key, string(value))
 	}
 
 	return peers, nil

@@ -72,10 +72,11 @@ type session struct {
 	resultQueue   messaging.MessageQueue
 	identityStore identity.Store
 
-	topicComposer *TopicComposer
-	composeKey    KeyComposerFn
-	getRoundFunc  GetRoundFunc
-	mu            sync.Mutex
+	topicComposer   *TopicComposer
+	composeShareKey KeyComposerFn
+	composeInfoKey  KeyComposerFn
+	getRoundFunc    GetRoundFunc
+	mu              sync.Mutex
 	// After the session is done, the key will be stored pubkeyBytes
 	pubkeyBytes   []byte
 	sessionType   SessionType
@@ -348,7 +349,7 @@ func (s *session) loadOldShareDataGeneric(walletID string, version int, dest int
 
 	// Try versioned key first if version > 0
 	if version > 0 {
-		key = s.composeKey(walletIDWithVersion(walletID, version))
+		key = s.composeShareKey(walletIDWithVersion(walletID, version))
 		keyData, err = s.kvstore.Get(key)
 		if err != nil {
 			return err
@@ -357,7 +358,7 @@ func (s *session) loadOldShareDataGeneric(walletID string, version int, dest int
 
 	// If version == 0 or previous key not found, fall back to unversioned key
 	if version == 0 {
-		key = s.composeKey(walletID)
+		key = s.composeShareKey(walletID)
 		keyData, err = s.kvstore.Get(key)
 		if err != nil {
 			return err

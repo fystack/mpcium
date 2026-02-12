@@ -72,8 +72,11 @@ func newEDDSASigningSession(
 					return fmt.Sprintf("sign:eddsa:direct:%s:%s:%s", fromID, toID, txID)
 				},
 			},
-			composeKey: func(waleltID string) string {
+			composeShareKey: func(waleltID string) string {
 				return fmt.Sprintf("eddsa:%s", waleltID)
+			},
+			composeInfoKey: func(waleltID string) string {
+				return fmt.Sprintf("eddsa-%s", waleltID)
 			},
 			getRoundFunc:  GetEddsaMsgRound,
 			resultQueue:   resultQueue,
@@ -93,7 +96,7 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	ctx := tss.NewPeerContext(s.partyIDs)
 	params := tss.NewParameters(tss.Edwards(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold)
 
-	keyInfo, err := s.keyinfoStore.Get(s.composeKey(s.walletID))
+	keyInfo, err := s.keyinfoStore.Get(s.composeInfoKey(s.walletID))
 	if err != nil {
 		return errors.Wrap(err, "Failed to get key info data")
 	}
@@ -114,7 +117,7 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	}
 
 	logger.Info("Have enough participants to sign", "participants", s.participantPeerIDs)
-	key := s.composeKey(walletIDWithVersion(s.walletID, keyInfo.Version))
+	key := s.composeShareKey(walletIDWithVersion(s.walletID, keyInfo.Version))
 	keyData, err := s.kvstore.Get(key)
 	if err != nil {
 		return errors.Wrap(err, "Failed to get wallet data from KVStore")
@@ -126,7 +129,6 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
@@ -213,6 +215,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 	}
 }
+
 // Close cleans up the EDDSA signing session by zeroing all sensitive data.
 func (s *eddsaSigningSession) Close() error {
 	if s == nil {
