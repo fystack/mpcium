@@ -9,6 +9,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
+	"github.com/fystack/mpcium/pkg/kvstore"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
 )
@@ -24,6 +25,10 @@ func main() {
 				Usage:    "Path to the BadgerDB database directory",
 				Required: true,
 			},
+			&cli.StringFlag{
+				Name:  "kdf-salt",
+				Usage: "Hex-encoded KDF salt (if database uses Argon2id key derivation)",
+			},
 		},
 		Action: printKeys,
 	}
@@ -35,6 +40,7 @@ func main() {
 
 func printKeys(ctx context.Context, cmd *cli.Command) error {
 	dbPath := cmd.String("db-path")
+	kdfSalt := cmd.String("kdf-salt")
 
 	// Prompt for password
 	fmt.Print("Enter database password: ")
@@ -45,10 +51,15 @@ func printKeys(ctx context.Context, cmd *cli.Command) error {
 	fmt.Println() // Print newline after password input
 	password := string(passwordBytes)
 
+	encKey, err := kvstore.DeriveEncryptionKey(password, kdfSalt)
+	if err != nil {
+		return fmt.Errorf("failed to derive encryption key: %v", err)
+	}
+
 	// Configure BadgerDB options
 	opts := badger.DefaultOptions(dbPath).
 		WithCompression(options.ZSTD).
-		WithEncryptionKey([]byte(password)).
+		WithEncryptionKey(encKey).
 		WithIndexCacheSize(16 << 20).
 		WithBlockCacheSize(32 << 20).
 		WithReadOnly(true) // Open in read-only mode for safety

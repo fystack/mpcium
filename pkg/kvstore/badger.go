@@ -1,10 +1,13 @@
 package kvstore
 
 import (
+	"encoding/hex"
 	"errors"
+	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
+	"github.com/fystack/mpcium/pkg/encryption"
 	"github.com/fystack/mpcium/pkg/logger"
 )
 
@@ -12,6 +15,22 @@ var (
 	ErrEncryptionKeyNotProvided       = errors.New("encryption key not provided")
 	ErrBackupEncryptionKeyNotProvided = errors.New("backup encryption key not provided")
 )
+
+// DeriveEncryptionKey returns the encryption key for BadgerDB.
+// If kdfSalt is empty, it returns the raw password bytes (legacy mode).
+// If kdfSalt is set, it derives a 32-byte key using Argon2id.
+func DeriveEncryptionKey(password string, kdfSalt string) ([]byte, error) {
+	if kdfSalt == "" {
+		return []byte(password), nil
+	}
+
+	salt, err := hex.DecodeString(kdfSalt)
+	if err != nil {
+		return nil, fmt.Errorf("invalid kdf_salt hex: %w", err)
+	}
+
+	return encryption.DeriveKeyArgon2id([]byte(password), salt), nil
+}
 
 // BadgerKVStore is an implementation of the KVStore interface using BadgerDB.
 type BadgerKVStore struct {

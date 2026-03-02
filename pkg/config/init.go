@@ -17,6 +17,7 @@ type AppConfig struct {
 
 	Environment    string `mapstructure:"environment"`
 	BadgerPassword string `mapstructure:"badger_password"`
+	KDFSalt        string `mapstructure:"kdf_salt"`
 	ChainCodeHex   string `mapstructure:"chain_code"`
 }
 

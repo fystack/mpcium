@@ -6,6 +6,12 @@ consul:
 mpc_threshold: 2
 environment: development
 badger_password: "F))ysJp?E]ol&I;^"
+# KDF salt for Argon2id key derivation (optional).
+# When set, the badger_password is derived into a 32-byte AES-256 key using Argon2id,
+# allowing any password length/format (e.g., from `openssl rand -hex 32`).
+# When empty/missing, the raw badger_password bytes are used as the encryption key (legacy mode).
+# Generate with: openssl rand -hex 32
+# kdf_salt: ""
 event_initiator_algorithm: "ed25519"  # or "ed25519", default: ed25519
 event_initiator_pubkey: "event_initiator_pubkey"
 

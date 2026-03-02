@@ -41,6 +41,7 @@ type TestConfig struct {
 	MPCThreshold         int    `yaml:"mpc_threshold"`
 	Environment          string `yaml:"environment"`
 	BadgerPassword       string `yaml:"badger_password"`
+	KDFSalt              string `yaml:"kdf_salt"`
 	EventInitiatorPubkey string `yaml:"event_initiator_pubkey"`
 	MPCiumVersion        string `yaml:"mpcium_version"`
 	MaxConcurrentKeygen  int    `yaml:"max_concurrent_keygen"`
@@ -476,6 +477,9 @@ func (s *E2ETestSuite) CheckKeyInAllNodes(t *testing.T, walletID, keyType, keyNa
 	key := fmt.Sprintf("%s:%s_v1", keyType, walletID)
 	t.Logf("Looking for key: %s", key)
 
+	encKey, err := kvstore.DeriveEncryptionKey(s.config.BadgerPassword, s.config.KDFSalt)
+	require.NoError(t, err, "failed to derive encryption key")
+
 	for i := 0; i < numNodes; i++ {
 		nodeName := fmt.Sprintf("test_node%d", i)
 		// Skip if node is stopped
@@ -497,7 +501,7 @@ func (s *E2ETestSuite) CheckKeyInAllNodes(t *testing.T, walletID, keyType, keyNa
 		// Open database in read-only mode with recovery options
 		opts := badger.DefaultOptions(dbPath).
 			WithCompression(options.ZSTD).
-			WithEncryptionKey([]byte(s.config.BadgerPassword)).
+			WithEncryptionKey(encKey).
 			WithIndexCacheSize(100 << 20).
 			WithReadOnly(true).
 			WithBypassLockGuard(true) // Allow opening even if not properly closed
@@ -510,7 +514,7 @@ func (s *E2ETestSuite) CheckKeyInAllNodes(t *testing.T, walletID, keyType, keyNa
 			t.Logf("Attempting database recovery for %s", nodeName)
 			recoveryOpts := badger.DefaultOptions(dbPath).
 				WithCompression(options.ZSTD).
-				WithEncryptionKey([]byte(s.config.BadgerPassword)).
+				WithEncryptionKey(encKey).
 				WithIndexCacheSize(100 << 20)
 
 			recoveryDB, recoveryErr := badger.Open(recoveryOpts)

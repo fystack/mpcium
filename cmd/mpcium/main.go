@@ -88,6 +88,10 @@ func main() {
 						Aliases: []string{"k"},
 						Usage:   "Path to file containing password for decrypting .age encrypted node private key",
 					},
+					&cli.StringFlag{
+						Name:  "peers",
+						Usage: "Path to peers.json file (syncs new peers to Consul on startup)",
+					},
 					&cli.BoolFlag{
 						Name:  "debug",
 						Usage: "Enable debug logging",
@@ -146,6 +150,19 @@ func runNode(ctx context.Context, c *cli.Command) error {
 
 	consulClient := infra.GetConsulClient(environment)
 	keyinfoStore := keyinfo.NewStore(consulClient.KV())
+
+	// If --peers flag is provided, sync new peers from file to Consul
+	peersFile := c.String("peers")
+	if peersFile != "" {
+		filePeers, err := config.LoadPeersFromFile(peersFile)
+		if err != nil {
+			logger.Fatal("Failed to load peers from file", err)
+		}
+		if err := config.SyncPeersToConsul(consulClient.KV(), filePeers); err != nil {
+			logger.Fatal("Failed to sync peers to Consul", err)
+		}
+	}
+
 	peers := LoadPeersFromConsul(consulClient)
 	nodeID := GetIDFromName(nodeName, peers)
 
@@ -474,7 +491,7 @@ func NewConsulClient(addr string) *api.Client {
 
 func LoadPeersFromConsul(consulClient *api.Client) []config.Peer { // Create a Consul Key-Value store client
 	kv := consulClient.KV()
-	peers, err := config.LoadPeersFromConsul(kv, "mpc_peers/")
+	peers, err := config.LoadPeersFromConsul(kv, config.PeersPrefix)
 	if err != nil {
 		logger.Fatal("Failed to load peers from Consul", err)
 	}
@@ -517,11 +534,17 @@ func NewBadgerKV(nodeName, nodeID string, appConfig *config.AppConfig) *kvstore.
 		backupDir = filepath.Join(".", "backups")
 	}
 
+	// Derive encryption key (Argon2id if kdf_salt is set, raw password otherwise)
+	encKey, err := kvstore.DeriveEncryptionKey(appConfig.BadgerPassword, appConfig.KDFSalt)
+	if err != nil {
+		logger.Fatal("Failed to derive encryption key", err)
+	}
+
 	// Create BadgerConfig struct
 	config := kvstore.BadgerConfig{
 		NodeID:              nodeName,
-		EncryptionKey:       []byte(appConfig.BadgerPassword),
-		BackupEncryptionKey: []byte(appConfig.BadgerPassword), // Using same key for backup encryption
+		EncryptionKey:       encKey,
+		BackupEncryptionKey: encKey,
 		BackupDir:           backupDir,
 		DBPath:              dbPath,
 	}
