@@ -270,7 +270,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		ec.handleKeygenSessionError(walletID, err, "Failed to publish key generation success message", natMsg)
 		return
 	}
-	ec.sendReplyToRemoveMsg(natMsg)
+	ec.sendReply(natMsg, payload)
 	logger.Info("[COMPLETED KEY GEN] Key generation completed successfully", "walletID", walletID)
 }
 
@@ -303,7 +303,7 @@ func (ec *eventConsumer) handleKeygenSessionError(walletID string, err error, co
 			"payload", string(keygenResultBytes),
 		)
 	}
-	ec.sendReplyToRemoveMsg(natMsg)
+	ec.sendReply(natMsg, keygenResultBytes)
 }
 
 func (ec *eventConsumer) startKeyGenEventWorker() {
@@ -401,7 +401,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
-			ec.signingResultQueue,
+			nil,
 			msg.DerivationPath,
 			idempotentKey,
 		)
@@ -411,7 +411,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			msg.WalletID,
 			msg.TxID,
 			msg.NetworkInternalCode,
-			ec.signingResultQueue,
+			nil,
 			msg.DerivationPath,
 			idempotentKey,
 		)
@@ -502,7 +502,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 
 	onSuccess := func(data []byte) {
 		done()
-		ec.sendReplyToRemoveMsg(natMsg)
+		ec.sendReply(natMsg, data)
 	}
 	go session.Sign(onSuccess)
 }
@@ -549,30 +549,23 @@ func (ec *eventConsumer) handleSigningSessionError(walletID, txID, networkIntern
 		)
 		return
 	}
-	err = ec.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: composeSigningIdempotentKey(txID, natMsg),
-	})
-	if err != nil {
-		logger.Error("Failed to enqueue signing result event", err,
-			"walletID", walletID,
-			"txID", txID,
-			"payload", string(signingResultBytes),
-		)
-	}
-	ec.sendReplyToRemoveMsg(natMsg)
+	ec.sendReply(natMsg, signingResultBytes)
 }
 
-func (ec *eventConsumer) sendReplyToRemoveMsg(natMsg *nats.Msg) {
-	msg := natMsg.Data
+func (ec *eventConsumer) sendReply(natMsg *nats.Msg, payload []byte) {
+	reply := natMsg.Header.Get("Mpc-Reply-To")
+	if reply == "" {
+		reply = natMsg.Reply
+	}
 
-	if natMsg.Reply == "" {
-		logger.Warn("No reply inbox specified for sign success message", "msg", string(msg))
+	if reply == "" {
+		logger.Warn("No reply inbox specified for sign success message", "msg", string(natMsg.Data))
 		return
 	}
 
-	err := ec.pubsub.Publish(natMsg.Reply, msg)
+	err := ec.pubsub.Publish(reply, payload)
 	if err != nil {
-		logger.Error("Failed to reply message", err, "reply", natMsg.Reply)
+		logger.Error("Failed to reply message", err, "reply", reply)
 		return
 	}
 }

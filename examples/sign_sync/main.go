@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
-	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/google/uuid"
@@ -76,23 +76,20 @@ func main() {
 		TxID:                txID,
 		Tx:                  dummyTx,
 	}
-	// 3) Use SignTransaction (Async)
-	err = mpcClient.SignTransaction(txMsg)
+	// 3) Use SignTransactionSync to get result directly
+	ctx := context.Background()
+	result, err := mpcClient.SignTransactionSync(ctx, txMsg)
 	if err != nil {
-		logger.Fatal("SignTransaction failed", err)
+		logger.Fatal("SignTransactionSync failed", err)
 	}
-	fmt.Printf("SignTransaction(%q) sent, awaiting result...\n", txID)
 
-	// 4) Listen for signing results
-	err = mpcClient.OnSignResult(func(evt event.SigningResultEvent) {
-		logger.Info("Signing result received",
-			"txID", evt.TxID,
-			"signature", fmt.Sprintf("%x", evt.Signature),
-		)
-	})
-	if err != nil {
-		logger.Fatal("Failed to subscribe to OnSignResult", err)
-	}
+	logger.Info("Signing result received",
+		"txID", result.TxID,
+		"signature", fmt.Sprintf("%x", result.Signature),
+		"resultType", result.ResultType,
+		"errorCode", result.ErrorCode,
+		"errorReason", result.ErrorReason,
+	)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
