@@ -22,11 +22,9 @@ import (
 type SessionType string
 
 const (
-	// Result topic format: mpc.mpc_<type>_result.<clientID>.<entityID>
-	// The clientID segment ensures each client only receives its own results.
-	TypeGenerateWalletResultFmt = "mpc.mpc_keygen_result.%s.%s"
-	TypeReshareWalletResultFmt  = "mpc.mpc_reshare_result.%s.%s"
-	TypeSigningResultFmt        = "mpc.mpc_signing_result.%s.%s"
+	TypeGenerateWalletResultFmt = "mpc.mpc_keygen_result.%s"
+	TypeReshareWalletResultFmt  = "mpc.mpc_reshare_result.%s"
+	TypeSigningResultFmt        = "mpc.mpc_signing_result.%s"
 
 	SessionTypeECDSA SessionType = "session_ecdsa"
 	SessionTypeEDDSA SessionType = "session_eddsa"

@@ -42,7 +42,6 @@ type ecdsaSigningSession struct {
 	data                *keygen.LocalPartySaveData
 	tx                  *big.Int
 	txID                string
-	clientID            string
 	networkInternalCode string
 	derivationPath      []uint32
 	ckd                 *CKD
@@ -51,7 +50,6 @@ type ecdsaSigningSession struct {
 func newECDSASigningSession(
 	walletID string,
 	txID string,
-	clientID string,
 	networkInternalCode string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
@@ -102,7 +100,6 @@ func newECDSASigningSession(
 		},
 		endCh:               make(chan *common.SignatureData),
 		txID:                txID,
-		clientID:            clientID,
 		networkInternalCode: networkInternalCode,
 		derivationPath:      derivationPath,
 		ckd:                 ckd,
@@ -218,8 +215,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 				return
 			}
 
-			resultTopic := fmt.Sprintf(TypeSigningResultFmt, s.clientID, s.txID)
-			err = s.resultQueue.Enqueue(resultTopic, bytes, &messaging.EnqueueOptions{
+			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {

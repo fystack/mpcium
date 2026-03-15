@@ -27,11 +27,9 @@ type EnqueueOptions struct {
 
 type msgQueue struct {
 	consumerName    string
-	streamName      string
 	js              jetstream.JetStream
 	consumer        jetstream.Consumer
 	consumerContext jetstream.ConsumeContext
-	ephemeral       bool // if true, consumer is deleted on Close
 }
 
 type NATsMessageQueueManager struct {
@@ -60,9 +58,9 @@ func NewNATsMessageQueueManager(queueName string, subjectWildCards []string, nc 
 		Name:        queueName,
 		Description: "Stream for " + queueName,
 		Subjects:    subjectWildCards,
-		MaxBytes:    104_857_600, // 100 MB
+		MaxBytes:    10_485_760, // Light Production (Low Traffic) (10 MB)
 		Storage:     jetstream.FileStorage,
-		Retention:   jetstream.LimitsPolicy,
+		Retention:   jetstream.WorkQueuePolicy,
 	})
 	if err != nil {
 		logger.Fatal("Error creating JetStream stream: ", err)
@@ -97,40 +95,6 @@ func (m *NATsMessageQueueManager) NewMessageQueue(consumerName string) MessageQu
 	consumer, err := m.js.CreateOrUpdateConsumer(context.Background(), m.queueName, cfg)
 	if err != nil {
 		logger.Fatal("Error creating JetStream consumer: ", err)
-	}
-
-	mq.consumer = consumer
-	return mq
-}
-
-// NewClientMessageQueue creates a per-client consumer that only receives results
-// addressed to this specific clientID. The consumer uses DeliverNewPolicy so it
-// only sees messages published after it connects. The consumer is ephemeral
-// (no Durable name) and auto-deletes after InactiveThreshold.
-func (m *NATsMessageQueueManager) NewClientMessageQueue(consumerName, clientID string) MessageQueue {
-	mq := &msgQueue{
-		consumerName: consumerName + "_" + clientID,
-		streamName:   m.queueName,
-		js:           m.js,
-		ephemeral:    true,
-	}
-	// Filter to only this client's results: e.g. mpc.mpc_signing_result.<clientID>.>
-	consumerFilter := fmt.Sprintf("%s.%s.%s.>", m.queueName, consumerName, clientID)
-	cfg := jetstream.ConsumerConfig{
-		MaxAckPending:     1000,
-		AckWait:           30 * time.Second,
-		AckPolicy:         jetstream.AckExplicitPolicy,
-		DeliverPolicy:     jetstream.DeliverNewPolicy,
-		InactiveThreshold: 5 * time.Minute,
-		FilterSubjects: []string{
-			consumerFilter,
-		},
-		MaxDeliver: 3,
-	}
-	logger.Info("Creating per-client consumer", "consumerName", mq.consumerName, "queueName", m.queueName, "filterSubject", consumerFilter)
-	consumer, err := m.js.CreateOrUpdateConsumer(context.Background(), m.queueName, cfg)
-	if err != nil {
-		logger.Fatal("Error creating JetStream per-client consumer: ", err)
 	}
 
 	mq.consumer = consumer

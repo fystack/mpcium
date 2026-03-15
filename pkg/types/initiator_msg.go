@@ -36,7 +36,6 @@ type InitiatorMessage interface {
 
 type GenerateKeyMessage struct {
 	WalletID             string                `json:"wallet_id"`
-	ClientID             string                `json:"client_id,omitempty"`
 	Signature            []byte                `json:"signature"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
@@ -47,7 +46,6 @@ type SignTxMessage struct {
 	NetworkInternalCode  string                `json:"network_internal_code"`
 	TxID                 string                `json:"tx_id"`
 	Tx                   []byte                `json:"tx"`
-	ClientID             string                `json:"client_id,omitempty"`
 	Signature            []byte                `json:"signature"`
 	DerivationPath       []uint32              `json:"derivation_path"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
@@ -59,7 +57,6 @@ type ResharingMessage struct {
 	NewThreshold         int                   `json:"new_threshold"`
 	KeyType              KeyType               `json:"key_type"`
 	WalletID             string                `json:"wallet_id"`
-	ClientID             string                `json:"client_id,omitempty"`
 	Signature            []byte                `json:"signature,omitempty"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
