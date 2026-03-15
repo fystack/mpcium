@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -582,8 +583,27 @@ func GetNATSConnection(environment string, appConfig *config.AppConfig) (*nats.C
 	opts := []nats.Option{
 		nats.MaxReconnects(-1), // retry forever
 		nats.ReconnectWait(2 * time.Second),
-		nats.DisconnectHandler(func(nc *nats.Conn) {
-			logger.Warn("Disconnected from NATS")
+		nats.ReconnectBufSize(16 * 1024 * 1024), // 16MB buffer during reconnect
+		// Use a custom dialer with TCP keepalive to prevent servers from killing idle connections
+		nats.Dialer(&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second, // TCP keepalive every 30s — counts as wire activity for AWS
+		}),
+		// Ping every 20s, fail after 3 missed pings (60s).
+		// This detects dead connections well before AWS NAT Gateway's
+		// 350s idle timeout kills the TCP connection silently.
+		nats.PingInterval(20 * time.Second),
+		nats.MaxPingsOutstanding(3),
+		// Enable TCP keepalive to prevent network gateway from killing idle connections.
+		// This sends TCP-level keepalive probes that count as wire activity,
+		// preventing NAT Gateway / NLB idle timeout eviction.
+		nats.CustomInboxPrefix("_INBOX_mpcium"),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			if err != nil {
+				logger.Warn("Disconnected from NATS", "error", err.Error())
+			} else {
+				logger.Warn("Disconnected from NATS")
+			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			logger.Info("Reconnected to NATS", "url", nc.ConnectedUrl())
