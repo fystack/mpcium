@@ -146,6 +146,7 @@ func (p *Node) CreateSigningSession(
 	sessionType SessionType,
 	walletID string,
 	txID string,
+	clientID string,
 	networkInternalCode string,
 	resultQueue messaging.MessageQueue,
 	derivationPath []uint32,
@@ -184,6 +185,7 @@ func (p *Node) CreateSigningSession(
 		return newECDSASigningSession(
 			walletID,
 			txID,
+			clientID,
 			networkInternalCode,
 			p.pubSub,
 			p.direct,
@@ -205,6 +207,7 @@ func (p *Node) CreateSigningSession(
 		return newEDDSASigningSession(
 			walletID,
 			txID,
+			clientID,
 			networkInternalCode,
 			p.pubSub,
 			p.direct,

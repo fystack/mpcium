@@ -19,7 +19,10 @@ import (
 
 const (
 	// Maximum time to wait for a signing response.
-	signingResponseTimeout = 30 * time.Second
+	// Must be longer than the event consumer's processing timeout so that
+	// the event consumer always finishes first and sends a reply before
+	// the signing consumer gives up and NAKs.
+	signingResponseTimeout = 45 * time.Second
 	// How often to poll for the reply message.
 	signingPollingInterval = 500 * time.Millisecond
 	// How often to check if enough peers are ready
@@ -191,13 +194,18 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 		return
 	}
 
-	// Poll for the reply message until timeout.
+	// Wait for the MPC operation to complete before ACKing the JetStream message.
+	// This ensures messages are not lost on restart — unACKed messages will be
+	// redelivered by JetStream. We use msg.InProgress() to periodically reset
+	// the ack deadline so JetStream does not redeliver while we're still working.
+	// MaxAckPending on the consumer limits concurrency: JetStream won't deliver
+	// new messages until in-flight ones are ACKed, providing natural backpressure.
 	deadline := time.Now().Add(signingResponseTimeout)
 	for time.Now().Before(deadline) {
 		replyMsg, err := replySub.NextMsg(signingPollingInterval)
 		if err != nil {
-			// If timeout occurs, continue trying.
 			if err == nats.ErrTimeout {
+				_ = msg.InProgress()
 				continue
 			}
 			logger.Error("SigningConsumer: Error receiving reply message", err)
@@ -212,7 +220,10 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 		}
 	}
 
-	logger.Warn("SigningConsumer: Timeout waiting for signing event response")
+	// Timeout: NAK so JetStream can redeliver when we have capacity.
+	logger.Warn("SigningConsumer: Timeout waiting for signing response, NAK for redelivery",
+		"walletID", signingMsg.WalletID,
+		"txID", signingMsg.TxID)
 	_ = msg.Nak()
 }
 
@@ -235,8 +246,9 @@ func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, error
 		return
 	}
 
-	err = sc.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: buildIdempotentKey(signMsg.TxID, sessionID, mpc.TypeSigningResultFmt),
+	resultTopic := fmt.Sprintf(mpc.TypeSigningResultFmt, signMsg.ClientID, signMsg.TxID)
+	err = sc.signingResultQueue.Enqueue(resultTopic, signingResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: buildIdempotentKey(signMsg.TxID, sessionID, resultTopic),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue signing result event", err,

@@ -58,6 +58,7 @@ type brokerConfiguration struct {
 	consumerNamePrefix  string
 	deliverPolicy       jetstream.DeliverPolicy
 	backoffDurations    []time.Duration
+	maxAckPending       int
 }
 
 func WithStreamDescription(description string) BrokerOption {
@@ -117,6 +118,19 @@ func WithDeliverPolicy(policy jetstream.DeliverPolicy) BrokerOption {
 func WithBackoffDurations(durations []time.Duration) BrokerOption {
 	return func(cfg *brokerConfiguration) {
 		cfg.backoffDurations = durations
+	}
+}
+
+// WithMaxAckPending sets the maximum number of unACKed messages the JetStream
+// server will deliver to this consumer at once. Once the limit is reached,
+// JetStream holds back new messages until existing ones are ACKed or NAKed.
+// This provides natural backpressure: messages stay durably in the stream
+// instead of being pushed to consumers that have no capacity to process them.
+// Set this to match the desired processing concurrency (e.g. 2 for keygen,
+// 20 for signing).
+func WithMaxAckPending(maxAckPending int) BrokerOption {
+	return func(cfg *brokerConfiguration) {
+		cfg.maxAckPending = maxAckPending
 	}
 }
 
@@ -221,6 +235,7 @@ func (b *jetStreamBroker) CreateSubscription(
 		DeliverPolicy: b.config.deliverPolicy,
 		FilterSubject: subject,
 		AckWait:       b.config.ackWait,
+		MaxAckPending: b.config.maxAckPending,
 	}
 
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.config.streamName, consumerConfig)
@@ -309,6 +324,7 @@ func (b *jetStreamBroker) FetchMessages(
 		DeliverPolicy: b.config.deliverPolicy,
 		FilterSubject: subject,
 		AckWait:       b.config.ackWait,
+		MaxAckPending: b.config.maxAckPending,
 	}
 
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.config.streamName, consumerConfig)

@@ -1,11 +1,10 @@
 package event
 
 const (
-	SigningPublisherStream     = "mpc-signing"
-	SigningConsumerStream      = "mpc-signing-consumer"
-	SigningRequestTopic        = "mpc.signing_request.*"
-	SigningResultTopic         = "mpc.mpc_signing_result.*"
-	SigningResultCompleteTopic = "mpc.mpc_signing_result.complete"
+	SigningPublisherStream = "mpc-signing"
+	SigningConsumerStream  = "mpc-signing-consumer"
+	SigningRequestTopic    = "mpc.signing_request.*"
+	SigningResultTopic     = "mpc.mpc_signing_result.>"
 )
 
 type SigningResultEvent struct {

@@ -27,6 +27,7 @@ type eddsaSigningSession struct {
 	data                *keygen.LocalPartySaveData
 	tx                  *big.Int
 	txID                string
+	clientID            string
 	networkInternalCode string
 	derivationPath      []uint32
 	ckd                 *CKD
@@ -35,6 +36,7 @@ type eddsaSigningSession struct {
 func newEDDSASigningSession(
 	walletID string,
 	txID string,
+	clientID string,
 	networkInternalCode string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
@@ -60,8 +62,8 @@ func newEDDSASigningSession(
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
 			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
-			// preParams:          preParams,
+			ErrCh:              make(chan error, 1),
+			doneCh:             make(chan struct{}),
 			kvstore:      kvstore,
 			keyinfoStore: keyinfoStore,
 			topicComposer: &TopicComposer{
@@ -82,6 +84,7 @@ func newEDDSASigningSession(
 		},
 		endCh:               make(chan *common.SignatureData),
 		txID:                txID,
+		clientID:            clientID,
 		networkInternalCode: networkInternalCode,
 		derivationPath:      derivationPath,
 		ckd:                 ckd,
@@ -155,13 +158,15 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 	logger.Info("Starting signing", "walletID", s.walletID)
 	go func() {
 		if err := s.party.Start(); err != nil {
-			s.ErrCh <- err
+			s.sendErr(err)
 		}
 	}()
 
 	for {
-
 		select {
+		case <-s.doneCh:
+			logger.Info("EDDSA signing session stopped", "walletID", s.walletID)
+			return
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case sig := <-s.endCh:
@@ -174,7 +179,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			ok := edwards.Verify(&pk, s.tx.Bytes(), new(big.Int).SetBytes(sig.R), new(big.Int).SetBytes(sig.S))
 			if !ok {
-				s.ErrCh <- errors.New("Failed to verify signature")
+				s.sendErr(errors.New("Failed to verify signature"))
 				return
 			}
 
@@ -188,15 +193,16 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			bytes, err := json.Marshal(r)
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to marshal raw signature")
+				s.sendErr(errors.Wrap(err, "Failed to marshal raw signature"))
 				return
 			}
 
-			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
+			resultTopic := fmt.Sprintf(TypeSigningResultFmt, s.clientID, s.txID)
+			err = s.resultQueue.Enqueue(resultTopic, bytes, &messaging.EnqueueOptions{
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
+				s.sendErr(errors.Wrap(err, "Failed to publish sign success message"))
 				return
 			}
 
@@ -210,7 +216,6 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 			onSuccess(bytes)
 			return
 		}
-
 	}
 }
 // Close cleans up the EDDSA signing session by zeroing all sensitive data.

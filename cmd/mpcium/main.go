@@ -189,24 +189,39 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 
 	pubsub := messaging.NewNATSPubSub(natsConn)
+	maxConcurrentKeygen := viper.GetInt("max_concurrent_keygen")
+	if maxConcurrentKeygen == 0 {
+		maxConcurrentKeygen = eventconsumer.DefaultConcurrentKeygen
+	}
+	maxConcurrentSigning := viper.GetInt("max_concurrent_signing")
+	if maxConcurrentSigning == 0 {
+		maxConcurrentSigning = eventconsumer.DefaultConcurrentSigning
+	}
+
 	keygenBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.KeygenBrokerStream, []string{
 		event.KeygenRequestTopic,
-	})
+	},
+		messaging.WithMaxAge(24*time.Hour),
+		messaging.WithMaxAckPending(maxConcurrentKeygen),
+	)
 	if err != nil {
 		logger.Fatal("Failed to create keygen jetstream broker", err)
 	}
 	signingBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.SigningPublisherStream, []string{
 		event.SigningRequestTopic,
-	})
+	},
+		messaging.WithMaxAge(24*time.Hour),
+		messaging.WithMaxAckPending(maxConcurrentSigning),
+	)
 	if err != nil {
 		logger.Fatal("Failed to create signing jetstream broker", err)
 	}
 
 	directMessaging := messaging.NewNatsDirectMessaging(natsConn)
 	mqManager := messaging.NewNATsMessageQueueManager("mpc", []string{
-		"mpc.mpc_keygen_result.*",
-		event.SigningResultTopic,
-		"mpc.mpc_reshare_result.*",
+		"mpc.mpc_keygen_result.>",
+		"mpc.mpc_signing_result.>",
+		"mpc.mpc_reshare_result.>",
 	}, natsConn)
 
 	genKeyResultQueue := mqManager.NewMessageQueue("mpc_keygen_result")

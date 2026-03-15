@@ -22,6 +22,7 @@ type KeyGenSession interface {
 	Init()
 	GenerateKey(done func())
 	GetPubKeyResult() []byte
+	WaitForPeersReady() error
 }
 
 type ecdsaKeygenSession struct {
@@ -54,7 +55,8 @@ func newECDSAKeygenSession(
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
 			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
+			ErrCh:              make(chan error, 1),
+			doneCh:             make(chan struct{}),
 			preParams:          preParams,
 			kvstore:            kvstore,
 			keyinfoStore:       keyinfoStore,
@@ -151,4 +153,3 @@ func (s *ecdsaKeygenSession) GenerateKey(done func()) {
 		}
 	}
 }
-

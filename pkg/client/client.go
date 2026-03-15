@@ -10,6 +10,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/types"
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -31,6 +32,7 @@ type MPCClient interface {
 }
 
 type mpcClient struct {
+	clientID            string
 	signingBroker       messaging.MessageBroker
 	keygenBroker        messaging.MessageBroker
 	pubsub              messaging.PubSub
@@ -47,6 +49,10 @@ type Options struct {
 
 	// Signer for signing messages
 	Signer Signer
+
+	// ClientID uniquely identifies this client instance for result routing.
+	// If empty, a UUID is generated automatically.
+	ClientID string
 }
 
 // NewMPCClient creates a new MPC client using the provided options.
@@ -55,6 +61,13 @@ func NewMPCClient(opts Options) MPCClient {
 	if opts.Signer == nil {
 		logger.Fatal("Signer is required", nil)
 	}
+
+	clientID := opts.ClientID
+	if clientID == "" {
+		clientID = uuid.New().String()
+	}
+
+	logger.Info("Creating MPC client", "clientID", clientID)
 
 	// 2) Create the PubSub for both publish & subscribe
 	signingBroker, err := messaging.NewJetStreamBroker(
@@ -83,16 +96,18 @@ func NewMPCClient(opts Options) MPCClient {
 	pubsub := messaging.NewNATSPubSub(opts.NatsConn)
 
 	manager := messaging.NewNATsMessageQueueManager("mpc", []string{
-		"mpc.mpc_keygen_result.*",
-		"mpc.mpc_signing_result.*",
-		"mpc.mpc_reshare_result.*",
+		"mpc.mpc_keygen_result.>",
+		"mpc.mpc_signing_result.>",
+		"mpc.mpc_reshare_result.>",
 	}, opts.NatsConn)
 
-	genKeySuccessQueue := manager.NewMessageQueue("mpc_keygen_result")
-	signResultQueue := manager.NewMessageQueue("mpc_signing_result")
-	reshareSuccessQueue := manager.NewMessageQueue("mpc_reshare_result")
+	// Per-client consumers: each client only receives results addressed to its clientID.
+	genKeySuccessQueue := manager.NewClientMessageQueue("mpc_keygen_result", clientID)
+	signResultQueue := manager.NewClientMessageQueue("mpc_signing_result", clientID)
+	reshareSuccessQueue := manager.NewClientMessageQueue("mpc_reshare_result", clientID)
 
 	return &mpcClient{
+		clientID:            clientID,
 		signingBroker:       signingBroker,
 		keygenBroker:        keygenBroker,
 		pubsub:              pubsub,
@@ -113,6 +128,7 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 	// build the message
 	msg := &types.GenerateKeyMessage{
 		WalletID:             walletID,
+		ClientID:             c.clientID,
 		AuthorizerSignatures: authorizerSignatures,
 	}
 	// compute the canonical raw bytes
@@ -139,7 +155,8 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 
 // The callback will be invoked whenever a wallet creation result is received.
 func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error {
-	err := c.genKeySuccessQueue.Dequeue(GenerateWalletSuccessTopic, func(msg []byte) error {
+	topic := fmt.Sprintf("mpc.mpc_keygen_result.%s.*", c.clientID)
+	err := c.genKeySuccessQueue.Dequeue(topic, func(msg []byte) error {
 		var event event.KeygenResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
@@ -158,6 +175,7 @@ func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResul
 
 // SignTransaction builds a SignTxMessage, signs it, and publishes it.
 func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
+	msg.ClientID = c.clientID
 	// compute the canonical raw bytes (omitting Signature field)
 	raw, err := msg.Raw()
 	if err != nil {
@@ -181,7 +199,8 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
-	err := c.signResultQueue.Dequeue(event.SigningResultCompleteTopic, func(msg []byte) error {
+	topic := fmt.Sprintf("mpc.mpc_signing_result.%s.*", c.clientID)
+	err := c.signResultQueue.Dequeue(topic, func(msg []byte) error {
 		var event event.SigningResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
@@ -199,6 +218,7 @@ func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) 
 }
 
 func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
+	msg.ClientID = c.clientID
 	// compute the canonical raw bytes
 	raw, err := msg.Raw()
 	if err != nil {
@@ -222,8 +242,8 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 }
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
-
-	err := c.reshareSuccessQueue.Dequeue(ResharingSuccessTopic, func(msg []byte) error {
+	topic := fmt.Sprintf("mpc.mpc_reshare_result.%s.*", c.clientID)
+	err := c.reshareSuccessQueue.Dequeue(topic, func(msg []byte) error {
 		logger.Info("Received reshare success message", "raw", string(msg))
 		var event event.ResharingResultEvent
 		err := json.Unmarshal(msg, &event)
