@@ -3,6 +3,7 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -252,6 +253,17 @@ func (s *session) receiveBroadcastTssMessage(rawMsg []byte) {
 
 // update: the logic of receiving message should be modified
 func (s *session) receiveTssMessage(msg *types.TssMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Panic recovered in receiveTssMessage",
+				fmt.Errorf("%v", r),
+				"walletID", s.walletID,
+				"stack", string(debug.Stack()),
+			)
+			s.ErrCh <- fmt.Errorf("panic in receiveTssMessage: %v", r)
+		}
+	}()
+
 	toIDs := make([]string, len(msg.To))
 	for i, id := range msg.To {
 		toIDs[i] = id.String()

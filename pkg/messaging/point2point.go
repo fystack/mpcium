@@ -64,9 +64,10 @@ func (d *natsDirectMessaging) SendToOther(topic string, message []byte) error {
 			}
 			return nil
 		},
-		retry.Attempts(3),
-		retry.Delay(50*time.Millisecond),
-		retry.DelayType(retry.FixedDelay),
+		retry.Attempts(10),
+		retry.Delay(100*time.Millisecond),
+		retry.MaxDelay(1*time.Second),
+		retry.DelayType(retry.BackOffDelay),
 		retry.OnRetry(func(n uint, err error) {
 			logger.Error("Failed to send direct message", err, "attempt", n+1, "topic", topic)
 		}),
