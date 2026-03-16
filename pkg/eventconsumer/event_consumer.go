@@ -27,8 +27,6 @@ const (
 
 	DefaultConcurrentKeygen   = 2
 	DefaultConcurrentSigning  = 20
-	DefaultSessionWarmUpDelay = 200
-
 	KeyGenTimeOut = 30 * time.Second
 )
 
@@ -55,8 +53,6 @@ type eventConsumer struct {
 	signingMsgBuffer     chan *nats.Msg
 	maxConcurrentKeygen  int
 	maxConcurrentSigning int
-	sessionWarmUpDelayMs int
-
 	// Track active sessions with timestamps for cleanup
 	activeSessions  map[string]time.Time // Maps "walletID-txID" to creation time
 	sessionsLock    sync.RWMutex
@@ -83,19 +79,12 @@ func NewEventConsumer(
 		maxConcurrentSigning = DefaultConcurrentSigning
 	}
 
-	sessionWarmUpDelayMs := viper.GetInt("session_warm_up_delay_ms")
-	if sessionWarmUpDelayMs == 0 {
-		sessionWarmUpDelayMs = DefaultSessionWarmUpDelay
-	}
-
 	logger.Info(
 		"Initializing event consumer",
 		"max_concurrent_keygen",
 		maxConcurrentKeygen,
 		"max_concurrent_signing",
 		maxConcurrentSigning,
-		"session_warm_up_delay_ms",
-		sessionWarmUpDelayMs,
 	)
 
 	ec := &eventConsumer{
@@ -114,7 +103,6 @@ func NewEventConsumer(
 		identityStore:        identityStore,
 		keygenMsgBuffer:      make(chan *nats.Msg, 100),
 		signingMsgBuffer:     make(chan *nats.Msg, 200), // Larger buffer for signing
-		sessionWarmUpDelayMs: sessionWarmUpDelayMs,
 	}
 
 	go ec.startKeyGenEventWorker()
@@ -142,10 +130,6 @@ func (ec *eventConsumer) Run() {
 	}
 
 	logger.Info("MPC Event consumer started...!")
-}
-
-func (ec *eventConsumer) warmUpSession() {
-	time.Sleep(time.Duration(ec.sessionWarmUpDelayMs) * time.Millisecond)
 }
 
 func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
