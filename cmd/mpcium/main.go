@@ -201,7 +201,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	keygenBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.KeygenBrokerStream, []string{
 		event.KeygenRequestTopic,
 	},
-		messaging.WithMaxAge(24*time.Hour),
 		messaging.WithMaxAckPending(maxConcurrentKeygen),
 	)
 	if err != nil {
@@ -210,7 +209,6 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	signingBroker, err := messaging.NewJetStreamBroker(ctx, natsConn, event.SigningPublisherStream, []string{
 		event.SigningRequestTopic,
 	},
-		messaging.WithMaxAge(24*time.Hour),
 		messaging.WithMaxAckPending(maxConcurrentSigning),
 	)
 	if err != nil {
