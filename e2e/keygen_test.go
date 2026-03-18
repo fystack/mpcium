@@ -43,6 +43,8 @@ func TestKeyGeneration(t *testing.T) {
 		suite.RegisterPeers(t)
 		t.Log("registerPeers completed")
 
+		suite.SeedPreParams(t)
+
 		t.Log("Starting startNodes...")
 		suite.StartNodes(t)
 		t.Log("startNodes completed")

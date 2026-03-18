@@ -3,6 +3,7 @@ module github.com/fystack/mpcium/e2e
 go 1.25.5
 
 require (
+	github.com/bnb-chain/tss-lib/v2 v2.0.2
 	github.com/dgraph-io/badger/v4 v4.9.0
 	github.com/fystack/mpcium v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
@@ -33,7 +34,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.6 // indirect
 	github.com/aws/smithy-go v1.24.0 // indirect
-	github.com/bnb-chain/tss-lib/v2 v2.0.2 // indirect
 	github.com/btcsuite/btcd v0.25.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
@@ -104,4 +104,4 @@ replace github.com/fystack/mpcium => ../
 
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
-replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.1
+replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3

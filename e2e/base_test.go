@@ -264,6 +264,79 @@ func (s *E2ETestSuite) RegisterPeers(t *testing.T) {
 	t.Log("Peer listing completed")
 }
 
+// SeedPreParams loads pre-generated ECDSA pre-parameters from fixture files
+// and writes them into each node's BadgerDB. This avoids the expensive safe-prime
+// generation at node startup which can take minutes on CI runners.
+//
+// Each node gets its own unique pre-parameters. Sharing the same pre-parameters
+// across nodes causes tss-lib to reject duplicate h1j values during keygen round 2.
+func (s *E2ETestSuite) SeedPreParams(t *testing.T) {
+	t.Log("Seeding pre-generated pre-params into node databases...")
+
+	// Read the badger password from a node config
+	configPath := filepath.Join(s.testDir, "test_node0", "config.yaml")
+	configData, err := os.ReadFile(configPath)
+	require.NoError(t, err, "Failed to read node config for badger password")
+
+	var nodeConfig struct {
+		BadgerPassword string `yaml:"badger_password"`
+		DbPath         string `yaml:"db_path"`
+	}
+	require.NoError(t, yaml.Unmarshal(configData, &nodeConfig), "Failed to parse node config")
+
+	dbBasePath := nodeConfig.DbPath
+	if dbBasePath == "" {
+		dbBasePath = "./db"
+	}
+
+	for i := 0; i < numNodes; i++ {
+		nodeName := fmt.Sprintf("test_node%d", i)
+
+		// Load per-node fixture files
+		fixtureData := make([][]byte, 2)
+		for j := 0; j < 2; j++ {
+			path := filepath.Join(s.testDir, "fixtures", fmt.Sprintf("node%d_pre_params_%d.json", i, j))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Logf("Warning: could not read pre-params fixture %s: %v (nodes will generate their own)", path, err)
+				return
+			}
+			fixtureData[j] = data
+		}
+
+		nodeDir := filepath.Join(s.testDir, nodeName)
+		dbPath := filepath.Join(nodeDir, dbBasePath, nodeName)
+
+		// Ensure the DB directory exists
+		require.NoError(t, os.MkdirAll(dbPath, 0755), "Failed to create DB directory for %s", nodeName)
+
+		// Open BadgerDB with the same options the node uses
+		opts := badger.DefaultOptions(dbPath).
+			WithCompression(options.ZSTD).
+			WithEncryptionKey([]byte(nodeConfig.BadgerPassword)).
+			WithIndexCacheSize(16 << 20).
+			WithBlockCacheSize(32 << 20).
+			WithLogger(nil)
+
+		db, err := badger.Open(opts)
+		require.NoError(t, err, "Failed to open BadgerDB for %s", nodeName)
+
+		// Write pre-params
+		for j := 0; j < 2; j++ {
+			key := fmt.Sprintf("pre_params_%d", j)
+			err := db.Update(func(txn *badger.Txn) error {
+				return txn.Set([]byte(key), fixtureData[j])
+			})
+			require.NoError(t, err, "Failed to seed %s for %s", key, nodeName)
+		}
+
+		require.NoError(t, db.Close(), "Failed to close BadgerDB for %s", nodeName)
+		t.Logf("Seeded pre-params for %s", nodeName)
+	}
+
+	t.Log("Pre-params seeding complete")
+}
+
 func (s *E2ETestSuite) StartNodes(t *testing.T) {
 	t.Log("Starting MPC nodes...")
 

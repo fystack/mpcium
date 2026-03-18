@@ -95,6 +95,8 @@ func TestSigning(t *testing.T) {
 		suite.SetupMPCClient(t)
 		t.Log("setupMPCClient completed")
 
+		suite.SeedPreParams(t)
+
 		t.Log("Starting startNodes...")
 		suite.StartNodes(t)
 		t.Log("startNodes completed")
