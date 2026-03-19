@@ -3,8 +3,10 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/bnb-chain/tss-lib/v2/tss"
@@ -27,6 +29,12 @@ const (
 
 	SessionTypeECDSA SessionType = "session_ecdsa"
 	SessionTypeEDDSA SessionType = "session_eddsa"
+
+	// PeerReadyTimeout is the max time to wait for all peers to confirm
+	// their subscriptions are active before starting the protocol.
+	PeerReadyTimeout = 10 * time.Second
+	// PeerReadyPollInterval is how often to retry the readiness check.
+	PeerReadyPollInterval = 300 * time.Millisecond
 )
 
 var (
@@ -68,6 +76,8 @@ type session struct {
 	keyinfoStore keyinfo.Store
 	broadcastSub messaging.Subscription
 	directSubs   []messaging.Subscription
+	// barrierSub is the subscription for the readiness barrier
+	barrierSub messaging.Subscription
 
 	resultQueue   messaging.MessageQueue
 	identityStore identity.Store
@@ -80,6 +90,31 @@ type session struct {
 	pubkeyBytes   []byte
 	sessionType   SessionType
 	idempotentKey string
+
+	// doneCh is closed when the session should stop (error or completion).
+	// Sign/Reshare goroutines select on this to avoid leaking forever.
+	doneCh   chan struct{}
+	doneOnce sync.Once
+}
+
+// sendErr sends an error to ErrCh without blocking if the session is stopped.
+func (s *session) sendErr(err error) {
+	select {
+	case s.ErrCh <- err:
+	case <-s.doneCh:
+	}
+}
+
+// Stop signals the session to terminate. Safe to call multiple times.
+func (s *session) Stop() {
+	s.doneOnce.Do(func() {
+		close(s.doneCh)
+	})
+}
+
+// Done returns a channel that is closed when the session should stop.
+func (s *session) Done() <-chan struct{} {
+	return s.doneCh
 }
 
 func (s *session) PartyID() *tss.PartyID {
@@ -98,7 +133,7 @@ func (s *session) PartyCount() int {
 func (s *session) handleTssMessage(keyshare tss.Message) {
 	data, routing, err := keyshare.WireBytes()
 	if err != nil {
-		s.ErrCh <- err
+		s.sendErr(err)
 		return
 	}
 
@@ -122,26 +157,26 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 	if routing.IsBroadcast && len(routing.To) == 0 {
 		signature, err := s.identityStore.SignMessage(&tssMsg) // attach signature
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("failed to sign message: %w", err)
+			s.sendErr(fmt.Errorf("failed to sign message: %w", err))
 			return
 		}
 		tssMsg.Signature = signature
 		msg, err := types.MarshalTssMessage(&tssMsg)
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+			s.sendErr(fmt.Errorf("failed to marshal tss message: %w", err))
 			return
 		}
 
 		err = s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
 		if err != nil {
-			s.ErrCh <- err
+			s.sendErr(err)
 			return
 		}
 	} else {
 		// p2p message
 		msg, err := types.MarshalTssMessage(&tssMsg) // without signature
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("failed to marshal tss message: %w", err)
+			s.sendErr(fmt.Errorf("failed to marshal tss message: %w", err))
 			return
 		}
 
@@ -153,18 +188,18 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 				err := s.direct.SendToSelf(topic, msg)
 				if err != nil {
 					logger.Error("Failed in SendToSelf direct message", err, "topic", topic)
-					s.ErrCh <- fmt.Errorf("failed to send direct message to %s", topic)
+					s.sendErr(fmt.Errorf("failed to send direct message to %s", topic))
 				}
 			} else {
 				cipher, err := s.identityStore.EncryptMessage(msg, toNodeID)
 				if err != nil {
-					s.ErrCh <- fmt.Errorf("encrypt tss message error %w", err)
+					s.sendErr(fmt.Errorf("encrypt tss message error %w", err))
 					logger.Error("Encrypt tss message error", err, "topic", topic)
 				}
 				err = s.direct.SendToOther(topic, cipher)
 				if err != nil {
 					logger.Error("Failed in SendToOther direct message", err, "topic", topic)
-					s.ErrCh <- fmt.Errorf("failed to send direct message to %w", err)
+					s.sendErr(fmt.Errorf("failed to send direct message to %w", err))
 				}
 			}
 		}
@@ -174,7 +209,7 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
 	senderID := extractSenderIDFromDirectTopic(topic)
 	if senderID == "" {
-		s.ErrCh <- fmt.Errorf("failed to extract senderID from direct topic: the direct topic format is wrong")
+		s.sendErr(fmt.Errorf("failed to extract senderID from direct topic: the direct topic format is wrong"))
 		return
 	}
 
@@ -186,13 +221,13 @@ func (s *session) receiveP2PTssMessage(topic string, cipher []byte) {
 	} else {
 		plaintext, err = s.identityStore.DecryptMessage(cipher, senderID)
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("failed to decrypt message: %w, tampered message", err)
+			s.sendErr(fmt.Errorf("failed to decrypt message: %w, tampered message", err))
 			return
 		}
 	}
 	msg, err := types.UnmarshalTssMessage(plaintext)
 	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		s.sendErr(fmt.Errorf("failed to unmarshal message: %w", err))
 		return
 	}
 
@@ -203,13 +238,13 @@ func (s *session) receiveBroadcastTssMessage(rawMsg []byte) {
 
 	msg, err := types.UnmarshalTssMessage(rawMsg)
 	if err != nil {
-		s.ErrCh <- fmt.Errorf("failed to unmarshal message: %w", err)
+		s.sendErr(fmt.Errorf("failed to unmarshal message: %w", err))
 		return
 	}
 
 	err = s.identityStore.VerifyMessage(msg)
 	if err != nil {
-		s.ErrCh <- fmt.Errorf("Failed to verify message: %w, tampered message", err)
+		s.sendErr(fmt.Errorf("Failed to verify message: %w, tampered message", err))
 		return
 	}
 
@@ -218,6 +253,17 @@ func (s *session) receiveBroadcastTssMessage(rawMsg []byte) {
 
 // update: the logic of receiving message should be modified
 func (s *session) receiveTssMessage(msg *types.TssMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Panic recovered in receiveTssMessage",
+				fmt.Errorf("%v", r),
+				"walletID", s.walletID,
+				"stack", string(debug.Stack()),
+			)
+			s.ErrCh <- fmt.Errorf("panic in receiveTssMessage: %v", r)
+		}
+	}()
+
 	toIDs := make([]string, len(msg.To))
 	for i, id := range msg.To {
 		toIDs[i] = id.String()
@@ -225,7 +271,7 @@ func (s *session) receiveTssMessage(msg *types.TssMessage) {
 
 	round, err := s.getRoundFunc(msg.MsgBytes, s.selfPartyID, msg.IsBroadcast)
 	if err != nil {
-		s.ErrCh <- errors.Wrap(err, "Broken TSS Share")
+		s.sendErr(errors.Wrap(err, "Broken TSS Share"))
 		return
 	}
 	logger.Debug(
@@ -279,7 +325,7 @@ func (s *session) subscribeFromPeersAsync(fromIDs []string) {
 	for _, fromID := range fromIDs {
 		topic := s.topicComposer.ComposeDirectTopic(fromID, toID)
 		if err := s.subscribeDirectTopicAsync(topic); err != nil {
-			s.ErrCh <- err
+			s.sendErr(err)
 		}
 	}
 }
@@ -291,7 +337,7 @@ func (s *session) subscribeBroadcastAsync() {
 			s.receiveBroadcastTssMessage(natMsg.Data)
 		})
 		if err != nil {
-			s.ErrCh <- fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", topic, err)
+			s.sendErr(fmt.Errorf("Failed to subscribe to broadcast topic %s: %w", topic, err))
 			return
 		}
 		s.broadcastSub = sub
@@ -310,16 +356,77 @@ func (s *session) ListenToPeersAsync(peerIDs []string) {
 	s.subscribeFromPeersAsync(peerIDs)
 }
 
-func (s *session) Close() error {
-	err := s.broadcastSub.Unsubscribe()
+// WaitForPeersReady subscribes to a session-specific barrier topic, then verifies each peer has its barrier
+// subscription active by sending NATS requests. This guarantees all peers
+// have their direct-message subscriptions set up before the protocol starts.
+func (s *session) WaitForPeersReady() error {
+	selfID := partyIDToNodeID(s.selfPartyID)
+	barrierTopic := fmt.Sprintf("barrier:%s:%s", s.topicComposer.ComposeBroadcastTopic(), selfID)
+
+	// Subscribe to our own barrier topic so peers can verify we're ready
+	sub, err := s.direct.Listen(barrierTopic, func(data []byte) {
+		// Just respond — the response itself proves we're subscribed
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to subscribe to barrier topic: %w", err)
+	}
+	s.barrierSub = sub
+
+	// Now verify each peer is subscribed by sending requests to their barrier topics
+	peerIDs := partyIDsToNodeIDs(s.partyIDs)
+	deadline := time.After(PeerReadyTimeout)
+
+	for _, peerID := range peerIDs {
+		if peerID == selfID {
+			continue // skip self
+		}
+		peerBarrier := fmt.Sprintf("barrier:%s:%s", s.topicComposer.ComposeBroadcastTopic(), peerID)
+
+		// Retry until peer responds or timeout
+		for {
+			err := s.direct.SendToOtherWithRetry(peerBarrier, []byte("ready"), messaging.RetryConfig{
+				RetryAttempt: 1,
+				Delay:        PeerReadyPollInterval,
+			})
+			if err == nil {
+				logger.Debug("Peer ready", "peerID", peerID, "session", s.sessionType)
+				break
+			}
+
+			select {
+			case <-deadline:
+				return fmt.Errorf("timeout waiting for peer %s to be ready", peerID)
+			case <-s.doneCh:
+				return fmt.Errorf("session stopped while waiting for peers")
+			default:
+				time.Sleep(PeerReadyPollInterval)
+			}
+		}
+	}
+
+	logger.Info("All peers ready", "session", s.sessionType, "walletID", s.walletID)
+	return nil
+}
+
+func (s *session) Close() error {
+	// Signal any running goroutines to stop
+	s.Stop()
+
+	if s.barrierSub != nil {
+		if err := s.barrierSub.Unsubscribe(); err != nil {
+			logger.Error("Failed to unsubscribe barrier", err)
+		}
+	}
+
+	if s.broadcastSub != nil {
+		if err := s.broadcastSub.Unsubscribe(); err != nil {
+			logger.Error("Failed to unsubscribe broadcast", err)
+		}
 	}
 
 	for _, sub := range s.directSubs {
-		err = sub.Unsubscribe()
-		if err != nil {
-			return err
+		if err := sub.Unsubscribe(); err != nil {
+			logger.Error("Failed to unsubscribe direct", err)
 		}
 	}
 
@@ -339,7 +446,7 @@ func (s *session) GetVersion() int {
 }
 
 // loadOldShareDataGeneric loads the old share data from kvstore with backward compatibility (versioned and unversioned keys)
-func (s *session) loadOldShareDataGeneric(walletID string, version int, dest interface{}) error {
+func (s *session) loadOldShareDataGeneric(walletID string, version int, dest any) error {
 	var (
 		key     string
 		keyData []byte

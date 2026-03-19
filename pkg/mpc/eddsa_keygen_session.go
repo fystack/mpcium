@@ -43,7 +43,8 @@ func newEDDSAKeygenSession(
 		selfPartyID:        selfID,
 		partyIDs:           partyIDs,
 		outCh:              make(chan tss.Message),
-		ErrCh:              make(chan error),
+		ErrCh:              make(chan error, 1),
+		doneCh:             make(chan struct{}),
 		kvstore:            kvstore,
 		keyinfoStore:       keyinfoStore,
 		topicComposer: &TopicComposer{

@@ -58,7 +58,7 @@ func NewNATsMessageQueueManager(queueName string, subjectWildCards []string, nc 
 		Name:        queueName,
 		Description: "Stream for " + queueName,
 		Subjects:    subjectWildCards,
-		MaxBytes:    10_485_760, // Light Production (Low Traffic) (10 MB)
+		MaxBytes:    100_000_000, // 100 MB
 		Storage:     jetstream.FileStorage,
 		Retention:   jetstream.WorkQueuePolicy,
 	})

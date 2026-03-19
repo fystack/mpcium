@@ -23,6 +23,8 @@ type ReshareSession interface {
 	Reshare(done func())
 	GetPubKeyResult() []byte
 	GetLegacyCommitteePeers() []string
+	WaitForPeersReady() error
+	Stop()
 }
 
 type ecdsaReshareSession struct {
@@ -68,7 +70,8 @@ func NewECDSAReshareSession(
 		selfPartyID:        selfID,
 		partyIDs:           realPartyIDs,
 		outCh:              make(chan tss.Message),
-		ErrCh:              make(chan error),
+		ErrCh:              make(chan error, 1),
+		doneCh:             make(chan struct{}),
 		preParams:          preParams,
 		kvstore:            kvstore,
 		keyinfoStore:       keyinfoStore,

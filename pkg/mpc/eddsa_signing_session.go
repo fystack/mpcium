@@ -60,8 +60,8 @@ func newEDDSASigningSession(
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
 			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
-			// preParams:          preParams,
+			ErrCh:              make(chan error, 1),
+			doneCh:             make(chan struct{}),
 			kvstore:      kvstore,
 			keyinfoStore: keyinfoStore,
 			topicComposer: &TopicComposer{
@@ -155,13 +155,15 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 	logger.Info("Starting signing", "walletID", s.walletID)
 	go func() {
 		if err := s.party.Start(); err != nil {
-			s.ErrCh <- err
+			s.sendErr(err)
 		}
 	}()
 
 	for {
-
 		select {
+		case <-s.doneCh:
+			logger.Info("EDDSA signing session stopped", "walletID", s.walletID)
+			return
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case sig := <-s.endCh:
@@ -174,7 +176,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			ok := edwards.Verify(&pk, s.tx.Bytes(), new(big.Int).SetBytes(sig.R), new(big.Int).SetBytes(sig.S))
 			if !ok {
-				s.ErrCh <- errors.New("Failed to verify signature")
+				s.sendErr(errors.New("Failed to verify signature"))
 				return
 			}
 
@@ -188,7 +190,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			bytes, err := json.Marshal(r)
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to marshal raw signature")
+				s.sendErr(errors.Wrap(err, "Failed to marshal raw signature"))
 				return
 			}
 
@@ -196,7 +198,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
+				s.sendErr(errors.Wrap(err, "Failed to publish sign success message"))
 				return
 			}
 
@@ -210,7 +212,6 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 			onSuccess(bytes)
 			return
 		}
-
 	}
 }
 // Close cleans up the EDDSA signing session by zeroing all sensitive data.

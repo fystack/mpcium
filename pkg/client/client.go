@@ -222,7 +222,6 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 }
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
-
 	err := c.reshareSuccessQueue.Dequeue(ResharingSuccessTopic, func(msg []byte) error {
 		logger.Info("Received reshare success message", "raw", string(msg))
 		var event event.ResharingResultEvent

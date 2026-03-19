@@ -27,8 +27,6 @@ const (
 
 	DefaultConcurrentKeygen   = 2
 	DefaultConcurrentSigning  = 20
-	DefaultSessionWarmUpDelay = 200
-
 	KeyGenTimeOut = 30 * time.Second
 )
 
@@ -55,8 +53,6 @@ type eventConsumer struct {
 	signingMsgBuffer     chan *nats.Msg
 	maxConcurrentKeygen  int
 	maxConcurrentSigning int
-	sessionWarmUpDelayMs int
-
 	// Track active sessions with timestamps for cleanup
 	activeSessions  map[string]time.Time // Maps "walletID-txID" to creation time
 	sessionsLock    sync.RWMutex
@@ -83,19 +79,12 @@ func NewEventConsumer(
 		maxConcurrentSigning = DefaultConcurrentSigning
 	}
 
-	sessionWarmUpDelayMs := viper.GetInt("session_warm_up_delay_ms")
-	if sessionWarmUpDelayMs == 0 {
-		sessionWarmUpDelayMs = DefaultSessionWarmUpDelay
-	}
-
 	logger.Info(
 		"Initializing event consumer",
 		"max_concurrent_keygen",
 		maxConcurrentKeygen,
 		"max_concurrent_signing",
 		maxConcurrentSigning,
-		"session_warm_up_delay_ms",
-		sessionWarmUpDelayMs,
 	)
 
 	ec := &eventConsumer{
@@ -114,7 +103,6 @@ func NewEventConsumer(
 		identityStore:        identityStore,
 		keygenMsgBuffer:      make(chan *nats.Msg, 100),
 		signingMsgBuffer:     make(chan *nats.Msg, 200), // Larger buffer for signing
-		sessionWarmUpDelayMs: sessionWarmUpDelayMs,
 	}
 
 	go ec.startKeyGenEventWorker()
@@ -144,10 +132,6 @@ func (ec *eventConsumer) Run() {
 	logger.Info("MPC Event consumer started...!")
 }
 
-func (ec *eventConsumer) warmUpSession() {
-	time.Sleep(time.Duration(ec.sessionWarmUpDelayMs) * time.Millisecond)
-}
-
 func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	baseCtx, baseCancel := context.WithTimeout(context.Background(), KeyGenTimeOut)
 	defer baseCancel()
@@ -173,6 +157,17 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}
 
 	walletID := msg.WalletID
+
+	// Guard against duplicate keygen sessions for the same walletID.
+	// Under heavy load, the keygen consumer may NAK and JetStream redelivers,
+	// creating a second session on the same NATS topics which causes VSS verify failures.
+	if !ec.tryAddSession(walletID, "keygen") {
+		duplicateErr := fmt.Errorf("duplicate keygen request detected for walletID=%s", walletID)
+		ec.handleKeygenSessionError(walletID, duplicateErr, "Duplicate keygen session", natMsg)
+		return
+	}
+	defer ec.removeSession(walletID, "keygen")
+
 	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
 	if err != nil {
 		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
@@ -224,8 +219,25 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	ecdsaSession.ListenToIncomingMessageAsync()
 	eddsaSession.ListenToIncomingMessageAsync()
 
-	// Temporary delay for peer setup
-	ec.warmUpSession()
+	// Verify all peers have their subscriptions active before starting.
+	// Run both barriers in parallel since they use independent topics.
+	var barrierErr error
+	var barrierWg sync.WaitGroup
+	barrierWg.Go(func() {
+		if err := ecdsaSession.WaitForPeersReady(); err != nil {
+			barrierErr = fmt.Errorf("ECDSA: %w", err)
+		}
+	})
+	barrierWg.Go(func() {
+		if err := eddsaSession.WaitForPeersReady(); err != nil {
+			barrierErr = fmt.Errorf("EDDSA: %w", err)
+		}
+	})
+	barrierWg.Wait()
+	if barrierErr != nil {
+		ec.handleKeygenSessionError(walletID, barrierErr, "Peers not ready before keygen", natMsg)
+		return
+	}
 	go ecdsaSession.GenerateKey(doneEcdsa)
 	go eddsaSession.GenerateKey(doneEddsa)
 
@@ -377,8 +389,8 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		ec.node.ID(),
 	)
 
-	// Check for duplicate session and track if new
-	if ec.checkDuplicateSession(msg.WalletID, msg.TxID) {
+	// Atomically check for duplicate session and track if new
+	if !ec.tryAddSession(msg.WalletID, msg.TxID) {
 		duplicateErr := fmt.Errorf("duplicate signing request detected for walletID=%s txID=%s", msg.WalletID, msg.TxID)
 		ec.handleSigningSessionError(
 			msg.WalletID,
@@ -465,9 +477,6 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		return
 	}
 
-	// Mark session as already processed
-	ec.addSession(msg.WalletID, msg.TxID)
-
 	ctx, done := context.WithCancel(context.Background())
 	go func() {
 		for {
@@ -484,6 +493,10 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 						"Failed to sign tx",
 						natMsg,
 					)
+					// Stop the session so Sign() goroutine exits cleanly
+					// instead of leaking forever on outCh/endCh.
+					session.Stop()
+					done()
 					return
 				}
 			}
@@ -491,14 +504,20 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 	}()
 
 	session.ListenToIncomingMessageAsync()
-	// TODO: use consul distributed lock here, only sign after all nodes has already completed listing to incoming message async
-	// The purpose of the sleep is to be ensuring that the node has properly set up its message listeners
-	// before it starts the signing process. If the signing process starts sending messages before other nodes
-	// have set up their listeners, those messages might be missed, potentially causing the signing process to fail.
-	// One solution:
-	// The messaging includes mechanisms for direct point-to-point communication (in point2point.go).
-	// The nodes could explicitly coordinate through request-response patterns before starting signing
-	ec.warmUpSession()
+
+	// Verify all peers have their subscriptions active before starting.
+	// This replaces the old warmUpSession() sleep with a proper handshake.
+	if err := session.WaitForPeersReady(); err != nil {
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Peers not ready before signing",
+			natMsg,
+		)
+		return
+	}
 
 	onSuccess := func(data []byte) {
 		done()
@@ -688,14 +707,35 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			oldSession.ListenToPeersAsync(msg.NodeIDs)
 		}
 
-		ec.warmUpSession()
+		// Verify all peers have their subscriptions active before starting.
+		// Run both barriers in parallel since they use independent topics.
+		var reshareBarrierErr error
+		var reshareBarrierWg sync.WaitGroup
+		if oldSession != nil {
+			reshareBarrierWg.Go(func() {
+				if err := oldSession.WaitForPeersReady(); err != nil {
+					reshareBarrierErr = fmt.Errorf("old committee: %w", err)
+				}
+			})
+		}
+		if newSession != nil {
+			reshareBarrierWg.Go(func() {
+				if err := newSession.WaitForPeersReady(); err != nil {
+					reshareBarrierErr = fmt.Errorf("new committee: %w", err)
+				}
+			})
+		}
+		reshareBarrierWg.Wait()
+		if reshareBarrierErr != nil {
+			ec.handleReshareSessionError(walletID, keyType, msg.NewThreshold, reshareBarrierErr, "Peers not ready before resharing", natMsg)
+			return
+		}
+
 		if oldSession != nil {
 			ctxOld, doneOld := context.WithCancel(ctx)
 			go oldSession.Reshare(doneOld)
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for {
 					select {
 					case <-ctxOld.Done():
@@ -707,15 +747,13 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					}
 				}
-			}()
+			})
 		}
 
 		if newSession != nil {
 			ctxNew, doneNew := context.WithCancel(ctx)
 			go newSession.Reshare(doneNew)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for {
 					select {
 					case <-ctxNew.Done():
@@ -728,7 +766,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 						return
 					}
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -842,30 +880,32 @@ func (ec *eventConsumer) cleanupStaleSessions() {
 	}
 }
 
-// markSessionAsActive marks a session as active with the current timestamp
-func (ec *eventConsumer) addSession(walletID, txID string) {
+// tryAddSession atomically checks if a session already exists and adds it if not.
+// Returns true if the session was successfully added (not a duplicate).
+// Returns false if the session already exists (duplicate).
+func (ec *eventConsumer) tryAddSession(walletID, txID string) bool {
 	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
+
 	ec.sessionsLock.Lock()
-	ec.activeSessions[sessionID] = time.Now()
-	ec.sessionsLock.Unlock()
-}
+	defer ec.sessionsLock.Unlock()
 
-// checkAndTrackSession checks if a session already exists and tracks it if new.
-// Returns true if the session is a duplicate.
-func (ec *eventConsumer) checkDuplicateSession(walletID, txID string) bool {
-	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
-
-	// Check for duplicate
-	ec.sessionsLock.RLock()
-	_, isDuplicate := ec.activeSessions[sessionID]
-	ec.sessionsLock.RUnlock()
-
-	if isDuplicate {
-		logger.Info("Duplicate signing request detected", "walletID", walletID, "txID", txID)
-		return true
+	if _, exists := ec.activeSessions[sessionID]; exists {
+		logger.Info("Duplicate session detected", "walletID", walletID, "txID", txID)
+		return false
 	}
 
-	return false
+	ec.activeSessions[sessionID] = time.Now()
+	return true
+}
+
+// removeSession removes a session from the active sessions map so it can be retried.
+func (ec *eventConsumer) removeSession(walletID, txID string) {
+	sessionID := fmt.Sprintf("%s-%s", walletID, txID)
+
+	ec.sessionsLock.Lock()
+	defer ec.sessionsLock.Unlock()
+
+	delete(ec.activeSessions, sessionID)
 }
 
 // Close and clean up

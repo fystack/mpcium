@@ -27,7 +27,8 @@ const (
 	DefaultAckWait             = 30 * time.Second
 	DefaultMaxDeliveryAttempts = 3
 	DefaultConsumerPrefix      = "consumer"
-	DefaultStreamMaxAge        = 3 * time.Minute
+	DefaultStreamMaxAge        = 7 * 24 * time.Hour
+	DefaultStreamMaxBytes      = int64(100_000_000)
 	DefaultBackoffDuration     = 30 * time.Second
 )
 
@@ -58,6 +59,8 @@ type brokerConfiguration struct {
 	consumerNamePrefix  string
 	deliverPolicy       jetstream.DeliverPolicy
 	backoffDurations    []time.Duration
+	maxAckPending       int
+	maxBytes            int64
 }
 
 func WithStreamDescription(description string) BrokerOption {
@@ -120,6 +123,25 @@ func WithBackoffDurations(durations []time.Duration) BrokerOption {
 	}
 }
 
+// WithMaxAckPending sets the maximum number of unACKed messages the JetStream
+// server will deliver to this consumer at once. Once the limit is reached,
+// JetStream holds back new messages until existing ones are ACKed or NAKed.
+// This provides natural backpressure: messages stay durably in the stream
+// instead of being pushed to consumers that have no capacity to process them.
+// Set this to match the desired processing concurrency (e.g. 2 for keygen,
+// 20 for signing).
+func WithMaxBytes(maxBytes int64) BrokerOption {
+	return func(cfg *brokerConfiguration) {
+		cfg.maxBytes = maxBytes
+	}
+}
+
+func WithMaxAckPending(maxAckPending int) BrokerOption {
+	return func(cfg *brokerConfiguration) {
+		cfg.maxAckPending = maxAckPending
+	}
+}
+
 type jetStreamBroker struct {
 	config brokerConfiguration
 	js     jetstream.JetStream
@@ -140,6 +162,7 @@ func NewJetStreamBroker(
 		retention:           nats.InterestPolicy,
 		storage:             nats.FileStorage,
 		maxAge:              DefaultStreamMaxAge,
+		maxBytes:            DefaultStreamMaxBytes,
 		discard:             nats.DiscardOld,
 		ackWait:             DefaultAckWait,
 		maxDeliveryAttempts: DefaultMaxDeliveryAttempts,
@@ -177,6 +200,7 @@ func (b *jetStreamBroker) ensureStreamExists(ctx context.Context) error {
 		Description: b.config.description,
 		Subjects:    b.config.subjects,
 		MaxAge:      b.config.maxAge,
+		MaxBytes:    b.config.maxBytes,
 	}
 
 	_, err := b.js.CreateOrUpdateStream(ctx, streamConfig)
@@ -221,6 +245,7 @@ func (b *jetStreamBroker) CreateSubscription(
 		DeliverPolicy: b.config.deliverPolicy,
 		FilterSubject: subject,
 		AckWait:       b.config.ackWait,
+		MaxAckPending: b.config.maxAckPending,
 	}
 
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.config.streamName, consumerConfig)
@@ -309,6 +334,7 @@ func (b *jetStreamBroker) FetchMessages(
 		DeliverPolicy: b.config.deliverPolicy,
 		FilterSubject: subject,
 		AckWait:       b.config.ackWait,
+		MaxAckPending: b.config.maxAckPending,
 	}
 
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.config.streamName, consumerConfig)

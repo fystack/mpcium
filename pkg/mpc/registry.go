@@ -252,6 +252,12 @@ func (r *registry) WatchPeersReady() {
 }
 
 func (r *registry) checkPeersHealth() {
+	// Track consecutive failures per peer before evicting from Consul.
+	// This prevents transient NATS reconnections (e.g. AWS idle timeout kills)
+	// from immediately cascading into peer removal + ECDH re-exchange.
+	failureCount := make(map[string]int)
+	const maxFailures = 5 // require 5 consecutive failures (~25s) before eviction
+
 	for {
 		time.Sleep(5 * time.Second)
 		if !r.ArePeersReady() {
@@ -266,14 +272,23 @@ func (r *registry) checkPeersHealth() {
 		readyPeerIDs := r.getReadyPeersFromKVStore(pairs)
 		for _, peerID := range readyPeerIDs {
 			err := r.healthCheck.SendToOtherWithRetry(r.composeHealthCheckTopic(peerID), []byte(r.composeHealthData()), messaging.RetryConfig{
-				RetryAttempt: 2,
+				RetryAttempt: 3,
+				Delay:        1 * time.Second,
 			})
 			if err != nil && strings.Contains(err.Error(), "no responders") {
-				logger.Info("No response from peer", "peerID", peerID)
-				_, err := r.consulKV.Delete(r.readyKey(peerID), nil)
-				if err != nil {
-					logger.Error("Delete ready key failed", err)
+				failureCount[peerID]++
+				logger.Warn("No response from peer", "peerID", peerID, "consecutiveFailures", failureCount[peerID], "maxFailures", maxFailures)
+				if failureCount[peerID] >= maxFailures {
+					logger.Warn("Evicting unresponsive peer from Consul", "peerID", peerID)
+					_, err := r.consulKV.Delete(r.readyKey(peerID), nil)
+					if err != nil {
+						logger.Error("Delete ready key failed", err)
+					}
+					delete(failureCount, peerID)
 				}
+			} else {
+				// Reset counter on successful health check
+				delete(failureCount, peerID)
 			}
 		}
 	}

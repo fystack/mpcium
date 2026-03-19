@@ -18,8 +18,11 @@ import (
 )
 
 const (
-	// Maximum time to wait for a signing response.
-	keygenResponseTimeout = 30 * time.Second
+	// Maximum time to wait for a keygen response.
+	// Must be longer than KeyGenTimeOut in event_consumer.go (30s) so the
+	// event consumer always finishes first and sends a reply (success or error)
+	// before the keygen consumer gives up and NAKs.
+	keygenResponseTimeout = 45 * time.Second
 	// How often to poll for the reply message.
 	keygenPollingInterval = 500 * time.Millisecond
 )
@@ -161,23 +164,28 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		}
 	}()
 
-	// Publish the signing event with the reply inbox.
+	// Publish the keygen event with the reply inbox.
 	headers := map[string]string{
 		"SessionID": uuid.New().String(),
 	}
 	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data(), headers); err != nil {
-		logger.Error("KeygenConsumer: Failed to publish signing event with reply", err)
+		logger.Error("KeygenConsumer: Failed to publish keygen event with reply", err)
 		_ = msg.Nak()
 		return
 	}
 
-	// Poll for the reply message until timeout.
+	// Wait for the MPC operation to complete before ACKing the JetStream message.
+	// This ensures messages are not lost on restart — unACKed messages will be
+	// redelivered by JetStream. We use msg.InProgress() to periodically reset
+	// the ack deadline so JetStream does not redeliver while we're still working.
+	// MaxAckPending on the consumer limits concurrency: JetStream won't deliver
+	// new messages until in-flight ones are ACKed, providing natural backpressure.
 	deadline := time.Now().Add(keygenResponseTimeout)
 	for time.Now().Before(deadline) {
 		replyMsg, err := replySub.NextMsg(keygenPollingInterval)
 		if err != nil {
-			// If timeout occurs, continue trying.
 			if err == nats.ErrTimeout {
+				_ = msg.InProgress()
 				continue
 			}
 			logger.Error("KeygenConsumer: Error receiving reply message", err)
@@ -192,7 +200,9 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 		}
 	}
 
-	logger.Warn("KeygenConsumer: Timeout waiting for keygen event response")
+	// Timeout: NAK so JetStream can redeliver when we have capacity.
+	logger.Warn("KeygenConsumer: Timeout waiting for keygen response, NAK for redelivery",
+		"walletID", keygenMsg.WalletID)
 	_ = msg.Nak()
 }
 

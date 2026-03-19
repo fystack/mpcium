@@ -26,6 +26,13 @@ type SigningSession interface {
 
 	Init(tx *big.Int) error
 	Sign(onSuccess func(data []byte))
+	// WaitForPeersReady verifies all peers have their subscriptions active
+	// before starting the protocol. Replaces the fragile warmup sleep.
+	WaitForPeersReady() error
+	// Stop signals the session to terminate, allowing Sign() goroutines to exit.
+	Stop()
+	// Close cleans up subscriptions and sensitive data.
+	Close() error
 }
 
 // Ecdsa signing session
@@ -70,7 +77,8 @@ func newECDSASigningSession(
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
 			outCh:              make(chan tss.Message),
-			ErrCh:              make(chan error),
+			ErrCh:              make(chan error, 1),
+			doneCh:             make(chan struct{}),
 			preParams:          preParams,
 			kvstore:            kvstore,
 			keyinfoStore:       keyinfoStore,
@@ -166,12 +174,15 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 	logger.Info("Starting signing", "walletID", s.walletID)
 	go func() {
 		if err := s.party.Start(); err != nil {
-			s.ErrCh <- err
+			s.sendErr(err)
 		}
 	}()
 
 	for {
 		select {
+		case <-s.doneCh:
+			logger.Info("ECDSA signing session stopped", "walletID", s.walletID)
+			return
 		case msg := <-s.outCh:
 			s.handleTssMessage(msg)
 		case sig := <-s.endCh:
@@ -184,7 +195,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			ok := ecdsa.Verify(&pk, s.tx.Bytes(), new(big.Int).SetBytes(sig.R), new(big.Int).SetBytes(sig.S))
 			if !ok {
-				s.ErrCh <- errors.New("Failed to verify signature")
+				s.sendErr(errors.New("Failed to verify signature"))
 				return
 			}
 
@@ -200,7 +211,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 
 			bytes, err := json.Marshal(r)
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to marshal raw signature")
+				s.sendErr(errors.Wrap(err, "Failed to marshal raw signature"))
 				return
 			}
 
@@ -208,7 +219,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {
-				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")
+				s.sendErr(errors.Wrap(err, "Failed to publish sign success message"))
 				return
 			}
 
