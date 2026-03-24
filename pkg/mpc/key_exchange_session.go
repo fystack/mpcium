@@ -167,7 +167,7 @@ func (e *ecdhSession) BroadcastPublicKey() error {
 	signedMsgBytes, _ := json.Marshal(msg)
 
 	logger.Info("Starting to broadcast DH key", "nodeID", e.nodeID)
-	if err := e.pubSub.Publish(ECDHExchangeTopic, signedMsgBytes); err != nil {
+	if err := e.pubSub.Publish(ECDHExchangeTopic, signedMsgBytes, nil); err != nil {
 		return fmt.Errorf("%s failed to publish DH message because %w", e.nodeID, err)
 	}
 	return nil

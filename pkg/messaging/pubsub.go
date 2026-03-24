@@ -10,7 +10,7 @@ type Subscription interface {
 }
 
 type PubSub interface {
-	Publish(topic string, message []byte) error
+	Publish(topic string, message []byte, headers map[string]string) error
 	PublishWithReply(topic, reply string, data []byte, headers map[string]string) error
 	Subscribe(topic string, handler func(msg *nats.Msg)) (Subscription, error)
 }
@@ -31,9 +31,15 @@ func NewNATSPubSub(natsConn *nats.Conn) PubSub {
 	return &natsPubSub{natsConn}
 }
 
-func (n *natsPubSub) Publish(topic string, message []byte) error {
+func (n *natsPubSub) Publish(topic string, message []byte, headers map[string]string) error {
 	logger.Debug("[NATS] Publishing message", "topic", topic)
-	return n.natsConn.Publish(topic, message)
+	msg := &nats.Msg{
+		Subject: topic,
+		Data:    message,
+		Header:  nats.Header{},
+	}
+	applyHeaders(msg.Header, headers)
+	return n.natsConn.PublishMsg(msg)
 }
 
 func (n *natsPubSub) PublishWithReply(topic, reply string, data []byte, headers map[string]string) error {
@@ -43,9 +49,7 @@ func (n *natsPubSub) PublishWithReply(topic, reply string, data []byte, headers 
 		Data:    data,
 		Header:  nats.Header{},
 	}
-	for k, v := range headers {
-		msg.Header.Set(k, v)
-	}
+	applyHeaders(msg.Header, headers)
 	err := n.natsConn.PublishMsg(msg)
 	return err
 }
@@ -60,4 +64,10 @@ func (n *natsPubSub) Subscribe(topic string, handler func(msg *nats.Msg)) (Subsc
 	}
 
 	return &natsSubscription{subscription: sub}, nil
+}
+
+func applyHeaders(dst nats.Header, headers map[string]string) {
+	for k, v := range headers {
+		dst.Set(k, v)
+	}
 }

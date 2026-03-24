@@ -2,10 +2,12 @@ package eventconsumer
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/mpc"
 	"github.com/nats-io/nats.go"
 )
 
@@ -50,6 +52,7 @@ func (tc *timeOutConsumer) Run() {
 				logger.Error("Failed to retrieve message", err)
 				return
 			}
+			clientID := failedMsg.Header.Get(event.ClientIDHeader)
 
 			data := failedMsg.Data
 			var signErrorResult event.SigningResultEvent
@@ -71,8 +74,8 @@ func (tc *timeOutConsumer) Run() {
 				return
 			}
 
-			err = tc.resultQueue.Enqueue(event.SigningResultTopic, signErrorResultBytes, &messaging.EnqueueOptions{
-				IdempotententKey: signErrorResult.TxID,
+			err = tc.resultQueue.Enqueue(event.SigningResultSubject(clientID), signErrorResultBytes, &messaging.EnqueueOptions{
+				IdempotententKey: fmt.Sprintf(mpc.TypeSigningResultFmt, event.ScopedOperationID(clientID, signErrorResult.TxID)),
 			})
 			if err != nil {
 				logger.Error("Failed to publish signing result event", err)

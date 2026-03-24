@@ -33,7 +33,7 @@ const (
 )
 
 type MessageBroker interface {
-	PublishMessage(ctx context.Context, subject string, data []byte) error
+	PublishMessage(ctx context.Context, subject string, data []byte, headers map[string]string) error
 	CreateSubscription(ctx context.Context, consumerName, subject string, handler func(msg jetstream.Msg)) (MessageSubscription, error)
 	GetStreamInfo(ctx context.Context) (*jetstream.StreamInfo, error)
 	FetchMessages(ctx context.Context, consumerName, subject string, batchSize int, handler func(msg jetstream.Msg)) error
@@ -211,12 +211,19 @@ func (b *jetStreamBroker) ensureStreamExists(ctx context.Context) error {
 	return nil
 }
 
-func (b *jetStreamBroker) PublishMessage(ctx context.Context, subject string, data []byte) error {
+func (b *jetStreamBroker) PublishMessage(ctx context.Context, subject string, data []byte, headers map[string]string) error {
 	if b.conn.IsClosed() {
 		return ErrConnectionClosed
 	}
 
-	_, err := b.js.Publish(ctx, subject, data)
+	msg := &nats.Msg{
+		Subject: subject,
+		Data:    data,
+		Header:  nats.Header{},
+	}
+	applyHeaders(msg.Header, headers)
+
+	_, err := b.js.PublishMsg(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("failed to publish message to subject %s: %w", subject, err)
 	}

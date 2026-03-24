@@ -80,6 +80,7 @@ type session struct {
 	barrierSub messaging.Subscription
 
 	resultQueue   messaging.MessageQueue
+	resultTopic   string
 	identityStore identity.Store
 
 	topicComposer *TopicComposer
@@ -167,7 +168,7 @@ func (s *session) handleTssMessage(keyshare tss.Message) {
 			return
 		}
 
-		err = s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg)
+		err = s.pubSub.Publish(s.topicComposer.ComposeBroadcastTopic(), msg, nil)
 		if err != nil {
 			s.sendErr(err)
 			return

@@ -152,11 +152,12 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	raw := msg.Data()
 	var signingMsg types.SignTxMessage
 	sessionID := msg.Headers().Get("SessionID")
+	clientID := msg.Headers().Get(event.ClientIDHeader)
 
 	err := json.Unmarshal(raw, &signingMsg)
 	if err != nil {
 		logger.Error("SigningConsumer: Failed to unmarshal signing message", err)
-		sc.handleSigningError(signingMsg, event.ErrorCodeUnmarshalFailure, err, sessionID)
+		sc.handleSigningError(signingMsg, event.ErrorCodeUnmarshalFailure, err, sessionID, clientID)
 		_ = msg.Ack()
 		return
 	}
@@ -164,7 +165,7 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	if !sc.peerRegistry.AreMajorityReady() {
 		requiredPeers := int64(sc.mpcThreshold + 1)
 		err := fmt.Errorf("not enough peers to process signing request: ready=%d, required=%d", sc.peerRegistry.GetReadyPeersCount(), requiredPeers)
-		sc.handleSigningError(signingMsg, event.ErrorCodeNotMajority, err, sessionID)
+		sc.handleSigningError(signingMsg, event.ErrorCodeNotMajority, err, sessionID, clientID)
 		_ = msg.Ack()
 		return
 	}
@@ -187,6 +188,9 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	// Publish the signing event with the reply inbox.
 	headers := map[string]string{
 		"SessionID": uuid.New().String(),
+	}
+	if clientID != "" {
+		headers[event.ClientIDHeader] = clientID
 	}
 	if err := sc.pubsub.PublishWithReply(MPCSignEvent, replyInbox, msg.Data(), headers); err != nil {
 		logger.Error("SigningConsumer: Failed to publish signing event with reply", err)
@@ -227,7 +231,7 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	_ = msg.Nak()
 }
 
-func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, errorCode event.ErrorCode, err error, sessionID string) {
+func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, errorCode event.ErrorCode, err error, sessionID, clientID string) {
 	signingResult := event.SigningResultEvent{
 		ResultType:          event.ResultTypeError,
 		ErrorCode:           errorCode,
@@ -246,8 +250,8 @@ func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, error
 		return
 	}
 
-	err = sc.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: buildIdempotentKey(signMsg.TxID, sessionID, mpc.TypeSigningResultFmt),
+	err = sc.signingResultQueue.Enqueue(event.SigningResultSubject(clientID), signingResultBytes, &messaging.EnqueueOptions{
+		IdempotententKey: buildIdempotentKey(signMsg.TxID, clientID, sessionID, mpc.TypeSigningResultFmt),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue signing result event", err,
@@ -269,12 +273,12 @@ func (sc *signingConsumer) Close() error {
 	return nil
 }
 
-func buildIdempotentKey(baseID string, sessionID string, formatTemplate string) string {
+func buildIdempotentKey(baseID, clientID, sessionID, formatTemplate string) string {
 	var uniqueKey string
 	if sessionID != "" {
 		uniqueKey = fmt.Sprintf("%s:%s", baseID, sessionID)
 	} else {
 		uniqueKey = baseID
 	}
-	return fmt.Sprintf(formatTemplate, uniqueKey)
+	return fmt.Sprintf(formatTemplate, event.ScopedOperationID(clientID, uniqueKey))
 }

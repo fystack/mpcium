@@ -51,6 +51,7 @@ func newECDSASigningSession(
 	walletID string,
 	txID string,
 	networkInternalCode string,
+	resultTopic string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
 	participantPeerIDs []string,
@@ -95,6 +96,7 @@ func newECDSASigningSession(
 			},
 			getRoundFunc:  GetEcdsaMsgRound,
 			resultQueue:   resultQueue,
+			resultTopic:   resultTopic,
 			identityStore: identityStore,
 			idempotentKey: idempotentKey,
 		},
@@ -145,7 +147,6 @@ func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.ECDSAPub, s.derivationPath, tss.S256())
@@ -215,7 +216,7 @@ func (s *ecdsaSigningSession) Sign(onSuccess func(data []byte)) {
 				return
 			}
 
-			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
+			err = s.resultQueue.Enqueue(s.resultTopic, bytes, &messaging.EnqueueOptions{
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {

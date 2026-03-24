@@ -73,25 +73,25 @@ func NewNATsMessageQueueManager(queueName string, subjectWildCards []string, nc 
 	}
 }
 
-func (m *NATsMessageQueueManager) NewMessageQueue(consumerName string) MessageQueue {
+func (m *NATsMessageQueueManager) NewMessageQueue(consumerName, filterSubject string) MessageQueue {
+	sanitizedConsumerName := sanitizeConsumerName(consumerName)
 	mq := &msgQueue{
-		consumerName: consumerName,
+		consumerName: sanitizedConsumerName,
 		js:           m.js,
 	}
-	consumerWildCard := fmt.Sprintf("%s.%s.*", m.queueName, consumerName)
 	cfg := jetstream.ConsumerConfig{
-		Name:          consumerName,
-		Durable:       consumerName,
+		Name:          sanitizedConsumerName,
+		Durable:       sanitizedConsumerName,
 		MaxAckPending: 1000,
 		// If a message isn't acked within AckWait, it will be redelivered up to MaxDelive
 		AckWait:   30 * time.Second,
 		AckPolicy: jetstream.AckExplicitPolicy,
 		FilterSubjects: []string{
-			consumerWildCard,
+			filterSubject,
 		},
 		MaxDeliver: 3,
 	}
-	logger.Info("Creating consumer for subject", "consumerName", consumerName, "queueName", m.queueName, "filterSubject", consumerWildCard, "config", cfg)
+	logger.Info("Creating consumer for subject", "consumerName", sanitizedConsumerName, "queueName", m.queueName, "filterSubject", filterSubject, "config", cfg)
 	consumer, err := m.js.CreateOrUpdateConsumer(context.Background(), m.queueName, cfg)
 	if err != nil {
 		logger.Fatal("Error creating JetStream consumer: ", err)
