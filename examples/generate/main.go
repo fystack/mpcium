@@ -25,6 +25,7 @@ import (
 func main() {
 	const environment = "development"
 	numWallets := flag.Int("n", 1, "Number of wallets to generate")
+	clientID := flag.String("client-id", "example-generate", "Client ID used to scope result routing")
 
 	flag.Parse()
 
@@ -72,7 +73,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	})
+	}, client.WithClientID(*clientID))
 
 	var walletStartTimes sync.Map
 	var walletIDs []string

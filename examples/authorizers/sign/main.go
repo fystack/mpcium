@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -23,6 +24,9 @@ var requiredAuthorizers = []string{"authorizer1", "authorizer2"}
 
 func main() {
 	const environment = "dev"
+	clientID := flag.String("client-id", "example-authorizers-sign", "Client ID used to scope result routing")
+	flag.Parse()
+
 	config.InitViperConfig("")
 	logger.Init(environment, true)
 
@@ -80,7 +84,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	})
+	}, client.WithClientID(*clientID))
 
 	// Create a signing request with authorizers
 	txID := uuid.New().String()

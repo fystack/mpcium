@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -52,6 +53,9 @@ func main() {
 	fmt.Println()
 
 	const environment = "dev"
+	clientID := flag.String("client-id", "example-hdwallet-eddsa", "Client ID used to scope result routing")
+	flag.Parse()
+
 	config.InitViperConfig("")
 	logger.Init(environment, true)
 
@@ -96,7 +100,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	})
+	}, client.WithClientID(*clientID))
 
 	// Step 1: Generate ONE master wallet
 	fmt.Println("Step 1: Generating master MPC wallet...")

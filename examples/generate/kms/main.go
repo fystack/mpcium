@@ -27,6 +27,7 @@ func main() {
 	const kmsKeyID = "48e76117-fd08-4dc0-bd10-b1c7d01de748"
 
 	numWallets := flag.Int("n", 1, "Number of wallets to generate")
+	clientID := flag.String("client-id", "example-generate-kms", "Client ID used to scope result routing")
 
 	flag.Parse()
 
@@ -65,7 +66,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   kmsSigner,
-	})
+	}, client.WithClientID(*clientID))
 
 	var walletStartTimes sync.Map
 	var walletIDs []string
