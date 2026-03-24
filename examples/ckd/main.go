@@ -67,7 +67,8 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	}, client.WithClientID(*clientID))
+		ClientID: *clientID,
+	})
 
 	// 2) Once wallet exists, immediately fire a SignTransaction
 	txID := uuid.New().String()

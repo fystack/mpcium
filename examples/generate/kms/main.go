@@ -66,7 +66,8 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   kmsSigner,
-	}, client.WithClientID(*clientID))
+		ClientID: *clientID,
+	})
 
 	var walletStartTimes sync.Map
 	var walletIDs []string

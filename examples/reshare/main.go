@@ -67,7 +67,8 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	}, client.WithClientID(*clientID))
+		ClientID: *clientID,
+	})
 
 	// 3) Listen for signing results
 	err = mpcClient.OnResharingResult(func(evt event.ResharingResultEvent) {

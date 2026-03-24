@@ -84,7 +84,8 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	}, client.WithClientID(*clientID))
+		ClientID: *clientID,
+	})
 
 	// Create a signing request with authorizers
 	txID := uuid.New().String()

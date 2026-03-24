@@ -170,7 +170,8 @@ func newScopedMPCClient(t *testing.T, suite *E2ETestSuite, clientID string) (cli
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   signer,
-	}, client.WithClientID(clientID))
+		ClientID: clientID,
+	})
 
 	return mpcClient, natsConn
 }

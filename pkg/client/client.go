@@ -44,12 +44,9 @@ type Options struct {
 
 	// Signer for signing messages
 	Signer Signer
-}
 
-type ClientOption func(*clientConfig)
-
-type clientConfig struct {
-	clientID string
+	// ClientID optionally scopes result routing for this client instance.
+	ClientID string
 }
 
 type clientResultRouting struct {
@@ -61,24 +58,13 @@ type clientResultRouting struct {
 	reshareSubject      string
 }
 
-func WithClientID(id string) ClientOption {
-	return func(cfg *clientConfig) {
-		cfg.clientID = id
-	}
-}
-
 // NewMPCClient creates a new MPC client using the provided options.
 // The signer must be provided to handle message signing.
-func NewMPCClient(opts Options, clientOptions ...ClientOption) MPCClient {
+func NewMPCClient(opts Options) MPCClient {
 	if opts.Signer == nil {
 		logger.Fatal("Signer is required", nil)
 	}
-
-	cfg := clientConfig{}
-	for _, opt := range clientOptions {
-		opt(&cfg)
-	}
-	if err := validateClientID(cfg.clientID); err != nil {
+	if err := validateClientID(opts.ClientID); err != nil {
 		logger.Fatal("Invalid client ID", err)
 	}
 
@@ -109,7 +95,7 @@ func NewMPCClient(opts Options, clientOptions ...ClientOption) MPCClient {
 	pubsub := messaging.NewNATSPubSub(opts.NatsConn)
 
 	manager := messaging.NewNATsMessageQueueManager("mpc", event.ResultStreamSubjects(), opts.NatsConn)
-	routing := buildClientResultRouting(cfg.clientID)
+	routing := buildClientResultRouting(opts.ClientID)
 
 	genKeySuccessQueue := manager.NewMessageQueue(routing.keygenConsumerName, routing.keygenSubject)
 	signResultQueue := manager.NewMessageQueue(routing.signingConsumerName, routing.signingSubject)
@@ -123,7 +109,7 @@ func NewMPCClient(opts Options, clientOptions ...ClientOption) MPCClient {
 		signResultQueue:     signResultQueue,
 		reshareSuccessQueue: reshareSuccessQueue,
 		signer:              opts.Signer,
-		clientID:            cfg.clientID,
+		clientID:            opts.ClientID,
 	}
 }
 

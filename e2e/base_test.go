@@ -196,7 +196,8 @@ func (s *E2ETestSuite) SetupMPCClient(t *testing.T) {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: s.natsConn,
 		Signer:   localSigner,
-	}, client.WithClientID("e2e-suite"))
+		ClientID: "e2e-suite",
+	})
 	s.mpcClient = mpcClient
 	t.Log("MPC client created")
 }

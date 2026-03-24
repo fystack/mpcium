@@ -97,7 +97,8 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
-	}, client.WithClientID(*clientID))
+		ClientID: *clientID,
+	})
 
 	// Step 1: Generate ONE master wallet
 	fmt.Println("Step 1: Generating master MPC wallet...")
