@@ -29,6 +29,7 @@ var requiredAuthorizers = []string{"authorizer1", "authorizer2"}
 func main() {
 	const environment = "development"
 	numWallets := flag.Int("n", 1, "Number of wallets to generate")
+	clientID := flag.String("client-id", "example-authorizers-generate", "Client ID used to scope result routing")
 
 	flag.Parse()
 
@@ -89,6 +90,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
+		ClientID: *clientID,
 	})
 
 	var walletStartTimes sync.Map

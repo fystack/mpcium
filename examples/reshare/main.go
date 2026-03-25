@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -19,6 +20,9 @@ import (
 
 func main() {
 	const environment = "dev"
+	clientID := flag.String("client-id", "example-reshare", "Client ID used to scope result routing")
+	flag.Parse()
+
 	config.InitViperConfig("")
 	logger.Init(environment, true)
 
@@ -63,6 +67,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
+		ClientID: *clientID,
 	})
 
 	// 3) Listen for signing results

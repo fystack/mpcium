@@ -216,17 +216,13 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}
 
 	directMessaging := messaging.NewNatsDirectMessaging(natsConn)
-	mqManager := messaging.NewNATsMessageQueueManager("mpc", []string{
-		"mpc.mpc_keygen_result.*",
-		event.SigningResultTopic,
-		"mpc.mpc_reshare_result.*",
-	}, natsConn)
+	mqManager := messaging.NewNATsMessageQueueManager("mpc", event.ResultStreamSubjects(), natsConn)
 
-	genKeyResultQueue := mqManager.NewMessageQueue("mpc_keygen_result")
+	genKeyResultQueue := mqManager.NewMessageQueue("mpc_keygen_result", event.KeygenResultSubscriptionSubject(""))
 	defer genKeyResultQueue.Close()
-	singingResultQueue := mqManager.NewMessageQueue("mpc_signing_result")
+	singingResultQueue := mqManager.NewMessageQueue("mpc_signing_result", event.SigningResultSubscriptionSubject(""))
 	defer singingResultQueue.Close()
-	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result")
+	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result", event.ReshareResultSubscriptionSubject(""))
 	defer reshareResultQueue.Close()
 
 	logger.Info("Starting mpcium node", "version", Version, "ID", nodeID, "name", nodeName)

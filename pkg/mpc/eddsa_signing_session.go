@@ -36,6 +36,7 @@ func newEDDSASigningSession(
 	walletID string,
 	txID string,
 	networkInternalCode string,
+	resultTopic string,
 	pubSub messaging.PubSub,
 	direct messaging.DirectMessaging,
 	participantPeerIDs []string,
@@ -62,8 +63,8 @@ func newEDDSASigningSession(
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error, 1),
 			doneCh:             make(chan struct{}),
-			kvstore:      kvstore,
-			keyinfoStore: keyinfoStore,
+			kvstore:            kvstore,
+			keyinfoStore:       keyinfoStore,
 			topicComposer: &TopicComposer{
 				ComposeBroadcastTopic: func() string {
 					return fmt.Sprintf("sign:eddsa:broadcast:%s:%s", walletID, txID)
@@ -77,6 +78,7 @@ func newEDDSASigningSession(
 			},
 			getRoundFunc:  GetEddsaMsgRound,
 			resultQueue:   resultQueue,
+			resultTopic:   resultTopic,
 			identityStore: identityStore,
 			idempotentKey: idempotentKey,
 		},
@@ -126,7 +128,6 @@ func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to unmarshal wallet data")
 	}
-	
 
 	if len(s.derivationPath) > 0 {
 		il, extendedChildPk, errorDerivation := s.ckd.Derive(s.walletID, data.EDDSAPub, s.derivationPath, tss.Edwards())
@@ -194,7 +195,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 				return
 			}
 
-			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
+			err = s.resultQueue.Enqueue(s.resultTopic, bytes, &messaging.EnqueueOptions{
 				IdempotententKey: s.idempotentKey,
 			})
 			if err != nil {
@@ -214,6 +215,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 		}
 	}
 }
+
 // Close cleans up the EDDSA signing session by zeroing all sensitive data.
 func (s *eddsaSigningSession) Close() error {
 	if s == nil {

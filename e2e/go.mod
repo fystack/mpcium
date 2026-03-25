@@ -1,6 +1,6 @@
 module github.com/fystack/mpcium/e2e
 
-go 1.25.5
+go 1.25.8
 
 require (
 	github.com/bnb-chain/tss-lib/v2 v2.0.2

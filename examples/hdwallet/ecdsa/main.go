@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ecdsa"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"math/big"
 	"os"
@@ -49,6 +50,9 @@ func main() {
 	fmt.Println()
 
 	const environment = "dev"
+	clientID := flag.String("client-id", "example-hdwallet-ecdsa", "Client ID used to scope result routing")
+	flag.Parse()
+
 	config.InitViperConfig("")
 	logger.Init(environment, true)
 
@@ -93,6 +97,7 @@ func main() {
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
+		ClientID: *clientID,
 	})
 
 	// Step 1: Generate ONE master wallet

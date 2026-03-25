@@ -132,18 +132,19 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	raw := msg.Data()
 	var keygenMsg types.GenerateKeyMessage
 	sessionID := msg.Headers().Get("SessionID")
+	clientID := msg.Headers().Get(event.ClientIDHeader)
 
 	err := json.Unmarshal(raw, &keygenMsg)
 	if err != nil {
 		logger.Error("SigningConsumer: Failed to unmarshal keygen message", err)
-		sc.handleKeygenError(keygenMsg, event.ErrorCodeUnmarshalFailure, err, sessionID)
+		sc.handleKeygenError(keygenMsg, event.ErrorCodeUnmarshalFailure, err, sessionID, clientID)
 		_ = msg.Ack()
 		return
 	}
 
 	if !sc.peerRegistry.ArePeersReady() {
 		logger.Warn("KeygenConsumer: Not all peers are ready to gen key, skipping message processing")
-		sc.handleKeygenError(keygenMsg, event.ErrorCodeClusterNotReady, errors.New("not all peers are ready"), sessionID)
+		sc.handleKeygenError(keygenMsg, event.ErrorCodeClusterNotReady, errors.New("not all peers are ready"), sessionID, clientID)
 		_ = msg.Ack()
 		return
 	}
@@ -167,6 +168,9 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	// Publish the keygen event with the reply inbox.
 	headers := map[string]string{
 		"SessionID": uuid.New().String(),
+	}
+	if clientID != "" {
+		headers[event.ClientIDHeader] = clientID
 	}
 	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data(), headers); err != nil {
 		logger.Error("KeygenConsumer: Failed to publish keygen event with reply", err)
@@ -206,7 +210,7 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	_ = msg.Nak()
 }
 
-func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, errorCode event.ErrorCode, err error, sessionID string) {
+func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, errorCode event.ErrorCode, err error, sessionID, clientID string) {
 	keygenResult := event.KeygenResultEvent{
 		ResultType:  event.ResultTypeError,
 		ErrorCode:   string(errorCode),
@@ -222,9 +226,9 @@ func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, 
 		return
 	}
 
-	topic := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, keygenResult.WalletID)
+	topic := event.KeygenResultSubject(clientID, keygenResult.WalletID)
 	err = sc.keygenResultQueue.Enqueue(topic, keygenResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: buildIdempotentKey(keygenMsg.WalletID, sessionID, mpc.TypeGenerateWalletResultFmt),
+		IdempotententKey: buildIdempotentKey(keygenMsg.WalletID, clientID, sessionID, mpc.TypeGenerateWalletResultFmt),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue keygen result event", err,

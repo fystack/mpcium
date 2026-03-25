@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/eventconsumer"
@@ -11,11 +12,6 @@ import (
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/nats-io/nats.go"
-)
-
-const (
-	GenerateWalletSuccessTopic = "mpc.mpc_keygen_result.*"  // wildcard to listen to all success events
-	ResharingSuccessTopic      = "mpc.mpc_reshare_result.*" // wildcard to listen to all success events
 )
 
 type MPCClient interface {
@@ -38,6 +34,7 @@ type mpcClient struct {
 	signResultQueue     messaging.MessageQueue
 	reshareSuccessQueue messaging.MessageQueue
 	signer              Signer
+	clientID            string
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -47,6 +44,18 @@ type Options struct {
 
 	// Signer for signing messages
 	Signer Signer
+
+	// ClientID optionally scopes result routing for this client instance.
+	ClientID string
+}
+
+type clientResultRouting struct {
+	keygenConsumerName  string
+	keygenSubject       string
+	signingConsumerName string
+	signingSubject      string
+	reshareConsumerName string
+	reshareSubject      string
 }
 
 // NewMPCClient creates a new MPC client using the provided options.
@@ -54,6 +63,9 @@ type Options struct {
 func NewMPCClient(opts Options) MPCClient {
 	if opts.Signer == nil {
 		logger.Fatal("Signer is required", nil)
+	}
+	if err := validateClientID(opts.ClientID); err != nil {
+		logger.Fatal("Invalid client ID", err)
 	}
 
 	// 2) Create the PubSub for both publish & subscribe
@@ -82,15 +94,12 @@ func NewMPCClient(opts Options) MPCClient {
 
 	pubsub := messaging.NewNATSPubSub(opts.NatsConn)
 
-	manager := messaging.NewNATsMessageQueueManager("mpc", []string{
-		"mpc.mpc_keygen_result.*",
-		"mpc.mpc_signing_result.*",
-		"mpc.mpc_reshare_result.*",
-	}, opts.NatsConn)
+	manager := messaging.NewNATsMessageQueueManager("mpc", event.ResultStreamSubjects(), opts.NatsConn)
+	routing := buildClientResultRouting(opts.ClientID)
 
-	genKeySuccessQueue := manager.NewMessageQueue("mpc_keygen_result")
-	signResultQueue := manager.NewMessageQueue("mpc_signing_result")
-	reshareSuccessQueue := manager.NewMessageQueue("mpc_reshare_result")
+	genKeySuccessQueue := manager.NewMessageQueue(routing.keygenConsumerName, routing.keygenSubject)
+	signResultQueue := manager.NewMessageQueue(routing.signingConsumerName, routing.signingSubject)
+	reshareSuccessQueue := manager.NewMessageQueue(routing.reshareConsumerName, routing.reshareSubject)
 
 	return &mpcClient{
 		signingBroker:       signingBroker,
@@ -100,6 +109,7 @@ func NewMPCClient(opts Options) MPCClient {
 		signResultQueue:     signResultQueue,
 		reshareSuccessQueue: reshareSuccessQueue,
 		signer:              opts.Signer,
+		clientID:            opts.ClientID,
 	}
 }
 
@@ -131,7 +141,7 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 		return fmt.Errorf("CreateWallet: marshal error: %w", err)
 	}
 
-	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes); err != nil {
+	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes, c.requestHeaders()); err != nil {
 		return fmt.Errorf("CreateWallet: publish error: %w", err)
 	}
 	return nil
@@ -139,7 +149,7 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 
 // The callback will be invoked whenever a wallet creation result is received.
 func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error {
-	err := c.genKeySuccessQueue.Dequeue(GenerateWalletSuccessTopic, func(msg []byte) error {
+	err := c.genKeySuccessQueue.Dequeue(event.KeygenResultSubscriptionSubject(c.clientID), func(msg []byte) error {
 		var event event.KeygenResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
@@ -174,14 +184,14 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 		return fmt.Errorf("SignTransaction: marshal error: %w", err)
 	}
 
-	if err := c.signingBroker.PublishMessage(context.Background(), event.SigningRequestTopic, bytes); err != nil {
+	if err := c.signingBroker.PublishMessage(context.Background(), event.SigningRequestTopic, bytes, c.requestHeaders()); err != nil {
 		return fmt.Errorf("SignTransaction: publish error: %w", err)
 	}
 	return nil
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
-	err := c.signResultQueue.Dequeue(event.SigningResultCompleteTopic, func(msg []byte) error {
+	err := c.signResultQueue.Dequeue(event.SigningResultSubscriptionSubject(c.clientID), func(msg []byte) error {
 		var event event.SigningResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
@@ -215,14 +225,14 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 		return fmt.Errorf("Resharing: marshal error: %w", err)
 	}
 
-	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes); err != nil {
+	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes, c.requestHeaders()); err != nil {
 		return fmt.Errorf("Resharing: publish error: %w", err)
 	}
 	return nil
 }
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
-	err := c.reshareSuccessQueue.Dequeue(ResharingSuccessTopic, func(msg []byte) error {
+	err := c.reshareSuccessQueue.Dequeue(event.ReshareResultSubscriptionSubject(c.clientID), func(msg []byte) error {
 		logger.Info("Received reshare success message", "raw", string(msg))
 		var event event.ResharingResultEvent
 		err := json.Unmarshal(msg, &event)
@@ -239,5 +249,38 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 		return fmt.Errorf("OnResharingResult: subscribe error: %w", err)
 	}
 
+	return nil
+}
+
+func (c *mpcClient) requestHeaders() map[string]string {
+	if c.clientID == "" {
+		return nil
+	}
+	return map[string]string{
+		event.ClientIDHeader: c.clientID,
+	}
+}
+
+func buildClientResultRouting(clientID string) clientResultRouting {
+	return clientResultRouting{
+		keygenConsumerName:  event.ResultConsumerName("mpc_keygen_result", clientID),
+		keygenSubject:       event.KeygenResultSubscriptionSubject(clientID),
+		signingConsumerName: event.ResultConsumerName("mpc_signing_result", clientID),
+		signingSubject:      event.SigningResultSubscriptionSubject(clientID),
+		reshareConsumerName: event.ResultConsumerName("mpc_reshare_result", clientID),
+		reshareSubject:      event.ReshareResultSubscriptionSubject(clientID),
+	}
+}
+
+func validateClientID(clientID string) error {
+	if clientID == "" {
+		return nil
+	}
+	if strings.TrimSpace(clientID) == "" {
+		return fmt.Errorf("client ID cannot be blank")
+	}
+	if strings.ContainsAny(clientID, " \t\r\n.*>") {
+		return fmt.Errorf("client ID must be a single NATS subject token")
+	}
 	return nil
 }
