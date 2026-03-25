@@ -75,8 +75,8 @@ func main() {
 	dummyTx := []byte("deadbeef") // replace with real transaction bytes
 
 	txMsg := &types.SignTxMessage{
-		KeyType:             types.KeyTypeSecp256k1,
-		WalletID:            "b8a32a42-b5ea-4c80-a489-d2ec9e873cdf", // Use the generated wallet ID
+		KeyType:             types.KeyTypeEd25519,
+		WalletID:            "ad24f678-b04b-4149-bcf6-bf9c90df8e63", // Use the generated wallet ID
 		NetworkInternalCode: "solana-devnet",
 		TxID:                txID,
 		Tx:                  dummyTx,
