@@ -80,6 +80,11 @@ func benchmarkCommand() *cli.Command {
 				Value:    false,
 				Category: "authentication",
 			},
+			&cli.StringFlag{
+				Name:     "client-id",
+				Usage:    "Client ID for result routing (scopes results to this client instance)",
+				Category: "configuration",
+			},
 			&cli.BoolFlag{
 				Name:     "debug",
 				Usage:    "Enable debug logging",
@@ -244,6 +249,7 @@ func createMPCClient(cmd *cli.Command) (client.MPCClient, error) {
 	opts := client.Options{
 		NatsConn: nc,
 		Signer:   signer,
+		ClientID: cmd.String("client-id"),
 	}
 	return client.NewMPCClient(opts), nil
 }
