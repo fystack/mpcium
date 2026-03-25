@@ -166,6 +166,14 @@ $ mpcium start -n node2
 
 Mpcium supports flexible client authentication through a signer interface, allowing you to use either local keys or AWS KMS for signing operations.
 
+#### Client ID (Result Routing)
+
+When multiple client instances connect to the same MPC cluster, each client **must** set a unique `ClientID` to avoid result routing conflicts. Without distinct client IDs, two clients requesting operations concurrently may race for the same result message, causing one client to receive the other's response.
+
+- `ClientID` scopes the NATS consumer and result subject so each client only receives its own results.
+- Allowed characters: alphanumeric, hyphens, and underscores (e.g. `"backend-svc-1"`, `"mobile_api"`).
+- If you only run a single client instance, `ClientID` can be omitted (empty string).
+
 #### Local Signer (Ed25519)
 
 ```go
@@ -193,10 +201,11 @@ func main() {
         logger.Fatal("Failed to create local signer", err)
     }
 
-    // Create MPC client with signer
+    // Create MPC client with signer and a unique client ID
     mpcClient := client.NewMPCClient(client.Options{
         NatsConn: natsConn,
         Signer:   localSigner,
+        ClientID: "backend-svc-1", // unique per client instance
     })
 
     // Handle wallet creation results
@@ -253,6 +262,7 @@ func main() {
     mpcClient := client.NewMPCClient(client.Options{
         NatsConn: natsConn,
         Signer:   kmsSigner,
+        ClientID: "kms-client-1", // unique per client instance
     })
     // ... rest of the client code
 }
