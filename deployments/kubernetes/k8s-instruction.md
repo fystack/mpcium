@@ -130,11 +130,11 @@ Generate the peer configuration file that defines all nodes in your MPC cluster:
 mpcium-cli generate-peers -n 3
 
 # This creates peers.json with structure:
-# [
-#   {"id": "node0_<random>", "name": "node0"},
-#   {"id": "node1_<random>", "name": "node1"},
-#   {"id": "node2_<random>", "name": "node2"}
-# ]
+# {
+#   "node0": "<uuid>",
+#   "node1": "<uuid>",
+#   "node2": "<uuid>"
+# }
 ```
 
 **Important**: Keep this `peers.json` file secure. You'll need it for generating identities and registering peers.
@@ -148,8 +148,8 @@ The event initiator is authorized to trigger MPC operations (keygen, signing, re
 mpcium-cli generate-initiator --encrypt
 
 # Output files:
-# - initiator_identity.json (public key)
-# - initiator_private.key.age (encrypted private key)
+# - event_initiator.identity.json (public key and metadata)
+# - event_initiator.key.age (encrypted private key)
 ```
 
 **Save the decryption password securely** - you'll need it for applications that initiate MPC operations.
@@ -157,7 +157,7 @@ mpcium-cli generate-initiator --encrypt
 Extract the public key:
 
 ```bash
-cat initiator_identity.json | jq -r '.public_key'
+cat event_initiator.identity.json | jq -r '.public_key'
 # Example output: 6cdddd50b0e550f285c5e998cb9c9c88224680cd5922307b9c2e3c395f78dabc
 ```
 
@@ -196,10 +196,8 @@ Each identity directory contains:
 
 ```
 identity/node0/
-├── node0_identity.json
-├── node0_private.key.age  (encrypted private key)
-├── node1_identity.json
-└── node2_identity.json
+├── node0_identity.json        (public key and metadata)
+└── node0_private.key.age      (encrypted private key)
 ```
 
 ### Step 5: Prepare Secrets
@@ -244,35 +242,33 @@ Deploy NATS and Consul if not using external services. For production, use the o
 
 Create secrets for each node containing identity files and passwords:
 
-Command to generate storng Badger password:
+Generate and store passwords directly as a Kubernetes secret (passwords never touch disk or shell history):
 
-```
-< /dev/urandom tr -dc 'A-Za-z0-9!@#$^&\*()-\_=+[]{}|;:,.<>?/~' | head -c 32; echo
+```bash
+kubectl create secret generic mpcium-secrets \
+  -n mpcium \
+  --from-literal=mpcium-db-password.cred="$(< /dev/urandom tr -dc 'A-Za-z0-9!@#' | head -c 32)" \
+  --from-literal=mpcium-identity-password.cred="$(< /dev/urandom tr -dc 'A-Za-z0-9!@#' | head -c 32)"
 ```
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mpcium-secrets-node0
-  namespace: mpcium
-type: Opaque
-stringData:
-  mpcium-db-password.cred: "<badger_password>"
-  mpcium-identity-password.cred: "<identity_decrypt_password>"
+To retrieve a password later:
+
+```bash
+kubectl get secret mpcium-secrets -n mpcium \
+  -o jsonpath='{.data.mpcium-db-password\.cred}' | base64 -d; echo
 ```
 
 ```bash
-# Create identity secret from files
-kubectl create secret generic mpcium-identity-node0 \
+# Create identity secret containing all node identity files
+kubectl create secret generic mpcium-identity \
   -n mpcium \
   --from-file=identity/node0/node0_identity.json \
   --from-file=identity/node0/node0_private.key.age \
-  --from-file=identity/node0/node1_identity.json \
-  --from-file=identity/node0/node2_identity.json
+  --from-file=identity/node1/node1_identity.json \
+  --from-file=identity/node1/node1_private.key.age \
+  --from-file=identity/node2/node2_identity.json \
+  --from-file=identity/node2/node2_private.key.age
 ```
-
-Repeat for node1 and node2.
 
 Create a ConfigMap containing the shared `peers.json` file (required by the distroless image at runtime):
 
@@ -304,6 +300,7 @@ data:
     mpc_threshold: 2
     event_initiator_pubkey: "<your-initiator-public-key>"
     event_initiator_algorithm: "ed25519"
+    chain_code: "<64-char-hex-string>"  # Required: 32-byte hex for HD key derivation
     backup_enabled: false
     backup_period_seconds: 300
 ```
@@ -335,52 +332,25 @@ mpcium-cli register-peers \
   --config ./register-config.yaml
 ```
 
-### Step 6: Create Persistent Volume Claims
+### Step 6: Deploy mpcium StatefulSet
 
-Each node needs persistent storage:
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mpcium-data-node0
-  namespace: mpcium
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
-```
-
-This stores:
-
-- BadgerDB data
-- Backups (`/app/data/backups`)
-
-Repeat for node1 and node2.
-
-### Step 7: Deploy mpcium Nodes
-
-Create a Deployment for each node:
+Use a StatefulSet so each pod gets a stable name (`mpcium-0`, `mpcium-1`, etc.) that maps to the peer entries in Consul. The StatefulSet also manages PersistentVolumeClaims automatically via `volumeClaimTemplates`.
 
 ```yaml
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: mpcium-node0
+  name: mpcium
   namespace: mpcium
 spec:
-  replicas: 1
-  strategy:
-    type: Recreate
+  replicas: 3
   selector:
     matchLabels:
-      app: mpcium-node0
+      app: mpcium
   template:
     metadata:
       labels:
-        app: mpcium-node0
+        app: mpcium
     spec:
       securityContext:
         runAsNonRoot: true
@@ -390,16 +360,22 @@ spec:
       containers:
         - name: mpcium
           image: fystacklabs/mpcium-prod:1.0.0
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           args:
             - "start"
-            - "--name=node0"
-            - "--config=/config.yaml"
+            - "--name=$(POD_NAME)"
+            - "--config=/app/config.yaml"
+            - "--peers=/app/peers.json"
             - "--password-file=/app/secrets/mpcium-db-password.cred"
             - "--identity-password-file=/app/secrets/mpcium-identity-password.cred"
             - "--decrypt-private-key"
           volumeMounts:
             - name: config
-              mountPath: /config.yaml
+              mountPath: /app/config.yaml
               subPath: config.yaml
               readOnly: true
             - name: peers
@@ -431,33 +407,31 @@ spec:
             name: mpcium-peers
         - name: identity
           secret:
-            secretName: mpcium-identity-node0
+            secretName: mpcium-identity
             defaultMode: 0400
         - name: secrets
           secret:
-            secretName: mpcium-secrets-node0
+            secretName: mpcium-secrets
             defaultMode: 0400
-        - name: data
-          persistentVolumeClaim:
-            claimName: mpcium-data-node0
         - name: tmp
           emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
 ```
 
-Duplicate this manifest for `node1`, `node2`, etc., updating:
-
-- Deployment/resource names (`mpcium-nodeX`)
-- CLI flag `--name=nodeX`
-- Secret and PVC references (`mpcium-identity-nodeX`, `mpcium-secrets-nodeX`, `mpcium-data-nodeX`)
-- Labels (`app: mpcium-nodeX`) to keep pods discoverable by node name
-
-Deploy all nodes:
+Deploy:
 
 ```bash
-kubectl apply -f node0-deployment.yaml
-kubectl apply -f node1-deployment.yaml
-kubectl apply -f node2-deployment.yaml
+kubectl apply -f mpcium-statefulset.yaml
 ```
+
+Pod names will be `mpcium-0`, `mpcium-1`, `mpcium-2` — make sure your `peers.json` and Consul entries use these names (e.g. `{"mpcium-0": "<uuid>", ...}`).
 
 ## Post-Deployment Verification
 
@@ -565,12 +539,11 @@ healthcheck:
   address: "0.0.0.0:8080" # default
 ```
 
-Sample probes once enabled:
+**Important**: The `/health` endpoint returns HTTP 503 when the node is not yet ready (e.g. during peer ECDH key exchange setup). Do **not** use it as a `livenessProbe` — Kubernetes would kill pods that are still initializing. Use it only for `readinessProbe`, and use a TCP socket probe for liveness:
 
 ```yaml
 livenessProbe:
-  httpGet:
-    path: /health
+  tcpSocket:
     port: 8080
   initialDelaySeconds: 30
   periodSeconds: 10
@@ -617,11 +590,9 @@ kubectl cp mpcium/<pod-name>:/app/data/backups/backup-<timestamp>.bak ./backup.b
 3. Perform rolling update:
 
 ```bash
-kubectl set image deployment/mpcium-node0 \
+kubectl set image statefulset/mpcium \
   -n mpcium \
-  mpcium=fystack/mpcium:v0.3.4
-
-# Repeat for other nodes
+  mpcium=fystacklabs/mpcium-prod:v0.3.4
 ```
 
 **Note**: For critical updates affecting consensus, consider:
@@ -747,7 +718,7 @@ rules:
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["statefulsets"]
     verbs: ["get", "list", "watch", "update", "patch"]
 ```
 
@@ -776,8 +747,8 @@ kubectl describe pod -n mpcium <pod-name>
 **Solutions**:
 
 ```bash
-# Check if BadgerDB is corrupted
-kubectl exec -n mpcium -it <pod-name> -- ls -la /data/db/
+# Check if BadgerDB is corrupted (use debug container since distroless has no ls)
+kubectl debug -n mpcium <pod-name> -it --image=busybox --target=mpcium -- ls -la /proc/1/root/app/data/db/
 
 # Check password is correct
 kubectl get secret mpcium-secrets-node0 -n mpcium -o json | \
@@ -816,8 +787,8 @@ kubectl get secret mpcium-identity-node0 -n mpcium -o json | \
 # Verify Consul is running
 kubectl get pods -n mpcium -l app=consul
 
-# Test connectivity from pod
-kubectl exec -n mpcium -it <pod-name> -- \
+# Test connectivity from a debug container
+kubectl debug -n mpcium <pod-name> -it --image=busybox --target=mpcium -- \
   wget -O- http://consul:8500/v1/kv/mpc_peers/
 
 # Verify peers are registered
@@ -835,8 +806,8 @@ curl http://localhost:8500/v1/kv/mpc_peers/?keys
 # Verify NATS is running
 kubectl get pods -n mpcium -l app=nats
 
-# Test connectivity
-kubectl exec -n mpcium -it <pod-name> -- \
+# Test connectivity from a debug container
+kubectl debug -n mpcium <pod-name> -it --image=busybox --target=mpcium -- \
   nc -zv nats 4222
 
 # Check NATS logs
@@ -863,19 +834,18 @@ kubectl get configmap mpcium-config -n mpcium -o yaml
 
 ### Debugging Commands
 
+The mpcium image uses distroless (no shell, no `ls`, no `env`). Use an ephemeral debug container for filesystem inspection, or call the mpcium binary directly for commands it supports:
+
 ```bash
-# Launch an ephemeral debug container (distroless base image has no shell)
+# Launch an ephemeral debug container that shares the pod's process namespace
 kubectl debug -n mpcium <pod-name> -it --image=busybox --target=mpcium
 
-# Check environment variables
-kubectl exec -n mpcium <pod-name> -- env | grep -i mpcium
+# Inside the debug container, inspect mounts:
+ls -la /proc/1/root/app
+ls -la /proc/1/root/app/identity
+ls -la /proc/1/root/app/data
 
-# Inspect data/identity mounts
-kubectl exec -n mpcium <pod-name> -- ls -la /app
-kubectl exec -n mpcium <pod-name> -- ls -la /app/identity
-kubectl exec -n mpcium <pod-name> -- ls -la /app/data
-
-# Verify mpcium binary
+# Verify mpcium binary version (this works directly since it's a Go binary)
 kubectl exec -n mpcium <pod-name> -- /app/mpcium version
 ```
 
@@ -902,17 +872,13 @@ kubectl logs -n mpcium <pod-name> > node0.log
 
 ```bash
 # 1. Stop all nodes
-kubectl scale deployment mpcium-node0 --replicas=0 -n mpcium
-kubectl scale deployment mpcium-node1 --replicas=0 -n mpcium
-kubectl scale deployment mpcium-node2 --replicas=0 -n mpcium
+kubectl scale statefulset mpcium --replicas=0 -n mpcium
 
 # 2. Wait for shutdown
-kubectl wait --for=delete pod -l component=mpcium -n mpcium --timeout=60s
+kubectl wait --for=delete pod -l app=mpcium -n mpcium --timeout=60s
 
 # 3. Start all nodes
-kubectl scale deployment mpcium-node0 --replicas=1 -n mpcium
-kubectl scale deployment mpcium-node1 --replicas=1 -n mpcium
-kubectl scale deployment mpcium-node2 --replicas=1 -n mpcium
+kubectl scale statefulset mpcium --replicas=3 -n mpcium
 ```
 
 #### Lost Node Recovery
@@ -920,16 +886,15 @@ kubectl scale deployment mpcium-node2 --replicas=1 -n mpcium
 ```bash
 # If a node's data is lost but identity is intact:
 
-# 1. Delete the PVC
-kubectl delete pvc mpcium-data-node0 -n mpcium
+# 1. Delete the specific pod (StatefulSet will recreate it)
+kubectl delete pod mpcium-0 -n mpcium
 
-# 2. Recreate PVC (will provision new volume)
-kubectl apply -f node0/pvc.yaml
+# 2. If the PVC is corrupted, delete it and the pod
+kubectl delete pvc data-mpcium-0 -n mpcium
+kubectl delete pod mpcium-0 -n mpcium
+# StatefulSet will recreate both the pod and PVC
 
-# 3. Restart deployment
-kubectl rollout restart deployment/mpcium-node0 -n mpcium
-
-# 4. Node will start fresh (key shares may need resharing)
+# 3. Node will start fresh (key shares may need resharing)
 ```
 
 ## Additional Resources
