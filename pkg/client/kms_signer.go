@@ -28,8 +28,8 @@ type KMSSignerOptions struct {
 	Region          string // AWS region (e.g., "us-east-1", "us-west-2") - Required
 	KeyID           string // AWS KMS key ID or ARN - Required
 	EndpointURL     string // Custom endpoint URL (optional, for LocalStack/custom services)
-	AccessKeyID     string // AWS access key ID (optional, uses default credential chain if not provided)
-	SecretAccessKey string // AWS secret access key (optional, uses default credential chain if not provided)
+	AccessKeyID     string // AWS access key ID (optional, for local/LocalStack only — recommended to leave empty in production to use the Default Credential Chain)
+	SecretAccessKey string // AWS secret access key (optional, for local/LocalStack only — recommended to leave empty in production to use the Default Credential Chain)
 }
 
 // NewKMSSigner creates a new KMSSigner using AWS KMS
