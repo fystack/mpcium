@@ -46,6 +46,7 @@ Each ECS task runs a single mpcium node with:
 │  │  │              │  │              │  │              │     │ │
 │  │  │ init-secrets │  │ init-secrets │  │ init-secrets │     │ │
 │  │  │ init-config  │  │ init-config  │  │ init-config  │     │ │
+│  │  │ init-data    │  │ init-data    │  │ init-data    │     │ │
 │  │  │ mpcium       │  │ mpcium       │  │ mpcium       │     │ │
 │  │  │   ▼ EFS      │  │   ▼ EFS      │  │   ▼ EFS      │     │ │
 │  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │ │
@@ -71,11 +72,12 @@ Each ECS task runs a single mpcium node with:
 
 ### Task Structure
 
-Each ECS task contains three containers:
+Each ECS task contains four containers:
 
 1. **init-secrets** — Pulls passwords from AWS Secrets Manager, writes to `/secrets/` volume
 2. **init-config** — Downloads config.yaml, peers.json, and identity files from S3
-3. **mpcium** — Main application container (distroless, no shell)
+3. **init-data** — Copies identity files and peers.json from ephemeral volumes to EFS (`/app/data/`) so they persist across restarts
+4. **mpcium** — Main application container (distroless, no shell)
 
 ## Pre-Deployment Setup
 
@@ -251,6 +253,12 @@ Secrets Manager                    S3
    │ → /secrets/  │         │ → /config/   │
    │              │         │ → /identity/ │
    └──────┬───────┘         └──────┬───────┘
+          │                        │
+          │                 ┌──────┴───────┐
+          │                 │  init-data    │
+          │                 │ copies to EFS │
+          │                 │ /app/data/    │
+          │                 └──────┬────────┘
           │     shared volumes     │
           └──────────┬─────────────┘
                      ▼
@@ -265,6 +273,8 @@ Secrets Manager                    S3
 
 The main container is distroless (no shell), so all secrets must be pre-written to files by the init containers.
 
+**NATS and Consul connection strings** are injected via environment variables (`NATS_URL`, `CONSUL_ADDRESS`) on the mpcium container rather than hardcoded in `config.yaml`. The config file should leave these fields empty — the application reads env vars as overrides at runtime.
+
 ## Task Definition Reference
 
 Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` values.
@@ -278,8 +288,10 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
 | `<S3_BUCKET>` | S3 bucket for config files |
 | `<EFS_FILE_SYSTEM_ID>` | EFS file system ID |
 | `<EFS_ACCESS_POINT_ID>` | EFS access point ID for this node |
-| `<SECRETS_MANAGER_DB_PASSWORD_ARN>` | Secrets Manager secret name for BadgerDB password |
-| `<SECRETS_MANAGER_IDENTITY_PASSWORD_ARN>` | Secrets Manager secret name for identity password |
+| `<SECRETS_MANAGER_DB_PASSWORD_ARN>` | Secrets Manager secret ARN for BadgerDB password |
+| `<SECRETS_MANAGER_IDENTITY_PASSWORD_ARN>` | Secrets Manager secret ARN for identity password |
+| `<NATS_URL>` | NATS connection URL (e.g., `nats://nlb.internal:4222`) |
+| `<CONSUL_ADDRESS>` | Consul address with port (e.g., `nlb.internal:8500`) |
 
 ```json
 {
@@ -297,7 +309,7 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
       "essential": false,
       "entryPoint": ["sh", "-c"],
       "command": [
-        "aws secretsmanager get-secret-value --secret-id <SECRETS_MANAGER_DB_PASSWORD_ARN> --query SecretString --output text > /secrets/mpcium-db-password.cred && aws secretsmanager get-secret-value --secret-id <SECRETS_MANAGER_IDENTITY_PASSWORD_ARN> --query SecretString --output text > /secrets/mpcium-identity-password.cred && chmod 400 /secrets/*.cred"
+        "aws secretsmanager get-secret-value --secret-id <SECRETS_MANAGER_DB_PASSWORD_ARN> --query SecretString --output text > /secrets/mpcium-db-password.cred && aws secretsmanager get-secret-value --secret-id <SECRETS_MANAGER_IDENTITY_PASSWORD_ARN> --query SecretString --output text > /secrets/mpcium-identity-password.cred && chmod 444 /secrets/*.cred"
       ],
       "mountPoints": [
         {
@@ -320,7 +332,7 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
       "essential": false,
       "entryPoint": ["sh", "-c"],
       "command": [
-        "aws s3 cp s3://<S3_BUCKET>/mpcium/<NODE_NAME>/config.yaml /config/config.yaml && aws s3 cp s3://<S3_BUCKET>/mpcium/peers.json /config/peers.json && aws s3 cp s3://<S3_BUCKET>/mpcium/<NODE_NAME>/identity/ /identity/ --recursive && chmod 400 /identity/*.age && chmod 444 /identity/*.json /config/config.yaml /config/peers.json"
+        "aws s3 cp s3://<S3_BUCKET>/mpcium/<NODE_NAME>/config.yaml /config/config.yaml && aws s3 cp s3://<S3_BUCKET>/mpcium/peers.json /config/peers.json && aws s3 cp s3://<S3_BUCKET>/mpcium/<NODE_NAME>/identity/ /identity/ --recursive && chmod 444 /identity/*.age /identity/*.json /config/config.yaml /config/peers.json"
       ],
       "mountPoints": [
         {
@@ -348,6 +360,44 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
       }
     },
     {
+      "name": "init-data",
+      "image": "amazon/aws-cli:latest",
+      "essential": false,
+      "entryPoint": ["sh", "-c"],
+      "command": [
+        "rm -f /app/data/peers.json && rm -rf /app/data/identity && cp -r /identity /app/data/identity && cp /config/peers.json /app/data/peers.json"
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "config",
+          "containerPath": "/config"
+        },
+        {
+          "sourceVolume": "identity",
+          "containerPath": "/identity"
+        },
+        {
+          "sourceVolume": "data",
+          "containerPath": "/app/data"
+        }
+      ],
+      "dependsOn": [
+        {
+          "containerName": "init-config",
+          "condition": "SUCCESS"
+        }
+      ],
+      "user": "65532:65532",
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mpcium",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "init-data"
+        }
+      }
+    },
+    {
       "name": "mpcium",
       "image": "<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/mpcium:<IMAGE_TAG>",
       "essential": true,
@@ -360,10 +410,14 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
         "--decrypt-private-key",
         "--peers=/config/peers.json"
       ],
-      "portMappings": [
+      "environment": [
         {
-          "containerPort": 8080,
-          "protocol": "tcp"
+          "name": "NATS_URL",
+          "value": "<NATS_URL>"
+        },
+        {
+          "name": "CONSUL_ADDRESS",
+          "value": "<CONSUL_ADDRESS>"
         }
       ],
       "mountPoints": [
@@ -397,13 +451,6 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
           "condition": "SUCCESS"
         }
       ],
-      "healthCheck": {
-        "command": ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"],
-        "interval": 30,
-        "timeout": 5,
-        "retries": 3,
-        "startPeriod": 60
-      },
       "linuxParameters": {
         "initProcessEnabled": true
       },
@@ -416,8 +463,7 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
           "awslogs-region": "<AWS_REGION>",
           "awslogs-stream-prefix": "mpcium"
         }
-      },
-      "stopTimeout": 10
+      }
     }
   ],
   "volumes": [
@@ -459,14 +505,16 @@ Template task definition for a single mpcium node. Replace all `<PLACEHOLDER>` v
 }
 ```
 
+> **Note**: The `NATS_URL` and `CONSUL_ADDRESS` environment variables override the corresponding fields in `config.yaml`. This allows the same config file to be used across environments — only the ECS task definition env vars need to change.
+
 ### Volume Mount Summary
 
-| Volume | Init-secrets | Init-config | Mpcium (main) | Persistent |
-|--------|:---:|:---:|:---:|:---:|
-| `secrets` (`/secrets/` → `/app/secrets/`) | write | - | read-only | No (ephemeral) |
-| `config` (`/config/`) | - | write | read-only | No (ephemeral) |
-| `identity` (`/identity/` → `/app/identity/`) | - | write | read-only | No (ephemeral) |
-| `data` (`/app/data/`) | - | - | read-write | Yes (EFS) |
+| Volume | Init-secrets | Init-config | Init-data | Mpcium (main) | Persistent |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| `secrets` (`/secrets/` → `/app/secrets/`) | write | - | - | read-only | No (ephemeral) |
+| `config` (`/config/`) | - | write | read | read-only | No (ephemeral) |
+| `identity` (`/identity/` → `/app/identity/`) | - | write | read | read-only | No (ephemeral) |
+| `data` (`/app/data/`) | - | - | write | read-write | Yes (EFS) |
 
 ### Runtime File Paths (per node)
 
@@ -486,7 +534,13 @@ EFS directory structure per node's access point:
 /  (EFS access point root = /<NODE_NAME> on the filesystem)
 ├── db/
 │   └── <NODE_NAME>/    ← BadgerDB encrypted data
-└── backups/            ← encrypted .enc backup files
+├── backups/            ← encrypted .enc backup files
+├── identity/           ← copied from S3 by init-data container
+│   ├── node0_identity.json
+│   ├── node0_private.key.age
+│   ├── node1_identity.json
+│   └── node2_identity.json
+└── peers.json          ← copied from S3 by init-data container
 ```
 
 ## IAM Policies Reference
@@ -565,28 +619,36 @@ db_path: /app/data/db
 backup_dir: /app/data/backups
 
 # Consul service discovery
+# Leave empty when using CONSUL_ADDRESS env var override in ECS task definition
 consul:
-  address: <CONSUL_ADDRESS>:8500
+  address: ""
 
-# NATS messaging (TLS required in production)
+# NATS messaging
+# Leave empty when using NATS_URL env var override in ECS task definition
+# For production with TLS, uncomment the tls block and upload certs to S3
 nats:
-  url: nats://<NATS_ADDRESS>:4222
-  username: <NATS_USERNAME>
-  password: <NATS_PASSWORD>
-  tls:
-    client_cert: /config/certs/client-cert.pem
-    client_key: /config/certs/client-key.pem
-    ca_cert: /config/certs/rootCA.pem
+  url: ""
+  # username: <NATS_USERNAME>
+  # password: <NATS_PASSWORD>
+  # tls:
+  #   client_cert: /config/certs/client-cert.pem
+  #   client_key: /config/certs/client-key.pem
+  #   ca_cert: /config/certs/rootCA.pem
 
 # MPC threshold (t-of-n, where t >= floor(n/2) + 1)
 mpc_threshold: 2
 
-# Event initiator public key (Ed25519 hex)
+# Event initiator public key (hex encoded)
 event_initiator_pubkey: <EVENT_INITIATOR_PUBKEY>
-event_initiator_algorithm: ed25519
+# Algorithm: "ed25519" or "p256"
+event_initiator_algorithm: <ALGORITHM>
 
 # Chain code (32-byte hex, 64 characters)
 chain_code: <CHAIN_CODE_HEX>
+
+# Concurrency limits
+max_concurrent_keygen: 3
+max_concurrent_signing: 10
 
 # Backup settings
 # Application-level: writes encrypted .enc files to backup_dir for granular recovery.
@@ -614,7 +676,17 @@ After tasks start, the mpcium container logs should show (in order):
 
 ### Health Check
 
-The task definition health check hits `GET /health` on port 8080. Tasks should report `HEALTHY` within 60 seconds of starting (configured via `startPeriod`).
+The application exposes `GET /health` on port 8080 (configured via `healthcheck.address` in config.yaml). The current deployment does not define an ECS-level container health check — the application health endpoint is available for use by load balancers or external monitoring. If you need ECS to track container health, add a `healthCheck` block to the mpcium container definition:
+
+```json
+"healthCheck": {
+  "command": ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"],
+  "interval": 30,
+  "timeout": 5,
+  "retries": 3,
+  "startPeriod": 60
+}
+```
 
 ### Functional Test
 
@@ -686,5 +758,5 @@ See https://github.com/fystack/mpcium-client-ts.
 ---
 
 **Version**: 0.3.3
-**Last Updated**: March 2, 2026
+**Last Updated**: March 26, 2026
 **Maintainer**: FyStack Team
