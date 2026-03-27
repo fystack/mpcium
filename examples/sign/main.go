@@ -57,16 +57,14 @@ func main() {
 	defer natsConn.Drain()
 	defer natsConn.Close()
 
-	localSigner, err := client.NewLocalSigner(types.EventInitiatorKeyType(algorithm), client.LocalSignerOptions{
-		KeyPath: "./event_initiator.key",
-	})
+	signer, err := newSigner(types.EventInitiatorKeyType(algorithm))
 	if err != nil {
-		logger.Fatal("Failed to create local signer", err)
+		logger.Fatal("Failed to create signer", err)
 	}
 
 	mpcClient := client.NewMPCClient(client.Options{
 		NatsConn: natsConn,
-		Signer:   localSigner,
+		Signer:   signer,
 		ClientID: *clientID,
 	})
 
@@ -103,4 +101,21 @@ func main() {
 	<-stop
 
 	fmt.Println("Shutting down.")
+}
+
+
+// newSigner returns a KMSSigner if aws.kms_key_id is configured, otherwise falls back to the local key file.
+// In IAM-aware environments (Recommended in Production) no credentials are needed —
+// set aws.kms_key_id and aws.region in config.yaml and the SDK handles the rest.
+func newSigner(keyType types.EventInitiatorKeyType) (client.Signer, error) {
+	if kmsKeyID := viper.GetString("aws.kms_key_id"); kmsKeyID != "" {
+		return client.NewKMSSigner(keyType, client.KMSSignerOptions{
+			Region: viper.GetString("aws.region"),
+			KeyID:  kmsKeyID,
+		})
+	}
+
+	return client.NewLocalSigner(keyType, client.LocalSignerOptions{
+		KeyPath: "./event_initiator.key",
+	})
 }
