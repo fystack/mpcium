@@ -33,18 +33,25 @@ import (
 )
 
 const (
-	Version                    = "0.3.3"
+	Version                    = "0.3.5"
 	DefaultBackupPeriodSeconds = 300 // (5 minutes)
 )
 
 func printBanner() {
-	banner := fmt.Sprintf(`
-╔══════════════════════════════════════════════════════════════╗
-║                       MPCIUM v%s                          ║
-║      Multi-Party Computation Threshold Signatures Node       ║
-╚══════════════════════════════════════════════════════════════╝
-`, Version)
-	fmt.Print(banner)
+	c := "\033[38;2;0;206;200m"
+	d := "\033[38;2;0;140;136m"
+	r := "\033[0m"
+
+	fmt.Printf(`
+%s     __  __ ____   ____ ___ _   _ __  __
+    |  \/  |  _ \ / ___|_ _| | | |  \/  |
+    | |\/| | |_) | |    | || | | | |\/| |
+    | |  | |  __/| |___ | || |_| | |  | |
+    |_|  |_|_|    \____|___|\___/|_|  |_|
+%s    Distributed MPC Node for Threshold Signatures  v%s
+    ──────────────────────────────────────────%s
+
+`, c, d, Version, r)
 }
 
 func main() {
