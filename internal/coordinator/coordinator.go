@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/google/uuid"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
@@ -85,8 +87,42 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 	if err != nil {
 		return reject(ErrorCodeInvalidJSON, "invalid JSON request"), nil
 	}
-	if err := c.validateRequest(ctx, op, req); err != nil {
+	// Backward compatibility: keygen without protocol means dispatch both ECDSA and EdDSA sessions.
+	if op == OperationKeygen && req.SessionStart != nil && isProtocolUnspecified(req.SessionStart.Protocol) {
+		protocols := []sdkprotocol.ProtocolType{sdkprotocol.ProtocolTypeECDSA, sdkprotocol.ProtocolTypeEdDSA}
+		sessionIDs := make([]string, 0, len(protocols))
+		var firstAccepted *sdkprotocol.RequestAccepted
+
+		for _, protocol := range protocols {
+			cloned := cloneSessionStart(req.SessionStart)
+			cloned.Protocol = protocol
+			accepted, err := c.acceptRequest(ctx, op, &sdkprotocol.ControlMessage{SessionStart: cloned})
+			if err != nil {
+				return rejectFromError(err), nil
+			}
+			sessionIDs = append(sessionIDs, accepted.SessionID)
+			if firstAccepted == nil {
+				firstAccepted = accepted
+			}
+		}
+
+		logger.Info("coordinator expanded keygen request without protocol",
+			"operation", string(op),
+			"sessions", strings.Join(sessionIDs, ","),
+		)
+		return json.Marshal(firstAccepted)
+	}
+
+	accepted, err := c.acceptRequest(ctx, op, req)
+	if err != nil {
 		return rejectFromError(err), nil
+	}
+	return json.Marshal(accepted)
+}
+
+func (c *Coordinator) acceptRequest(ctx context.Context, op Operation, req *sdkprotocol.ControlMessage) (*sdkprotocol.RequestAccepted, error) {
+	if err := c.validateRequest(ctx, op, req); err != nil {
+		return nil, err
 	}
 
 	now := c.now()
@@ -118,25 +154,31 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 		ParticipantKeys:  keys,
 	}
 	if err := c.store.Create(ctx, session); err != nil {
-		return rejectFromError(err), nil
+		return nil, err
 	}
+	logger.Info("coordinator accepted request",
+		"action", string(op),
+		"protocol", string(start.Protocol),
+		"session_id", session.ID,
+		"participant_count", len(session.Participants),
+		"wallet_id", keygenWalletID(start),
+	)
 
 	if err := c.fanOutSessionStart(ctx, session); err != nil {
 		_ = c.failSession(ctx, session, ErrorCodeInternal, err.Error())
-		return reject(ErrorCodeInternal, "failed to publish session start"), nil
+		return nil, newCoordinatorError(ErrorCodeInternal, "failed to publish session start")
 	}
 	session.State = SessionWaitingParticipants
 	session.UpdatedAt = c.now()
 	if err := c.store.Save(ctx, session); err != nil {
-		return reject(ErrorCodeInternal, "failed to save session"), nil
+		return nil, newCoordinatorError(ErrorCodeInternal, "failed to save session")
 	}
 
-	resp := sdkprotocol.RequestAccepted{
+	return &sdkprotocol.RequestAccepted{
 		Accepted:  true,
 		SessionID: session.ID,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339Nano),
-	}
-	return json.Marshal(resp)
+	}, nil
 }
 
 func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error {
@@ -187,7 +229,7 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 		if event.SessionCompleted.Result == nil {
 			return c.failSession(ctx, session, ErrorCodeValidation, "missing result payload")
 		}
-		state.ResultHash = canonicalResultHash(event.SessionCompleted.Result)
+		state.ResultHash = canonicalOperationResultHash(session.Op, event.SessionCompleted.Result)
 	case event.PeerFailed != nil:
 		state.Failed = true
 		state.ErrorCode = ErrorCodeParticipantFailed
@@ -206,6 +248,11 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 	if err := c.advance(ctx, session, &event); err != nil {
 		return err
 	}
+	logger.Debug("coordinator processed session event",
+		"session_id", session.ID,
+		"participant_id", event.ParticipantID,
+		"state", string(session.State),
+	)
 	return c.store.Save(ctx, session)
 }
 
@@ -236,6 +283,9 @@ func (c *Coordinator) validateRequest(ctx context.Context, op Operation, msg *sd
 		return newCoordinatorError(ErrorCodeValidation, "session_start is required")
 	}
 	start := msg.SessionStart
+	if isProtocolUnspecified(start.Protocol) {
+		return newCoordinatorError(ErrorCodeValidation, "protocol is required")
+	}
 	start.SessionID = "tmp"
 	start.Operation = op.ToSDK()
 	if err := sdkprotocol.ValidateSessionStart(start); err != nil {
@@ -253,6 +303,10 @@ func (c *Coordinator) validateRequest(ctx context.Context, op Operation, msg *sd
 		}
 	}
 	return nil
+}
+
+func isProtocolUnspecified(protocol sdkprotocol.ProtocolType) bool {
+	return protocol == sdkprotocol.ProtocolTypeUnspecified || string(protocol) == ""
 }
 
 func (c *Coordinator) advance(ctx context.Context, session *Session, event *sdkprotocol.SessionEvent) error {
@@ -347,6 +401,11 @@ func (c *Coordinator) fanOutMPCBegin(ctx context.Context, session *Session) erro
 }
 
 func (c *Coordinator) failSession(ctx context.Context, session *Session, code, message string) error {
+	logger.Error("coordinator failing session",
+		fmt.Errorf("%s: %s", code, message),
+		"session_id", session.ID,
+		"error_code", code,
+	)
 	now := c.now()
 	session.State = SessionFailed
 	session.ErrorCode = code
@@ -457,6 +516,27 @@ func allParticipants(session *Session, predicate func(*ParticipantState) bool) b
 	return true
 }
 
+func canonicalOperationResultHash(op Operation, result *sdkprotocol.Result) string {
+	if result == nil {
+		return ""
+	}
+	switch op {
+	case OperationKeygen:
+		if result.KeyShare == nil {
+			return ""
+		}
+		normalized := &sdkprotocol.Result{
+			KeyShare: &sdkprotocol.KeyShareResult{
+				KeyID:     result.KeyShare.KeyID,
+				PublicKey: append([]byte(nil), result.KeyShare.PublicKey...),
+			},
+		}
+		return canonicalResultHash(normalized)
+	default:
+		return canonicalResultHash(result)
+	}
+}
+
 func canonicalResultHash(result *sdkprotocol.Result) string {
 	if result == nil {
 		return ""
@@ -464,6 +544,13 @@ func canonicalResultHash(result *sdkprotocol.Result) string {
 	raw, _ := json.Marshal(result)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func keygenWalletID(start *sdkprotocol.SessionStart) string {
+	if start == nil || start.Keygen == nil {
+		return ""
+	}
+	return start.Keygen.KeyID
 }
 
 func firstNonEmpty(values ...string) string {

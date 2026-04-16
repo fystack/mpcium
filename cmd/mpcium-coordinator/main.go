@@ -2,57 +2,71 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/fystack/mpcium/internal/coordinator"
+	"github.com/fystack/mpcium/pkg/config"
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/nats-io/nats.go"
+	"github.com/urfave/cli/v3"
 )
 
+const coordinatorConfigPath = "coordinator.config.yaml"
+
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	logger.Init(os.Getenv("ENVIRONMENT"), false)
+
+	cmd := &cli.Command{
+		Name:  "mpcium-coordinator",
+		Usage: "Run MPC coordinator runtime",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "config",
+				Aliases: []string{"c"},
+				Usage:   "Path to coordinator config file",
+				Value:   coordinatorConfigPath,
+			},
+		},
+		Action: run,
+	}
+
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
+		logger.Error("coordinator exited with error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	natsURL := flag.String("nats-url", envDefault("NATS_URL", nats.DefaultURL), "NATS server URL")
-	coordinatorID := flag.String("coordinator-id", envDefault("COORDINATOR_ID", ""), "stable coordinator ID")
-	privateKeyHex := flag.String("coordinator-private-key-hex", envDefault("COORDINATOR_PRIVATE_KEY_HEX", ""), "hex encoded Ed25519 private key")
-	snapshotDir := flag.String("snapshot-dir", envDefault("COORDINATOR_SNAPSHOT_DIR", "coordinator-snapshots"), "directory for coordinator session snapshots")
-	relayAvailable := flag.Bool("relay-available", envBoolDefault("COORDINATOR_RELAY_AVAILABLE", true), "whether relay is available for MQTT participants")
-	defaultSessionTTLSec := flag.Int("default-session-ttl-sec", envIntDefault("COORDINATOR_DEFAULT_SESSION_TTL_SEC", 120), "default session TTL in seconds")
-	tickInterval := flag.Duration("tick-interval", envDurationDefault("COORDINATOR_TICK_INTERVAL", time.Second), "session timeout scan interval")
-	flag.Parse()
+func run(ctx context.Context, c *cli.Command) error {
+	configPath := c.String("config")
+	config.InitViperConfig(configPath)
 
-	if *coordinatorID == "" {
-		return fmt.Errorf("coordinator-id is required")
+	cfg, err := coordinator.LoadRuntimeConfig()
+	if err != nil {
+		return err
 	}
-	if *privateKeyHex == "" {
-		return fmt.Errorf("coordinator-private-key-hex is required")
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 
-	signer, err := coordinator.NewEd25519SignerFromHex(*privateKeyHex)
+	signer, err := coordinator.NewEd25519SignerFromHex(cfg.PrivateKeyHex)
 	if err != nil {
 		return err
 	}
 
-	nc, err := nats.Connect(*natsURL)
+	nc, err := nats.Connect(cfg.NATSURL)
 	if err != nil {
 		return fmt.Errorf("connect to NATS: %w", err)
 	}
 	defer nc.Close()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	snapshotStore := coordinator.NewAtomicFileSnapshotStore(*snapshotDir)
+	snapshotStore := coordinator.NewAtomicFileSnapshotStore(cfg.SnapshotDir)
 	sessionStore, err := coordinator.NewMemorySessionStore(ctx, snapshotStore)
 	if err != nil {
 		return fmt.Errorf("restore coordinator state: %w", err)
@@ -61,10 +75,10 @@ func run() error {
 	if err := coordinator.RestoreKeyInfoFromSnapshotStore(ctx, snapshotStore, keyInfoStore); err != nil {
 		return fmt.Errorf("restore key info: %w", err)
 	}
-	_ = relayAvailable
+
 	presence := coordinator.NewInMemoryPresenceView()
 	coord, err := coordinator.NewCoordinator(coordinator.CoordinatorConfig{
-		CoordinatorID:     *coordinatorID,
+		CoordinatorID:     cfg.ID,
 		Signer:            signer,
 		EventVerifier:     coordinator.Ed25519SessionEventVerifier{},
 		Store:             sessionStore,
@@ -72,7 +86,7 @@ func run() error {
 		Presence:          presence,
 		Controls:          coordinator.NewNATSControlPublisher(nc),
 		Results:           coordinator.NewNATSResultPublisher(nc),
-		DefaultSessionTTL: time.Duration(*defaultSessionTTLSec) * time.Second,
+		DefaultSessionTTL: cfg.DefaultSessionTTL,
 	})
 	if err != nil {
 		return err
@@ -83,59 +97,21 @@ func run() error {
 		return err
 	}
 
-	ticker := time.NewTicker(*tickInterval)
+	return runTickLoop(ctx, runtime, coord, cfg.TickInterval)
+}
+
+func runTickLoop(ctx context.Context, runtime *coordinator.NATSRuntime, coord *coordinator.Coordinator, interval time.Duration) error {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return runtime.Stop()
 		case <-ticker.C:
 			if _, err := coord.Tick(ctx); err != nil {
-				fmt.Fprintln(os.Stderr, "coordinator tick error:", err)
+				logger.Error("coordinator tick error", err)
 			}
 		}
 	}
-}
-
-func envDefault(name string, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envBoolDefault(name string, fallback bool) bool {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func envDurationDefault(name string, fallback time.Duration) time.Duration {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func envIntDefault(name string, fallback int) int {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }

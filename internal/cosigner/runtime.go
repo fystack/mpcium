@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/nats-io/nats.go"
 	"github.com/vietddude/mpcium-sdk/participant"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
@@ -22,7 +24,13 @@ type Runtime struct {
 	coordLookup *coordinatorLookup
 	sessionsMu  sync.RWMutex
 	sessions    map[string]*participant.ParticipantSession
+	sessionMeta map[string]sessionMeta
 	subs        []*nats.Subscription
+}
+
+type sessionMeta struct {
+	protocol string
+	action   string
 }
 
 func NewRuntime(cfg Config) (*Runtime, error) {
@@ -67,7 +75,8 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 		coordLookup: &coordinatorLookup{keys: map[string]ed25519.PublicKey{
 			cfg.CoordinatorID: append([]byte(nil), cfg.CoordinatorPublicKey...),
 		}},
-		sessions: map[string]*participant.ParticipantSession{},
+		sessions:    map[string]*participant.ParticipantSession{},
+		sessionMeta: map[string]sessionMeta{},
 	}, nil
 }
 
@@ -85,6 +94,7 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
+	logger.Info("cosigner runtime started", "node_id", r.cfg.NodeID)
 	if err := r.subscribe(); err != nil {
 		return err
 	}
@@ -99,6 +109,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Info("cosigner runtime stopping", "node_id", r.cfg.NodeID)
 			_ = r.publishPresence(sdkprotocol.PresenceStatusOffline)
 			return nil
 		case <-tick.C:
@@ -115,19 +126,25 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 func (r *Runtime) subscribe() error {
 	controlSub, err := r.nc.Subscribe(controlSubject(r.cfg.NodeID), func(msg *nats.Msg) {
-		_ = r.handleControl(msg.Data)
+		if err := r.handleControl(msg.Data); err != nil {
+			logger.Error("handle control message failed", err)
+		}
 	})
 	if err != nil {
 		return err
 	}
+	logger.Info("subscribed control subject")
 	r.subs = append(r.subs, controlSub)
 
 	p2pSub, err := r.nc.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(msg *nats.Msg) {
-		_ = r.handlePeer(msg.Data)
+		if err := r.handlePeer(msg.Data); err != nil {
+			logger.Error("handle peer message failed", err)
+		}
 	})
 	if err != nil {
 		return err
 	}
+	logger.Info("subscribed p2p subject")
 	r.subs = append(r.subs, p2pSub)
 
 	return r.nc.Flush()
@@ -143,11 +160,29 @@ func (r *Runtime) handleControl(raw []byte) error {
 	}
 
 	if msg.SessionStart != nil {
-		return r.startSession(&msg)
+		meta := sessionMeta{
+			protocol: protocolLabel(msg.SessionStart.Protocol),
+			action:   actionLabel(msg.SessionStart.Operation),
+		}
+		logger.Info("cosigner received session start",
+			"session_id", msg.SessionID,
+			"action", meta.action,
+		)
+		return r.startSession(&msg, meta)
 	}
+	meta := r.getSessionMeta(msg.SessionID)
+	logger.Debug("cosigner received control message",
+		"node_id", r.cfg.NodeID,
+		"session_id", msg.SessionID,
+		"sequence", msg.Sequence,
+		"control_type", controlType(&msg),
+		"protocol", meta.protocol,
+		"action", meta.action,
+	)
 	session := r.getSession(msg.SessionID)
 	if session == nil {
-		return fmt.Errorf("unknown session %s", msg.SessionID)
+		logger.Warn("ignoring control for unknown session", "session_id", msg.SessionID)
+		return nil
 	}
 	effects, err := session.HandleControl(&msg)
 	if err != nil {
@@ -156,7 +191,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 	return r.publishEffects(effects)
 }
 
-func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage) error {
+func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta) error {
 	if len(r.sessions) >= r.cfg.MaxActiveSessions {
 		return errors.New("max active sessions reached")
 	}
@@ -185,7 +220,9 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage) error {
 	}
 	r.sessionsMu.Lock()
 	r.sessions[msg.SessionID] = sess
+	r.sessionMeta[msg.SessionID] = meta
 	r.sessionsMu.Unlock()
+	logger.Info("cosigner started session", "session_id", msg.SessionID, "action", meta.action)
 
 	effects, err := sess.Start()
 	if err != nil {
@@ -199,9 +236,16 @@ func (r *Runtime) handlePeer(raw []byte) error {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return err
 	}
+	logger.Debug("cosigner received peer message",
+		"node_id", r.cfg.NodeID,
+		"session_id", msg.SessionID,
+		"from_participant", msg.FromParticipantID,
+		"phase", string(msg.Phase),
+	)
 	session := r.getSession(msg.SessionID)
 	if session == nil {
-		return fmt.Errorf("unknown session %s", msg.SessionID)
+		logger.Warn("ignoring peer message for unknown session", "session_id", msg.SessionID)
+		return nil
 	}
 	effects, err := session.HandlePeer(&msg)
 	if err != nil {
@@ -234,6 +278,28 @@ func (r *Runtime) tickSessions() error {
 }
 
 func (r *Runtime) publishEffects(effects participant.Effects) error {
+	meta := r.metaFromEffects(effects)
+	if effects.Cleanup != nil {
+		outcome := "finished"
+		if effects.Result == nil {
+			outcome = "failed"
+		}
+		logger.Info("cosigner ended session", "session_id", effects.Cleanup.SessionID, "outcome", outcome)
+	}
+	if len(effects.SessionEvents) > 0 {
+		logger.Debug("cosigner publishing session events",
+			"node_id", r.cfg.NodeID,
+			"session_events", len(effects.SessionEvents),
+			"protocol", meta.protocol,
+			"action", meta.action,
+		)
+	}
+	if len(effects.PeerMessages) > 0 {
+		logger.Debug("cosigner publishing peer messages",
+			"node_id", r.cfg.NodeID,
+			"peer_messages", len(effects.PeerMessages),
+		)
+	}
 	for _, peerMsg := range effects.PeerMessages {
 		raw, err := json.Marshal(peerMsg)
 		if err != nil {
@@ -253,9 +319,74 @@ func (r *Runtime) publishEffects(effects participant.Effects) error {
 		}
 	}
 	if effects.Cleanup != nil && effects.Cleanup.DropArtifacts {
+		r.dropSessionMeta(effects.Cleanup.SessionID)
 		_ = r.stores.DeleteSessionArtifacts(effects.Cleanup.SessionID)
 	}
 	return nil
+}
+
+func (r *Runtime) getSessionMeta(sessionID string) sessionMeta {
+	r.sessionsMu.RLock()
+	defer r.sessionsMu.RUnlock()
+	if meta, ok := r.sessionMeta[sessionID]; ok {
+		return meta
+	}
+	return sessionMeta{protocol: "unknown", action: "unknown"}
+}
+
+func (r *Runtime) metaFromEffects(effects participant.Effects) sessionMeta {
+	if len(effects.SessionEvents) > 0 && effects.SessionEvents[0] != nil {
+		return r.getSessionMeta(effects.SessionEvents[0].SessionID)
+	}
+	if len(effects.PeerMessages) > 0 && effects.PeerMessages[0] != nil {
+		return r.getSessionMeta(effects.PeerMessages[0].SessionID)
+	}
+	return sessionMeta{protocol: "unknown", action: "unknown"}
+}
+
+func (r *Runtime) dropSessionMeta(sessionID string) {
+	r.sessionsMu.Lock()
+	defer r.sessionsMu.Unlock()
+	delete(r.sessionMeta, sessionID)
+	delete(r.sessions, sessionID)
+}
+
+func controlType(msg *sdkprotocol.ControlMessage) string {
+	switch {
+	case msg == nil:
+		return "unknown"
+	case msg.KeyExchange != nil:
+		return "key_exchange_begin"
+	case msg.MPCBegin != nil:
+		return "mpc_begin"
+	case msg.SessionAbort != nil:
+		return "session_abort"
+	case msg.SessionStart != nil:
+		return "session_start"
+	default:
+		return "unknown"
+	}
+}
+
+func protocolLabel(protocol sdkprotocol.ProtocolType) string {
+	value := strings.TrimSpace(string(protocol))
+	if value == "" || value == string(sdkprotocol.ProtocolTypeUnspecified) {
+		return "unknown"
+	}
+	return strings.ToLower(value)
+}
+
+func actionLabel(operation sdkprotocol.OperationType) string {
+	switch operation {
+	case sdkprotocol.OperationTypeKeygen:
+		return "keygen"
+	case sdkprotocol.OperationTypeSign:
+		return "sign"
+	case sdkprotocol.OperationTypeReshare:
+		return "reshare"
+	default:
+		return "unknown"
+	}
 }
 
 func (r *Runtime) publishPresence(status sdkprotocol.PresenceStatus) error {

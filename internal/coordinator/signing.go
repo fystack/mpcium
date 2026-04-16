@@ -53,6 +53,9 @@ func (Ed25519SessionEventVerifier) VerifySessionEvent(_ context.Context, session
 	if !ok || len(pubKey) == 0 {
 		return newCoordinatorError(ErrorCodeUnauthorized, "unknown participant public key")
 	}
+	if len(pubKey) != ed25519.PublicKeySize {
+		return newCoordinatorError(ErrorCodeValidation, "invalid participant public key length")
+	}
 	payload, err := sdkprotocol.SessionEventSigningBytes(event)
 	if err != nil {
 		return newCoordinatorError(ErrorCodeValidation, err.Error())

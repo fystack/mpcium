@@ -1,0 +1,11 @@
+nats:
+  url: nats://127.0.0.1:4222
+
+cosigner:
+  node_id: peer-node-02
+  coordinator:
+    id: coordinator-01
+    public_key_hex: "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
+  identity:
+    private_key_hex: "a96d8c0de1b5682740f6487b13dc7477aaa739b900c6f5c3db737ca019163efad9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"
+  data_dir: node-v1-data-02

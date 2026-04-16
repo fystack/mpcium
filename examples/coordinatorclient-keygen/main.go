@@ -1,0 +1,101 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/fystack/mpcium/pkg/coordinatorclient"
+	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+)
+
+func main() {
+	client, err := coordinatorclient.New(coordinatorclient.Config{
+		NATSURL: "nats://127.0.0.1:4222",
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		log.Fatalf("create coordinator client: %v", err)
+	}
+	defer client.Close()
+
+	participants := []coordinatorclient.KeygenParticipant{
+		{
+			ID:                "peer-node-01",
+			IdentityPublicKey: mustPublicKeyFromPrivateHex("b14d168636008a9c766a6c231c182446e4b636cd2116817a89d068ffb5cc49e456a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"),
+		},
+		{
+			ID:                "peer-node-02",
+			IdentityPublicKey: mustPublicKeyFromPrivateHex("a96d8c0de1b5682740f6487b13dc7477aaa739b900c6f5c3db737ca019163efad9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"),
+		},
+	}
+
+	for _, participant := range participants {
+		presenceCtx, cancelPresence := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := client.PublishPresence(presenceCtx, participant.ID); err != nil {
+			cancelPresence()
+			log.Fatalf("publish presence for %s: %v", participant.ID, err)
+		}
+		cancelPresence()
+	}
+
+	const walletID = "wallet_demo_001"
+	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeECDSA)
+	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeEdDSA)
+}
+
+func mustDecodeHex(value string) []byte {
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		panic(err)
+	}
+	return decoded
+}
+
+func mustPublicKeyFromPrivateHex(privateKeyHex string) []byte {
+	privateRaw := mustDecodeHex(privateKeyHex)
+	var private ed25519.PrivateKey
+	switch len(privateRaw) {
+	case ed25519.PrivateKeySize:
+		private = ed25519.PrivateKey(privateRaw)
+	case ed25519.SeedSize:
+		private = ed25519.NewKeyFromSeed(privateRaw)
+	default:
+		panic(fmt.Sprintf("invalid ed25519 private key length: %d", len(privateRaw)))
+	}
+	public := private.Public().(ed25519.PublicKey)
+	return append([]byte(nil), public...)
+}
+
+func runKeygenForProtocol(client *coordinatorclient.Client, participants []coordinatorclient.KeygenParticipant, walletID string, protocol sdkprotocol.ProtocolType) {
+	requestCtx, cancelRequest := context.WithTimeout(context.Background(), 10*time.Second)
+	resp, err := client.RequestKeygen(requestCtx, coordinatorclient.KeygenRequest{
+		Protocol:     protocol,
+		Threshold:    1,
+		WalletID:     walletID,
+		Participants: participants,
+	})
+	cancelRequest()
+	if err != nil {
+		log.Fatalf("request keygen (%s): %v", protocol, err)
+	}
+	acceptedAt := time.Now()
+
+	resultCtx, cancelResult := context.WithTimeout(context.Background(), 2*time.Minute)
+	result, err := client.WaitSessionResult(resultCtx, resp.SessionID)
+	cancelResult()
+	if err != nil {
+		log.Fatalf("wait session result (%s): %v (check both cosigners are running and session events are flowing)", protocol, err)
+	}
+	if result == nil {
+		fmt.Printf("protocol=%s session_id=%s result=empty wait_seconds=%.3f\n", protocol, resp.SessionID, time.Since(acceptedAt).Seconds())
+		return
+	}
+	fmt.Printf("protocol=%s key_id=%s session_id=%s wait_seconds=%.3f\n", protocol, result.KeyShare.KeyID, resp.SessionID, time.Since(acceptedAt).Seconds())
+	if result.KeyShare != nil {
+		fmt.Printf("public_key_hex=%s\n", hex.EncodeToString(result.KeyShare.PublicKey))
+	}
+}
