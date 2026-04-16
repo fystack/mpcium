@@ -1,6 +1,6 @@
 module github.com/fystack/mpcium
 
-go 1.25.8
+go 1.26
 
 require (
 	filippo.io/age v1.3.1
@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/kms v1.49.5
-	github.com/bnb-chain/tss-lib/v2 v2.0.2
+	github.com/bnb-chain/tss-lib/v2 v2.0.3
 	github.com/btcsuite/btcd v0.25.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
 	github.com/btcsuite/btcutil v1.0.2
@@ -86,6 +86,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/vietddude/mpcium-sdk v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
@@ -104,3 +105,5 @@ require (
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
 replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3
+
+replace github.com/vietddude/mpcium-sdk => ../sdk
