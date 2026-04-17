@@ -8,10 +8,10 @@ import (
 )
 
 type RuntimeConfig struct {
-	NATS     NATSConfig     `mapstructure:"nats"`
-	MQTT     MQTTConfig     `mapstructure:"relay.mqtt"`
-	Bridge   BridgeConfig   `mapstructure:"relay.bridge"`
-	Presence PresenceConfig `mapstructure:"relay.presence"`
+	NATS     NATSConfig
+	MQTT     MQTTConfig
+	Bridge   BridgeConfig
+	Presence PresenceConfig
 }
 
 type NATSConfig struct {
@@ -47,8 +47,17 @@ func LoadConfig() (RuntimeConfig, error) {
 	setDefaults()
 
 	var cfg RuntimeConfig
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return RuntimeConfig{}, fmt.Errorf("decode relay config: %w", err)
+	if err := viper.UnmarshalKey("nats", &cfg.NATS); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("decode relay config nats: %w", err)
+	}
+	if err := viper.UnmarshalKey("relay.mqtt", &cfg.MQTT); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("decode relay config relay.mqtt: %w", err)
+	}
+	if err := viper.UnmarshalKey("relay.bridge", &cfg.Bridge); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("decode relay config relay.bridge: %w", err)
+	}
+	if err := viper.UnmarshalKey("relay.presence", &cfg.Presence); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("decode relay config relay.presence: %w", err)
 	}
 
 	cfg.normalize()

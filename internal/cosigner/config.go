@@ -18,6 +18,12 @@ const (
 	RelayProviderMQTT RelayProvider = "mqtt"
 )
 
+const (
+	DefaultMaxActiveSessions = 5
+	DefaultPresenceInterval  = 5 * time.Second
+	DefaultTickInterval      = 100 * time.Millisecond
+)
+
 type Config struct {
 	RelayProvider        RelayProvider
 	NodeID               string
@@ -109,13 +115,13 @@ func (cfg *Config) applyDefaults() {
 		cfg.RelayProvider = RelayProviderNATS
 	}
 	if cfg.MaxActiveSessions <= 0 {
-		cfg.MaxActiveSessions = 10
+		cfg.MaxActiveSessions = DefaultMaxActiveSessions
 	}
 	if cfg.PresenceInterval <= 0 {
-		cfg.PresenceInterval = 5 * time.Second
+		cfg.PresenceInterval = DefaultPresenceInterval
 	}
 	if cfg.TickInterval <= 0 {
-		cfg.TickInterval = 100 * time.Millisecond
+		cfg.TickInterval = DefaultTickInterval
 	}
 
 	cfg.NATS.URL = strings.TrimSpace(cfg.NATS.URL)

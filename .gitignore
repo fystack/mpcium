@@ -27,3 +27,5 @@ config.yaml
 .chain_code
 .gomodcache
 .codex
+coordinator-snapshots/
+relay.credentials

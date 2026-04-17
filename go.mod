@@ -28,6 +28,14 @@ require (
 )
 
 require (
+	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/mochi-mqtt/server/v2 v2.7.9 // indirect
+	github.com/rs/xid v1.6.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+)
+
+require (
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect

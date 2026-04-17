@@ -1,10 +1,9 @@
-relay:
-  provider: mqtt
-  mqtt:
-    broker: tcp://127.0.0.1:1883
-    client_id: peer-node-02
-    username: peer-node-02
-    password: peer-node-02
+relay_provider: mqtt
+mqtt:
+  broker: tcp://127.0.0.1:1883
+  client_id: peer-node-02
+  username: peer-node-02
+  password: peer-node-02
 
 # nats:
 #   url: nats://127.0.0.1:4222

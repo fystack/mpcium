@@ -9,8 +9,10 @@ import (
 )
 
 type PreparamsStore interface {
-	LoadPreparams(protocolType sdkprotocol.ProtocolType, keyID string) ([]byte, error)
-	SavePreparams(protocolType sdkprotocol.ProtocolType, keyID string, preparams []byte) error
+	LoadPreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string) ([]byte, error)
+	SavePreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string, preparams []byte) error
+	LoadActivePreparamsSlot(protocolType sdkprotocol.ProtocolType) (string, error)
+	SaveActivePreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string) error
 }
 
 type SharesStore interface {
@@ -52,12 +54,24 @@ func (s *badgerStores) Close() error {
 	return s.db.Close()
 }
 
-func (s *badgerStores) LoadPreparams(protocolType sdkprotocol.ProtocolType, keyID string) ([]byte, error) {
-	return s.load(keyPreparams(protocolType, keyID))
+func (s *badgerStores) LoadPreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string) ([]byte, error) {
+	return s.load(keyPreparamsSlot(protocolType, slot))
 }
 
-func (s *badgerStores) SavePreparams(protocolType sdkprotocol.ProtocolType, keyID string, preparams []byte) error {
-	return s.save(keyPreparams(protocolType, keyID), preparams)
+func (s *badgerStores) SavePreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string, preparams []byte) error {
+	return s.save(keyPreparamsSlot(protocolType, slot), preparams)
+}
+
+func (s *badgerStores) LoadActivePreparamsSlot(protocolType sdkprotocol.ProtocolType) (string, error) {
+	value, err := s.load(keyPreparamsActiveSlot(protocolType))
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
+}
+
+func (s *badgerStores) SaveActivePreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string) error {
+	return s.save(keyPreparamsActiveSlot(protocolType), []byte(slot))
 }
 
 func (s *badgerStores) LoadShare(protocolType sdkprotocol.ProtocolType, keyID string) ([]byte, error) {
@@ -107,8 +121,12 @@ func (s *badgerStores) save(key string, value []byte) error {
 	})
 }
 
-func keyPreparams(protocolType sdkprotocol.ProtocolType, keyID string) string {
-	return fmt.Sprintf("preparams:%s:%s", protocolType, keyID)
+func keyPreparamsSlot(protocolType sdkprotocol.ProtocolType, slot string) string {
+	return fmt.Sprintf("preparams:%s:%s", protocolType, slot)
+}
+
+func keyPreparamsActiveSlot(protocolType sdkprotocol.ProtocolType) string {
+	return fmt.Sprintf("preparams:%s:active_slot", protocolType)
 }
 
 func keyShare(protocolType sdkprotocol.ProtocolType, keyID string) string {

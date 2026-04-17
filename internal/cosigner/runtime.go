@@ -1,8 +1,10 @@
 package cosigner
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/vietddude/mpcium-sdk/participant"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
@@ -31,6 +34,8 @@ type sessionMeta struct {
 	protocol string
 	action   string
 }
+
+const bootstrapPreparamsSlot = "bootstrap"
 
 func NewRuntime(cfg Config) (*Runtime, error) {
 	relay, err := NewRelayFromConfig(cfg)
@@ -80,6 +85,9 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) Run(ctx context.Context) error {
 	logger.Info("cosigner runtime started", "node_id", r.cfg.NodeID)
+	if err := r.ensureECDSAPreparams(); err != nil {
+		return err
+	}
 	if err := r.subscribe(); err != nil {
 		return err
 	}
@@ -107,6 +115,51 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (r *Runtime) ensureECDSAPreparams() error {
+	activeSlot, err := r.stores.LoadActivePreparamsSlot(sdkprotocol.ProtocolTypeECDSA)
+	if err != nil {
+		return fmt.Errorf("load active ecdsa preparams slot: %w", err)
+	}
+	if activeSlot != "" {
+		existing, loadErr := r.stores.LoadPreparamsSlot(sdkprotocol.ProtocolTypeECDSA, activeSlot)
+		if loadErr != nil {
+			return fmt.Errorf("load ecdsa preparams slot %q: %w", activeSlot, loadErr)
+		}
+		if len(existing) > 0 {
+			logger.Info("cosigner preparams ready", "protocol", "ecdsa", "source", "store", "slot", activeSlot)
+			return nil
+		}
+		logger.Warn("active ecdsa preparams slot is empty; regenerating", "slot", activeSlot)
+	}
+
+	logger.Info("cosigner preparams missing; generating", "protocol", "ecdsa")
+	startedAt := time.Now()
+	preparams, err := ecdsaKeygen.GeneratePreParams(5 * time.Minute)
+	if err != nil {
+		return fmt.Errorf("generate ecdsa preparams: %w", err)
+	}
+	blob, err := encodeECDSAPreparams(preparams)
+	if err != nil {
+		return fmt.Errorf("encode ecdsa preparams: %w", err)
+	}
+	if err := r.stores.SavePreparamsSlot(sdkprotocol.ProtocolTypeECDSA, bootstrapPreparamsSlot, blob); err != nil {
+		return fmt.Errorf("save ecdsa preparams slot %q: %w", bootstrapPreparamsSlot, err)
+	}
+	if err := r.stores.SaveActivePreparamsSlot(sdkprotocol.ProtocolTypeECDSA, bootstrapPreparamsSlot); err != nil {
+		return fmt.Errorf("save active ecdsa preparams slot: %w", err)
+	}
+	logger.Info("cosigner preparams generated", "protocol", "ecdsa", "slot", bootstrapPreparamsSlot, "elapsed", time.Since(startedAt).Round(time.Millisecond))
+	return nil
+}
+
+func encodeECDSAPreparams(data *ecdsaKeygen.LocalPreParams) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := gob.NewEncoder(&buffer).Encode(data); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 func (r *Runtime) subscribe() error {
