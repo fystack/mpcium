@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fystack/mpcium/pkg/coordinatorclient"
+	"github.com/google/uuid"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
@@ -33,16 +34,7 @@ func main() {
 		},
 	}
 
-	for _, participant := range participants {
-		presenceCtx, cancelPresence := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := client.PublishPresence(presenceCtx, participant.ID); err != nil {
-			cancelPresence()
-			log.Fatalf("publish presence for %s: %v", participant.ID, err)
-		}
-		cancelPresence()
-	}
-
-	const walletID = "wallet_demo_001"
+	walletID := "wallet_" + uuid.New().String()
 	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeECDSA)
 	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeEdDSA)
 }
@@ -80,7 +72,7 @@ func runKeygenForProtocol(client *coordinatorclient.Client, participants []coord
 	})
 	cancelRequest()
 	if err != nil {
-		log.Fatalf("request keygen (%s): %v", protocol, err)
+		log.Fatalf("request keygen (%s): %v (verify both cosigners are online and publishing real presence)", protocol, err)
 	}
 	acceptedAt := time.Now()
 

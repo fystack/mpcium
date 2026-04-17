@@ -18,7 +18,7 @@ import (
 const coordinatorConfigPath = "coordinator.config.yaml"
 
 func main() {
-	logger.Init(os.Getenv("ENVIRONMENT"), false)
+	logger.Init(os.Getenv("ENVIRONMENT"), true)
 
 	cmd := &cli.Command{
 		Name:  "mpcium-coordinator",

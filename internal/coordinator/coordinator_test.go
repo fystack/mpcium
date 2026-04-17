@@ -133,6 +133,264 @@ func TestLifecycleCompletesSignAndPublishesResult(t *testing.T) {
 	}
 }
 
+func TestLifecycleCompletesKeygenWithoutShareBlob(t *testing.T) {
+	ctx := context.Background()
+	coord, _, results, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	keygenReq := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolTypeEdDSA,
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_demo_001"},
+		},
+	}
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, keygenReq))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &reply); err != nil {
+		t.Fatal(err)
+	}
+
+	result := &sdkprotocol.Result{
+		KeyShare: &sdkprotocol.KeyShareResult{
+			KeyID:     "wallet_demo_001",
+			PublicKey: []byte("pub"),
+		},
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, reply.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerJoined: &sdkprotocol.PeerJoined{ParticipantID: participant}})
+		emitSignedEvent(t, coord, reply.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerReady: &sdkprotocol.PeerReady{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, reply.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerKeyExchangeDone: &sdkprotocol.PeerKeyExchangeDone{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, reply.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{SessionCompleted: &sdkprotocol.SessionCompleted{Result: result}})
+	}
+
+	published := results.results[reply.SessionID]
+	if published == nil || published.KeyShare == nil {
+		t.Fatalf("missing published keygen result")
+	}
+	if len(published.KeyShare.ShareBlob) != 0 {
+		t.Fatalf("share blob should not be required/published")
+	}
+}
+
+func TestHandleRequestRejectsDuplicateWalletIDAfterCompletedKeygen(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	requestForWallet := func(walletID string, protocol sdkprotocol.ProtocolType) *sdkprotocol.ControlMessage {
+		return &sdkprotocol.ControlMessage{
+			SessionStart: &sdkprotocol.SessionStart{
+				SessionID: "client-supplied",
+				Protocol:  protocol,
+				Operation: sdkprotocol.OperationTypeKeygen,
+				Threshold: 1,
+				Participants: []*sdkprotocol.SessionParticipant{
+					{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+					{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+				},
+				Keygen: &sdkprotocol.KeygenPayload{KeyID: walletID},
+			},
+		}
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, requestForWallet("wallet_demo_001", sdkprotocol.ProtocolTypeEdDSA)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted.Accepted || accepted.SessionID == "" {
+		t.Fatalf("unexpected keygen accepted reply: %+v", accepted)
+	}
+
+	keygenResult := &sdkprotocol.Result{
+		KeyShare: &sdkprotocol.KeyShareResult{
+			KeyID:     "wallet_demo_001",
+			PublicKey: []byte("pub"),
+		},
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, accepted.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerJoined: &sdkprotocol.PeerJoined{ParticipantID: participant}})
+		emitSignedEvent(t, coord, accepted.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerReady: &sdkprotocol.PeerReady{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, accepted.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{PeerKeyExchangeDone: &sdkprotocol.PeerKeyExchangeDone{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, accepted.SessionID, fixtures, participant, &sdkprotocol.SessionEvent{SessionCompleted: &sdkprotocol.SessionCompleted{Result: keygenResult}})
+	}
+
+	rawDupReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, requestForWallet("wallet_demo_001", sdkprotocol.ProtocolTypeEdDSA)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected sdkprotocol.RequestRejected
+	if err := json.Unmarshal(rawDupReply, &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Accepted {
+		t.Fatalf("expected duplicate keygen request to be rejected")
+	}
+	if rejected.ErrorCode != ErrorCodeConflict {
+		t.Fatalf("error code = %s, want %s", rejected.ErrorCode, ErrorCodeConflict)
+	}
+
+	rawOtherProtocolReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, requestForWallet("wallet_demo_001", sdkprotocol.ProtocolTypeECDSA)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acceptedOtherProtocol sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawOtherProtocolReply, &acceptedOtherProtocol); err != nil {
+		t.Fatal(err)
+	}
+	if !acceptedOtherProtocol.Accepted {
+		t.Fatalf("expected same wallet id with different protocol to be accepted")
+	}
+}
+
+func TestHandleRequestKeygenWithoutProtocolCreatesBothSessions(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolTypeUnspecified,
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_dual_protocol"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted.Accepted {
+		t.Fatalf("expected request accepted")
+	}
+	active := coord.store.ListActive(ctx)
+	if len(active) != 2 {
+		t.Fatalf("expected 2 active sessions, got %d", len(active))
+	}
+	seenProtocols := map[sdkprotocol.ProtocolType]bool{}
+	for _, session := range active {
+		seenProtocols[session.Start.Protocol] = true
+	}
+	if !seenProtocols[sdkprotocol.ProtocolTypeECDSA] || !seenProtocols[sdkprotocol.ProtocolTypeEdDSA] {
+		t.Fatalf("expected both ECDSA and EdDSA sessions, got %+v", seenProtocols)
+	}
+}
+
+func TestHandleRequestSignWithoutProtocolRejected(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolTypeUnspecified,
+			Operation: sdkprotocol.OperationTypeSign,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Sign: &sdkprotocol.SignPayload{
+				KeyID:        "wallet-1",
+				SigningInput: []byte("message"),
+			},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationSign, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected sdkprotocol.RequestRejected
+	if err := json.Unmarshal(rawReply, &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Accepted {
+		t.Fatalf("expected sign request without protocol to be rejected")
+	}
+	if rejected.ErrorCode != ErrorCodeValidation {
+		t.Fatalf("error code = %s, want %s", rejected.ErrorCode, ErrorCodeValidation)
+	}
+}
+
+func TestNewCoordinator_AppliesDefaultNowAndTickDoesNotPanic(t *testing.T) {
+	store, err := NewMemorySessionStore(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord, err := NewCoordinator(CoordinatorConfig{
+		CoordinatorID:     "coordinator-1",
+		Signer:            fakeSigner{},
+		Store:             store,
+		Presence:          NewInMemoryPresenceView(),
+		Controls:          &fakeControlPublisher{},
+		Results:           &fakeResultPublisher{},
+		DefaultSessionTTL: 120 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coord.now == nil {
+		t.Fatalf("expected default now function")
+	}
+	if _, err := coord.Tick(context.Background()); err != nil {
+		t.Fatalf("tick returned error: %v", err)
+	}
+}
+
+func TestNewCoordinator_RejectsInvalidConfig(t *testing.T) {
+	store, err := NewMemorySessionStore(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewCoordinator(CoordinatorConfig{
+		CoordinatorID: "coordinator-1",
+		Store:         store,
+		Presence:      NewInMemoryPresenceView(),
+		Controls:      &fakeControlPublisher{},
+		Results:       &fakeResultPublisher{},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
 type participantKey struct {
 	pub  ed25519.PublicKey
 	priv ed25519.PrivateKey
@@ -160,6 +418,7 @@ func newTestCoordinator(t *testing.T) (*Coordinator, *fakeControlPublisher, *fak
 		Signer:            fakeSigner{},
 		EventVerifier:     Ed25519SessionEventVerifier{},
 		Store:             store,
+		KeyInfoStore:      NewMemoryKeyInfoStore(),
 		Presence:          NewInMemoryPresenceView(),
 		Controls:          controls,
 		Results:           results,

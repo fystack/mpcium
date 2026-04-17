@@ -31,7 +31,7 @@ func (p *InMemoryPresenceView) IsOnline(_ context.Context, peerID string) bool {
 	if !ok {
 		return false
 	}
-	return event.Status == sdkprotocol.PresenceStatusOnline && event.Transport == sdkprotocol.TransportTypeNATS
+	return event.Status == sdkprotocol.PresenceStatusOnline
 }
 
 func (p *InMemoryPresenceView) ApplyPresence(event sdkprotocol.PresenceEvent) error {

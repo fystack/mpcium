@@ -31,14 +31,20 @@ func (s *MemoryKeyInfoStore) Save(info KeyInfo) {
 	if info.CreatedAt == "" {
 		info.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	s.infos[info.WalletID] = info
+	s.infos[keyInfoStoreKey(info.WalletID, info.KeyType)] = info
 }
 
-func (s *MemoryKeyInfoStore) Get(walletID string) (KeyInfo, bool) {
+func (s *MemoryKeyInfoStore) Get(walletID, keyType string) (KeyInfo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	info, ok := s.infos[walletID]
-	return info, ok
+	key := keyInfoStoreKey(walletID, keyType)
+	info, ok := s.infos[key]
+	if ok {
+		return info, true
+	}
+	// Backward compatibility for legacy snapshots without key type.
+	legacy, ok := s.infos[keyInfoStoreKey(walletID, "")]
+	return legacy, ok
 }
 
 func RestoreKeyInfoFromSnapshotStore(ctx context.Context, snapshots SnapshotStore, store *MemoryKeyInfoStore) error {
@@ -53,4 +59,8 @@ func RestoreKeyInfoFromSnapshotStore(ctx context.Context, snapshots SnapshotStor
 		store.Save(info)
 	}
 	return nil
+}
+
+func keyInfoStoreKey(walletID, keyType string) string {
+	return walletID + "|" + keyType
 }

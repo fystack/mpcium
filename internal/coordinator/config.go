@@ -8,6 +8,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	DefaultSessionTTL   = 120 * time.Second
+	DefaultTickInterval = time.Second
+)
+
 type fileConfig struct {
 	NATS        natsConfig        `mapstructure:"nats"`
 	Coordinator coordinatorConfig `mapstructure:"coordinator"`
@@ -62,7 +67,52 @@ func (cfg coordinatorConfig) runtimeConfig(natsURL string) RuntimeConfig {
 		ID:                cfg.ID,
 		PrivateKeyHex:     cfg.PrivateKeyHex,
 		SnapshotDir:       cfg.SnapshotDir,
-		DefaultSessionTTL: 120 * time.Second,
-		TickInterval:      time.Second,
+		DefaultSessionTTL: DefaultSessionTTL,
+		TickInterval:      DefaultTickInterval,
 	}
+}
+
+type CoordinatorConfig struct {
+	CoordinatorID     string
+	Signer            Signer
+	EventVerifier     SessionEventVerifier
+	Store             *MemorySessionStore
+	KeyInfoStore      *MemoryKeyInfoStore
+	Presence          PresenceView
+	Controls          ControlPublisher
+	Results           ResultPublisher
+	DefaultSessionTTL time.Duration
+	Now               func() time.Time
+}
+
+func applyDefaults(cfg CoordinatorConfig) CoordinatorConfig {
+	if cfg.Now == nil {
+		cfg.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if cfg.DefaultSessionTTL <= 0 {
+		cfg.DefaultSessionTTL = 120 * time.Second
+	}
+	return cfg
+}
+
+func (cfg CoordinatorConfig) Validate() error {
+	if cfg.CoordinatorID == "" {
+		return fmt.Errorf("coordinator ID is required")
+	}
+	if cfg.Signer == nil {
+		return fmt.Errorf("signer is required")
+	}
+	if cfg.Store == nil {
+		return fmt.Errorf("session store is required")
+	}
+	if cfg.Presence == nil {
+		return fmt.Errorf("presence view is required")
+	}
+	if cfg.Controls == nil {
+		return fmt.Errorf("control publisher is required")
+	}
+	if cfg.Results == nil {
+		return fmt.Errorf("result publisher is required")
+	}
+	return nil
 }

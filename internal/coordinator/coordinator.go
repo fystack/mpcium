@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,19 +14,6 @@ import (
 	"github.com/google/uuid"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
-
-type CoordinatorConfig struct {
-	CoordinatorID     string
-	Signer            Signer
-	EventVerifier     SessionEventVerifier
-	Store             *MemorySessionStore
-	KeyInfoStore      *MemoryKeyInfoStore
-	Presence          PresenceView
-	Controls          ControlPublisher
-	Results           ResultPublisher
-	DefaultSessionTTL time.Duration
-	Now               func() time.Time
-}
 
 type Coordinator struct {
 	id                string
@@ -41,30 +29,11 @@ type Coordinator struct {
 }
 
 func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error) {
-	if cfg.CoordinatorID == "" {
-		return nil, fmt.Errorf("coordinator ID is required")
+	cfg = applyDefaults(cfg)
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
-	if cfg.Signer == nil {
-		return nil, fmt.Errorf("signer is required")
-	}
-	if cfg.Store == nil {
-		return nil, fmt.Errorf("session store is required")
-	}
-	if cfg.Presence == nil {
-		return nil, fmt.Errorf("presence view is required")
-	}
-	if cfg.Controls == nil {
-		return nil, fmt.Errorf("control publisher is required")
-	}
-	if cfg.Results == nil {
-		return nil, fmt.Errorf("result publisher is required")
-	}
-	if cfg.Now == nil {
-		cfg.Now = func() time.Time { return time.Now().UTC() }
-	}
-	if cfg.DefaultSessionTTL <= 0 {
-		cfg.DefaultSessionTTL = 120 * time.Second
-	}
+
 	return &Coordinator{
 		id:                cfg.CoordinatorID,
 		signer:            cfg.Signer,
@@ -92,18 +61,33 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 		protocols := []sdkprotocol.ProtocolType{sdkprotocol.ProtocolTypeECDSA, sdkprotocol.ProtocolTypeEdDSA}
 		sessionIDs := make([]string, 0, len(protocols))
 		var firstAccepted *sdkprotocol.RequestAccepted
+		var firstErr error
 
 		for _, protocol := range protocols {
 			cloned := cloneSessionStart(req.SessionStart)
 			cloned.Protocol = protocol
 			accepted, err := c.acceptRequest(ctx, op, &sdkprotocol.ControlMessage{SessionStart: cloned})
 			if err != nil {
+				var coordErr *CoordinatorError
+				if AsCoordinatorError(err, &coordErr) && coordErr.Code == ErrorCodeConflict {
+					// Allow fanout to continue: one protocol might already exist while the other doesn't.
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
 				return rejectFromError(err), nil
 			}
 			sessionIDs = append(sessionIDs, accepted.SessionID)
 			if firstAccepted == nil {
 				firstAccepted = accepted
 			}
+		}
+		if firstAccepted == nil {
+			if firstErr != nil {
+				return rejectFromError(firstErr), nil
+			}
+			return reject(ErrorCodeConflict, "no keygen sessions created"), nil
 		}
 
 		logger.Info("coordinator expanded keygen request without protocol",
@@ -186,7 +170,7 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return newCoordinatorError(ErrorCodeInvalidJSON, "invalid JSON session event")
 	}
-	if err := sdkprotocol.ValidateSessionEvent(&event); err != nil {
+	if err := validateSessionEventCompat(&event); err != nil {
 		return newCoordinatorError(ErrorCodeValidation, err.Error())
 	}
 
@@ -256,6 +240,41 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 	return c.store.Save(ctx, session)
 }
 
+func validateSessionEventCompat(event *sdkprotocol.SessionEvent) error {
+	if event == nil {
+		return sdkprotocol.ValidateSessionEvent(event)
+	}
+	if err := sdkprotocol.ValidateSessionEvent(event); err == nil {
+		return nil
+	}
+	// Compatibility: allow keygen completion events without share_blob.
+	if event.SessionCompleted == nil || event.SessionCompleted.Result == nil || event.SessionCompleted.Result.KeyShare == nil || len(event.SessionCompleted.Result.KeyShare.ShareBlob) > 0 {
+		return sdkprotocol.ValidateSessionEvent(event)
+	}
+	clone := cloneSessionEventForValidation(event)
+	clone.SessionCompleted.Result.KeyShare.ShareBlob = []byte{0}
+	return sdkprotocol.ValidateSessionEvent(clone)
+}
+
+func cloneSessionEventForValidation(event *sdkprotocol.SessionEvent) *sdkprotocol.SessionEvent {
+	clone := *event
+	if event.SessionCompleted != nil {
+		completed := *event.SessionCompleted
+		clone.SessionCompleted = &completed
+		if event.SessionCompleted.Result != nil {
+			result := *event.SessionCompleted.Result
+			clone.SessionCompleted.Result = &result
+			if event.SessionCompleted.Result.KeyShare != nil {
+				keyShare := *event.SessionCompleted.Result.KeyShare
+				keyShare.PublicKey = append([]byte(nil), event.SessionCompleted.Result.KeyShare.PublicKey...)
+				keyShare.ShareBlob = append([]byte(nil), event.SessionCompleted.Result.KeyShare.ShareBlob...)
+				clone.SessionCompleted.Result.KeyShare = &keyShare
+			}
+		}
+	}
+	return &clone
+}
+
 func (c *Coordinator) Tick(ctx context.Context) (int, error) {
 	now := c.now()
 	expired := 0
@@ -302,6 +321,16 @@ func (c *Coordinator) validateRequest(ctx context.Context, op Operation, msg *sd
 			return newCoordinatorError(ErrorCodeUnavailable, "participant is offline")
 		}
 	}
+	if op == OperationKeygen && c.keyInfoStore != nil {
+		walletID := keygenWalletID(start)
+		if walletID == "" {
+			return newCoordinatorError(ErrorCodeValidation, "wallet_id is required")
+		}
+		protocol := string(start.Protocol)
+		if _, exists := c.keyInfoStore.Get(walletID, protocol); exists {
+			return newCoordinatorError(ErrorCodeConflict, "wallet key already exists")
+		}
+	}
 	return nil
 }
 
@@ -331,6 +360,9 @@ func (c *Coordinator) advance(ctx context.Context, session *Session, event *sdkp
 			if err != nil {
 				return c.failSession(ctx, session, ErrorCodeResultHashMismatch, err.Error())
 			}
+			if err := c.persistKeyInfoIfNeeded(session, result); err != nil {
+				return c.failSession(ctx, session, ErrorCodeInternal, err.Error())
+			}
 			now := c.now()
 			session.State = SessionCompleted
 			session.ResultHash = resultHash
@@ -343,6 +375,37 @@ func (c *Coordinator) advance(ctx context.Context, session *Session, event *sdkp
 			return c.results.PublishResult(ctx, session.ID, result)
 		}
 	}
+	return nil
+}
+
+func (c *Coordinator) persistKeyInfoIfNeeded(session *Session, result *sdkprotocol.Result) error {
+	if c.keyInfoStore == nil || session == nil || result == nil || session.Op != OperationKeygen || result.KeyShare == nil {
+		return nil
+	}
+	walletID := result.KeyShare.KeyID
+	if walletID == "" {
+		walletID = keygenWalletID(session.Start)
+	}
+	if walletID == "" {
+		return fmt.Errorf("missing wallet id in keygen result")
+	}
+	participantIDs := make([]string, 0, len(session.Participants))
+	for _, participant := range session.Participants {
+		if participant == nil || participant.ParticipantID == "" {
+			continue
+		}
+		participantIDs = append(participantIDs, participant.ParticipantID)
+	}
+	sort.Strings(participantIDs)
+	info := KeyInfo{
+		WalletID:     walletID,
+		KeyType:      string(session.Start.Protocol),
+		Threshold:    int(session.Start.Threshold),
+		Participants: participantIDs,
+		PublicKey:    append([]byte(nil), result.KeyShare.PublicKey...),
+		CreatedAt:    c.now().UTC().Format(time.RFC3339Nano),
+	}
+	c.keyInfoStore.Save(info)
 	return nil
 }
 
