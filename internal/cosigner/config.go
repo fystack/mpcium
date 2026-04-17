@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mitchellh/mapstructure"
@@ -20,7 +21,7 @@ const (
 type Config struct {
 	RelayProvider        RelayProvider
 	NodeID               string
-	NATSURL              string
+	NATS                 natsConfig
 	MQTT                 mqttConfig
 	CoordinatorID        string
 	CoordinatorPublicKey []byte
@@ -34,13 +35,26 @@ type Config struct {
 // Flat keys for compact config style.
 type fileConfig struct {
 	RelayProvider           RelayProvider `mapstructure:"relay_provider"`
-	NATSURL                 string        `mapstructure:"nats_url"`
+	NATS                    natsConfig    `mapstructure:"nats"`
 	MQTT                    mqttConfig    `mapstructure:"mqtt"`
 	NodeID                  string        `mapstructure:"node_id"`
 	DataDir                 string        `mapstructure:"data_dir"`
 	CoordinatorID           string        `mapstructure:"coordinator_id"`
 	CoordinatorPublicKeyHex string        `mapstructure:"coordinator_public_key_hex"`
 	IdentityPrivateKeyHex   string        `mapstructure:"identity_private_key_hex"`
+}
+
+type natsConfig struct {
+	URL      string     `mapstructure:"url"`
+	Username string     `mapstructure:"username"`
+	Password string     `mapstructure:"password"`
+	TLS      *tlsConfig `mapstructure:"tls"`
+}
+
+type tlsConfig struct {
+	ClientCert string `mapstructure:"client_cert"`
+	ClientKey  string `mapstructure:"client_key"`
+	CACert     string `mapstructure:"ca_cert"`
 }
 
 type mqttConfig struct {
@@ -68,7 +82,7 @@ func LoadConfig() (Config, error) {
 	runtimeCfg := Config{
 		RelayProvider:        cfg.RelayProvider,
 		NodeID:               cfg.NodeID,
-		NATSURL:              cfg.NATSURL,
+		NATS:                 cfg.NATS,
 		MQTT:                 cfg.MQTT,
 		CoordinatorID:        cfg.CoordinatorID,
 		CoordinatorPublicKey: coordinatorKey,
@@ -103,6 +117,15 @@ func (cfg *Config) applyDefaults() {
 	if cfg.TickInterval <= 0 {
 		cfg.TickInterval = 100 * time.Millisecond
 	}
+
+	cfg.NATS.URL = strings.TrimSpace(cfg.NATS.URL)
+	cfg.NATS.Username = strings.TrimSpace(cfg.NATS.Username)
+	cfg.NATS.Password = strings.TrimSpace(cfg.NATS.Password)
+	if cfg.NATS.TLS != nil {
+		cfg.NATS.TLS.ClientCert = strings.TrimSpace(cfg.NATS.TLS.ClientCert)
+		cfg.NATS.TLS.ClientKey = strings.TrimSpace(cfg.NATS.TLS.ClientKey)
+		cfg.NATS.TLS.CACert = strings.TrimSpace(cfg.NATS.TLS.CACert)
+	}
 }
 
 func (cfg Config) Validate() error {
@@ -111,8 +134,16 @@ func (cfg Config) Validate() error {
 	}
 	switch cfg.RelayProvider {
 	case RelayProviderNATS:
-		if cfg.NATSURL == "" {
-			return fmt.Errorf("nats_url is required for relay provider nats")
+		if cfg.NATS.URL == "" {
+			return fmt.Errorf("nats.url is required for relay provider nats")
+		}
+		if cfg.NATS.TLS != nil {
+			if cfg.NATS.TLS.ClientCert == "" {
+				return fmt.Errorf("nats.tls.client_cert is required when nats.tls is set")
+			}
+			if cfg.NATS.TLS.ClientKey == "" {
+				return fmt.Errorf("nats.tls.client_key is required when nats.tls is set")
+			}
 		}
 	case RelayProviderMQTT:
 		if cfg.MQTT.Broker == "" {

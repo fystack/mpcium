@@ -21,7 +21,7 @@ type Relay interface {
 func NewRelayFromConfig(cfg Config) (Relay, error) {
 	switch cfg.RelayProvider {
 	case RelayProviderNATS:
-		return NewNATSRelay(cfg.NATSURL)
+		return NewNATSRelay(cfg.NATS)
 	case RelayProviderMQTT:
 		return NewMQTTRelay(cfg.MQTT)
 	default:

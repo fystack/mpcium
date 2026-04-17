@@ -1,0 +1,20 @@
+nats:
+  url: nats://127.0.0.1:4222
+  # username: ""
+  # password: ""
+  # tls:
+  #   client_cert: "/path/to/client.crt"
+  #   client_key: "/path/to/client.key"
+  #   ca_cert: "/path/to/ca.crt"
+
+relay:
+  mqtt:
+    listen_address: ":1883"
+    username_password_file: ./relay.credentials
+  bridge:
+    nats_prefix: mpc.v1
+    mqtt_prefix: mpc/v1
+    mqtt_qos: 1
+    origin_header: X-MPCIUM-Relay-Origin
+  presence:
+    emit_connect_disconnect: true
