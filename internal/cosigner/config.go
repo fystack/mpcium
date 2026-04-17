@@ -1,6 +1,7 @@
 package cosigner
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -62,17 +63,19 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
-	return Config{
+	runtimeCfg := Config{
 		NodeID:               cfg.Cosigner.NodeID,
 		NATSURL:              cfg.NATS.URL,
 		CoordinatorID:        cfg.Cosigner.Coordinator.ID,
 		CoordinatorPublicKey: coordinatorKey,
 		IdentityPrivateKey:   privateKey,
 		DataDir:              cfg.Cosigner.DataDir,
-		MaxActiveSessions:    64,
-		PresenceInterval:     5 * time.Second,
-		TickInterval:         100 * time.Millisecond,
-	}, nil
+	}
+	runtimeCfg.applyDefaults()
+	if err := runtimeCfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return runtimeCfg, nil
 }
 
 func decodeHexKey(value, name string) ([]byte, error) {
@@ -81,4 +84,35 @@ func decodeHexKey(value, name string) ([]byte, error) {
 		return nil, fmt.Errorf("decode %s: %w", name, err)
 	}
 	return decoded, nil
+}
+
+func (cfg *Config) applyDefaults() {
+	if cfg.MaxActiveSessions <= 0 {
+		cfg.MaxActiveSessions = 10
+	}
+	if cfg.PresenceInterval <= 0 {
+		cfg.PresenceInterval = 5 * time.Second
+	}
+	if cfg.TickInterval <= 0 {
+		cfg.TickInterval = 100 * time.Millisecond
+	}
+}
+
+func (cfg Config) Validate() error {
+	if cfg.NodeID == "" {
+		return fmt.Errorf("node_id is required")
+	}
+	if cfg.NATSURL == "" {
+		return fmt.Errorf("nats_url is required")
+	}
+	if cfg.CoordinatorID == "" || len(cfg.CoordinatorPublicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("valid coordinator key is required")
+	}
+	if len(cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("valid identity private key is required")
+	}
+	if cfg.DataDir == "" {
+		return fmt.Errorf("data_dir is required")
+	}
+	return nil
 }

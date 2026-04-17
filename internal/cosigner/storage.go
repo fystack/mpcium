@@ -8,6 +8,29 @@ import (
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
+type PreparamsStore interface {
+	LoadPreparams(protocolType sdkprotocol.ProtocolType, keyID string) ([]byte, error)
+	SavePreparams(protocolType sdkprotocol.ProtocolType, keyID string, preparams []byte) error
+}
+
+type SharesStore interface {
+	LoadShare(protocolType sdkprotocol.ProtocolType, keyID string) ([]byte, error)
+	SaveShare(protocolType sdkprotocol.ProtocolType, keyID string, share []byte) error
+}
+
+type SessionArtifactsStore interface {
+	LoadSessionArtifacts(sessionID string) ([]byte, error)
+	SaveSessionArtifacts(sessionID string, artifact []byte) error
+	DeleteSessionArtifacts(sessionID string) error
+}
+
+type Stores interface {
+	PreparamsStore
+	SharesStore
+	SessionArtifactsStore
+	Close() error
+}
+
 type badgerStores struct {
 	db *badger.DB
 }

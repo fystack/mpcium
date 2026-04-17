@@ -5,27 +5,25 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fystack/mpcium/pkg/logger"
-	"github.com/nats-io/nats.go"
 	"github.com/vietddude/mpcium-sdk/participant"
 	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 type Runtime struct {
 	cfg         Config
-	nc          *nats.Conn
-	stores      *badgerStores
+	transport   Transport
+	stores      Stores
 	identity    *localIdentity
 	coordLookup *coordinatorLookup
 	sessionsMu  sync.RWMutex
 	sessions    map[string]*participant.ParticipantSession
 	sessionMeta map[string]sessionMeta
-	subs        []*nats.Subscription
+	subs        []Subscription
 }
 
 type sessionMeta struct {
@@ -34,47 +32,40 @@ type sessionMeta struct {
 }
 
 func NewRuntime(cfg Config) (*Runtime, error) {
-	if cfg.NodeID == "" {
-		return nil, errors.New("node_id is required")
-	}
-	if cfg.NATSURL == "" {
-		return nil, errors.New("nats_url is required")
-	}
-	if cfg.CoordinatorID == "" || len(cfg.CoordinatorPublicKey) != ed25519.PublicKeySize {
-		return nil, errors.New("valid coordinator key is required")
-	}
-	if len(cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
-		return nil, errors.New("valid identity private key is required")
-	}
-	if cfg.MaxActiveSessions <= 0 {
-		cfg.MaxActiveSessions = 64
-	}
-	if cfg.PresenceInterval <= 0 {
-		cfg.PresenceInterval = 5 * time.Second
-	}
-	if cfg.TickInterval <= 0 {
-		cfg.TickInterval = 100 * time.Millisecond
-	}
-
-	nc, err := nats.Connect(cfg.NATSURL)
+	transport, err := NewNATSTransport(cfg.NATSURL)
 	if err != nil {
-		return nil, fmt.Errorf("connect nats: %w", err)
+		return nil, err
+	}
+	return NewRuntimeWithTransport(cfg, transport)
+}
+
+func NewRuntimeWithTransport(cfg Config, transport Transport) (*Runtime, error) {
+	if transport == nil {
+		return nil, errors.New("transport is required")
 	}
 	stores, err := newBadgerStores(cfg.DataDir)
 	if err != nil {
-		nc.Close()
+		transport.Close()
 		return nil, err
 	}
-	private := ed25519.PrivateKey(cfg.IdentityPrivateKey)
-	public := private.Public().(ed25519.PublicKey)
+	identity, err := NewLocalIdentity(cfg.NodeID, cfg.IdentityPrivateKey)
+	if err != nil {
+		transport.Close()
+		_ = stores.Close()
+		return nil, err
+	}
+	coordLookup, err := NewCoordinatorLookup(cfg.CoordinatorID, cfg.CoordinatorPublicKey)
+	if err != nil {
+		transport.Close()
+		_ = stores.Close()
+		return nil, err
+	}
 	return &Runtime{
-		cfg:      cfg,
-		nc:       nc,
-		stores:   stores,
-		identity: &localIdentity{participantID: cfg.NodeID, publicKey: public, privateKey: private},
-		coordLookup: &coordinatorLookup{keys: map[string]ed25519.PublicKey{
-			cfg.CoordinatorID: append([]byte(nil), cfg.CoordinatorPublicKey...),
-		}},
+		cfg:         cfg,
+		transport:   transport,
+		stores:      stores,
+		identity:    identity,
+		coordLookup: coordLookup,
 		sessions:    map[string]*participant.ParticipantSession{},
 		sessionMeta: map[string]sessionMeta{},
 	}, nil
@@ -84,8 +75,8 @@ func (r *Runtime) Close() error {
 	for _, sub := range r.subs {
 		_ = sub.Unsubscribe()
 	}
-	if r.nc != nil {
-		r.nc.Close()
+	if r.transport != nil {
+		r.transport.Close()
 	}
 	if r.stores != nil {
 		return r.stores.Close()
@@ -125,29 +116,29 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 func (r *Runtime) subscribe() error {
-	controlSub, err := r.nc.Subscribe(controlSubject(r.cfg.NodeID), func(msg *nats.Msg) {
-		if err := r.handleControl(msg.Data); err != nil {
+	controlSub, err := r.transport.Subscribe(controlSubject(r.cfg.NodeID), func(raw []byte) {
+		if err := r.handleControl(raw); err != nil {
 			logger.Error("handle control message failed", err)
 		}
 	})
 	if err != nil {
 		return err
 	}
-	logger.Info("subscribed control subject")
+	logger.Info("subscribed control subject", "subject", controlSubject(r.cfg.NodeID))
 	r.subs = append(r.subs, controlSub)
 
-	p2pSub, err := r.nc.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(msg *nats.Msg) {
-		if err := r.handlePeer(msg.Data); err != nil {
+	p2pSub, err := r.transport.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(raw []byte) {
+		if err := r.handlePeer(raw); err != nil {
 			logger.Error("handle peer message failed", err)
 		}
 	})
 	if err != nil {
 		return err
 	}
-	logger.Info("subscribed p2p subject")
+	logger.Info("subscribed p2p subject", "subject", p2pWildcardSubject(r.cfg.NodeID))
 	r.subs = append(r.subs, p2pSub)
 
-	return r.nc.Flush()
+	return r.transport.Flush()
 }
 
 func (r *Runtime) handleControl(raw []byte) error {
@@ -184,11 +175,11 @@ func (r *Runtime) handleControl(raw []byte) error {
 		logger.Warn("ignoring control for unknown session", "session_id", msg.SessionID)
 		return nil
 	}
-	effects, err := session.HandleControl(&msg)
+	actions, err := session.HandleControl(&msg)
 	if err != nil {
 		return err
 	}
-	return r.publishEffects(effects)
+	return r.dispatchActions(actions)
 }
 
 func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta) error {
@@ -209,7 +200,7 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta
 		Start:              msg.SessionStart,
 		LocalParticipantID: r.cfg.NodeID,
 		Identity:           r.identity,
-		Peers:              &peerLookup{keys: peerKeys},
+		Peers:              NewPeerLookup(peerKeys),
 		Coordinator:        r.coordLookup,
 		Preparams:          r.stores,
 		Shares:             r.stores,
@@ -224,11 +215,11 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta
 	r.sessionsMu.Unlock()
 	logger.Info("cosigner started session", "session_id", msg.SessionID, "action", meta.action)
 
-	effects, err := sess.Start()
+	actions, err := sess.Start()
 	if err != nil {
 		return err
 	}
-	return r.publishEffects(effects)
+	return r.dispatchActions(actions)
 }
 
 func (r *Runtime) handlePeer(raw []byte) error {
@@ -247,11 +238,11 @@ func (r *Runtime) handlePeer(raw []byte) error {
 		logger.Warn("ignoring peer message for unknown session", "session_id", msg.SessionID)
 		return nil
 	}
-	effects, err := session.HandlePeer(&msg)
+	actions, err := session.HandlePeer(&msg)
 	if err != nil {
 		return err
 	}
-	return r.publishEffects(effects)
+	return r.dispatchActions(actions)
 }
 
 func (r *Runtime) tickSessions() error {
@@ -266,61 +257,40 @@ func (r *Runtime) tickSessions() error {
 		if session == nil {
 			continue
 		}
-		effects, err := session.Tick(time.Now())
+		actions, err := session.Tick(time.Now())
 		if err != nil {
 			return err
 		}
-		if err := r.publishEffects(effects); err != nil {
+		if err := r.dispatchActions(actions); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *Runtime) publishEffects(effects participant.Effects) error {
-	meta := r.metaFromEffects(effects)
-	if effects.Cleanup != nil {
-		outcome := "finished"
-		if effects.Result == nil {
-			outcome = "failed"
-		}
-		logger.Info("cosigner ended session", "session_id", effects.Cleanup.SessionID, "outcome", outcome)
-	}
-	if len(effects.SessionEvents) > 0 {
-		logger.Debug("cosigner publishing session events",
-			"node_id", r.cfg.NodeID,
-			"session_events", len(effects.SessionEvents),
-			"protocol", meta.protocol,
-			"action", meta.action,
-		)
-	}
-	if len(effects.PeerMessages) > 0 {
-		logger.Debug("cosigner publishing peer messages",
-			"node_id", r.cfg.NodeID,
-			"peer_messages", len(effects.PeerMessages),
-		)
-	}
-	for _, peerMsg := range effects.PeerMessages {
+func (r *Runtime) dispatchActions(actions participant.Actions) error {
+	logger.Debug("dispatching actions", "actions", actions)
+	for _, peerMsg := range actions.PeerMessages {
 		raw, err := json.Marshal(peerMsg)
 		if err != nil {
 			return err
 		}
-		if err := r.nc.Publish(p2pSubject(peerMsg.ToParticipantID, peerMsg.SessionID), raw); err != nil {
+		if err := r.transport.Publish(p2pSubject(peerMsg.ToParticipantID, peerMsg.SessionID), raw); err != nil {
 			return err
 		}
 	}
-	for _, event := range effects.SessionEvents {
+	for _, event := range actions.SessionEvents {
 		raw, err := json.Marshal(event)
 		if err != nil {
 			return err
 		}
-		if err := r.nc.Publish(sessionEventSubject(event.SessionID), raw); err != nil {
+		if err := r.transport.Publish(sessionEventSubject(event.SessionID), raw); err != nil {
 			return err
 		}
 	}
-	if effects.Cleanup != nil && effects.Cleanup.DropArtifacts {
-		r.dropSessionMeta(effects.Cleanup.SessionID)
-		_ = r.stores.DeleteSessionArtifacts(effects.Cleanup.SessionID)
+	if actions.Cleanup != nil && actions.Cleanup.DropArtifacts {
+		r.dropSessionMeta(actions.Cleanup.SessionID)
+		_ = r.stores.DeleteSessionArtifacts(actions.Cleanup.SessionID)
 	}
 	return nil
 }
@@ -330,16 +300,6 @@ func (r *Runtime) getSessionMeta(sessionID string) sessionMeta {
 	defer r.sessionsMu.RUnlock()
 	if meta, ok := r.sessionMeta[sessionID]; ok {
 		return meta
-	}
-	return sessionMeta{protocol: "unknown", action: "unknown"}
-}
-
-func (r *Runtime) metaFromEffects(effects participant.Effects) sessionMeta {
-	if len(effects.SessionEvents) > 0 && effects.SessionEvents[0] != nil {
-		return r.getSessionMeta(effects.SessionEvents[0].SessionID)
-	}
-	if len(effects.PeerMessages) > 0 && effects.PeerMessages[0] != nil {
-		return r.getSessionMeta(effects.PeerMessages[0].SessionID)
 	}
 	return sessionMeta{protocol: "unknown", action: "unknown"}
 }
@@ -390,20 +350,25 @@ func actionLabel(operation sdkprotocol.OperationType) string {
 }
 
 func (r *Runtime) publishPresence(status sdkprotocol.PresenceStatus) error {
+	transportType := r.transport.ProtocolType()
+	connectionPrefix := strings.ToLower(string(transportType))
+	if connectionPrefix == "" || transportType == sdkprotocol.TransportTypeUnspecified {
+		connectionPrefix = "transport"
+	}
 	event := sdkprotocol.PresenceEvent{
 		PeerID:         r.cfg.NodeID,
 		Status:         status,
-		Transport:      sdkprotocol.TransportTypeNATS,
+		Transport:      transportType,
 		LastSeenUnixMs: time.Now().UTC().UnixMilli(),
 	}
 	if status == sdkprotocol.PresenceStatusOnline {
-		event.ConnectionID = "nats:" + r.cfg.NodeID
+		event.ConnectionID = connectionPrefix + ":" + r.cfg.NodeID
 	}
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	return r.nc.Publish(presenceSubject(r.cfg.NodeID), raw)
+	return r.transport.Publish(presenceSubject(r.cfg.NodeID), raw)
 }
 
 func (r *Runtime) getSession(sessionID string) *participant.ParticipantSession {
