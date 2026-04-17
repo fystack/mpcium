@@ -13,6 +13,7 @@ import (
 const (
 	topicPrefix          = "mpc.v1"
 	requestKeygenSubject = topicPrefix + ".request.keygen"
+	requestSignSubject   = topicPrefix + ".request.sign"
 )
 
 type Client struct {
@@ -30,11 +31,22 @@ type KeygenParticipant struct {
 	IdentityPublicKey []byte
 }
 
+type SignParticipant = KeygenParticipant
+
 type KeygenRequest struct {
 	Protocol     sdkprotocol.ProtocolType
 	Threshold    uint32
 	WalletID     string
 	Participants []KeygenParticipant
+}
+
+type SignRequest struct {
+	Protocol     sdkprotocol.ProtocolType
+	Threshold    uint32
+	WalletID     string
+	SigningInput []byte
+	Derivation   *sdkprotocol.NonHardenedDerivation
+	Participants []SignParticipant
 }
 
 func New(cfg Config) (*Client, error) {
@@ -100,10 +112,10 @@ func (c *Client) RequestKeygen(ctx context.Context, req KeygenRequest) (*sdkprot
 
 	msg := &sdkprotocol.ControlMessage{
 		SessionStart: &sdkprotocol.SessionStart{
-			SessionID: "tmp", // coordinator replaces this value when accepting request
-			Protocol:  normalizeProtocol(req.Protocol),
-			Operation: sdkprotocol.OperationTypeKeygen,
-			Threshold: req.Threshold,
+			SessionID:    "tmp", // coordinator replaces this value when accepting request
+			Protocol:     normalizeProtocol(req.Protocol),
+			Operation:    sdkprotocol.OperationTypeKeygen,
+			Threshold:    req.Threshold,
 			Participants: mapParticipants(req.Participants),
 			Keygen: &sdkprotocol.KeygenPayload{
 				KeyID: req.WalletID,
@@ -111,14 +123,46 @@ func (c *Client) RequestKeygen(ctx context.Context, req KeygenRequest) (*sdkprot
 		},
 	}
 
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal keygen request: %w", err)
+	return c.requestSession(ctx, requestKeygenSubject, msg, "keygen")
+}
+
+func (c *Client) RequestSign(ctx context.Context, req SignRequest) (*sdkprotocol.RequestAccepted, error) {
+	if err := validateSignRequest(req); err != nil {
+		return nil, err
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
 	}
 
-	respMsg, err := c.nc.RequestWithContext(ctx, requestKeygenSubject, payload)
+	msg := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID:    "tmp", // coordinator replaces this value when accepting request
+			Protocol:     normalizeProtocol(req.Protocol),
+			Operation:    sdkprotocol.OperationTypeSign,
+			Threshold:    req.Threshold,
+			Participants: mapParticipants(req.Participants),
+			Sign: &sdkprotocol.SignPayload{
+				KeyID:        req.WalletID,
+				SigningInput: append([]byte(nil), req.SigningInput...),
+				Derivation:   req.Derivation,
+			},
+		},
+	}
+
+	return c.requestSession(ctx, requestSignSubject, msg, "sign")
+}
+
+func (c *Client) requestSession(ctx context.Context, subject string, msg *sdkprotocol.ControlMessage, action string) (*sdkprotocol.RequestAccepted, error) {
+	payload, err := json.Marshal(msg)
 	if err != nil {
-		return nil, fmt.Errorf("request keygen: %w", err)
+		return nil, fmt.Errorf("marshal %s request: %w", action, err)
+	}
+
+	respMsg, err := c.nc.RequestWithContext(ctx, subject, payload)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", action, err)
 	}
 
 	var accepted sdkprotocol.RequestAccepted
@@ -191,6 +235,23 @@ func validateKeygenRequest(req KeygenRequest) error {
 		if len(participant.IdentityPublicKey) == 0 {
 			return fmt.Errorf("identity public key is required for participant %q", participant.ID)
 		}
+	}
+	return nil
+}
+
+func validateSignRequest(req SignRequest) error {
+	if req.Protocol == sdkprotocol.ProtocolTypeUnspecified || string(req.Protocol) == "" {
+		return fmt.Errorf("protocol is required")
+	}
+	if len(req.SigningInput) == 0 {
+		return fmt.Errorf("signingInput is required")
+	}
+	if err := validateKeygenRequest(KeygenRequest{
+		Threshold:    req.Threshold,
+		WalletID:     req.WalletID,
+		Participants: req.Participants,
+	}); err != nil {
+		return err
 	}
 	return nil
 }
