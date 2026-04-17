@@ -116,7 +116,9 @@ func Error(msg string, err error, keyValues ...interface{}) {
 		ctx = ctx.Interface(key, value)
 	}
 
-	ctx.Caller().Stack().Err(err).Msg(msg)
+	// Skip one additional frame so caller points to the code using logger.Error,
+	// not this wrapper function itself.
+	ctx.Caller(1).Stack().Err(err).Msg(msg)
 }
 
 // Fatal logs a fatal message and exits the program.

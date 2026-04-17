@@ -38,6 +38,8 @@ func TestError_WithError(t *testing.T) {
 	assert.Contains(t, output, "test error message")
 	assert.Contains(t, output, "level\":\"error\"")
 	assert.Contains(t, output, "test error")
+	assert.Contains(t, output, "logger_test.go")
+	assert.NotContains(t, output, "pkg/logger/logger.go")
 }
 
 func TestError_WithoutError(t *testing.T) {
