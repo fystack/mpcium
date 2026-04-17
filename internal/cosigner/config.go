@@ -10,9 +10,18 @@ import (
 	"github.com/spf13/viper"
 )
 
+type RelayProvider string
+
+const (
+	RelayProviderNATS RelayProvider = "nats"
+	RelayProviderMQTT RelayProvider = "mqtt"
+)
+
 type Config struct {
+	RelayProvider        RelayProvider
 	NodeID               string
 	NATSURL              string
+	MQTT                 mqttConfig
 	CoordinatorID        string
 	CoordinatorPublicKey []byte
 	IdentityPrivateKey   []byte
@@ -22,29 +31,23 @@ type Config struct {
 	TickInterval         time.Duration
 }
 
+// Flat keys for compact config style.
 type fileConfig struct {
-	NATS     natsConfig     `mapstructure:"nats"`
-	Cosigner cosignerConfig `mapstructure:"cosigner"`
+	RelayProvider           RelayProvider `mapstructure:"relay_provider"`
+	NATSURL                 string        `mapstructure:"nats_url"`
+	MQTT                    mqttConfig    `mapstructure:"mqtt"`
+	NodeID                  string        `mapstructure:"node_id"`
+	DataDir                 string        `mapstructure:"data_dir"`
+	CoordinatorID           string        `mapstructure:"coordinator_id"`
+	CoordinatorPublicKeyHex string        `mapstructure:"coordinator_public_key_hex"`
+	IdentityPrivateKeyHex   string        `mapstructure:"identity_private_key_hex"`
 }
 
-type natsConfig struct {
-	URL string `mapstructure:"url"`
-}
-
-type cosignerConfig struct {
-	NodeID      string            `mapstructure:"node_id"`
-	DataDir     string            `mapstructure:"data_dir"`
-	Coordinator coordinatorConfig `mapstructure:"coordinator"`
-	Identity    identityConfig    `mapstructure:"identity"`
-}
-
-type coordinatorConfig struct {
-	ID        string `mapstructure:"id"`
-	PublicKey string `mapstructure:"public_key_hex"`
-}
-
-type identityConfig struct {
-	PrivateKey string `mapstructure:"private_key_hex"`
+type mqttConfig struct {
+	Broker   string `mapstructure:"broker"`
+	ClientID string `mapstructure:"client_id"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 func LoadConfig() (Config, error) {
@@ -52,24 +55,25 @@ func LoadConfig() (Config, error) {
 	if err := viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
-
-	coordinatorKey, err := decodeHexKey(cfg.Cosigner.Coordinator.PublicKey, "coordinator public key")
+	coordinatorKey, err := decodeHexKey(cfg.CoordinatorPublicKeyHex, "coordinator public key")
 	if err != nil {
 		return Config{}, err
 	}
 
-	privateKey, err := decodeHexKey(cfg.Cosigner.Identity.PrivateKey, "identity private key")
+	privateKey, err := decodeHexKey(cfg.IdentityPrivateKeyHex, "identity private key")
 	if err != nil {
 		return Config{}, err
 	}
 
 	runtimeCfg := Config{
-		NodeID:               cfg.Cosigner.NodeID,
-		NATSURL:              cfg.NATS.URL,
-		CoordinatorID:        cfg.Cosigner.Coordinator.ID,
+		RelayProvider:        cfg.RelayProvider,
+		NodeID:               cfg.NodeID,
+		NATSURL:              cfg.NATSURL,
+		MQTT:                 cfg.MQTT,
+		CoordinatorID:        cfg.CoordinatorID,
 		CoordinatorPublicKey: coordinatorKey,
 		IdentityPrivateKey:   privateKey,
-		DataDir:              cfg.Cosigner.DataDir,
+		DataDir:              cfg.DataDir,
 	}
 	runtimeCfg.applyDefaults()
 	if err := runtimeCfg.Validate(); err != nil {
@@ -87,6 +91,9 @@ func decodeHexKey(value, name string) ([]byte, error) {
 }
 
 func (cfg *Config) applyDefaults() {
+	if cfg.RelayProvider == "" {
+		cfg.RelayProvider = RelayProviderNATS
+	}
 	if cfg.MaxActiveSessions <= 0 {
 		cfg.MaxActiveSessions = 10
 	}
@@ -102,8 +109,20 @@ func (cfg Config) Validate() error {
 	if cfg.NodeID == "" {
 		return fmt.Errorf("node_id is required")
 	}
-	if cfg.NATSURL == "" {
-		return fmt.Errorf("nats_url is required")
+	switch cfg.RelayProvider {
+	case RelayProviderNATS:
+		if cfg.NATSURL == "" {
+			return fmt.Errorf("nats_url is required for relay provider nats")
+		}
+	case RelayProviderMQTT:
+		if cfg.MQTT.Broker == "" {
+			return fmt.Errorf("mqtt.broker is required for relay provider mqtt")
+		}
+		if cfg.MQTT.ClientID == "" {
+			return fmt.Errorf("mqtt.client_id is required for relay provider mqtt")
+		}
+	default:
+		return fmt.Errorf("unsupported relay provider: %s", cfg.RelayProvider)
 	}
 	if cfg.CoordinatorID == "" || len(cfg.CoordinatorPublicKey) != ed25519.PublicKeySize {
 		return fmt.Errorf("valid coordinator key is required")

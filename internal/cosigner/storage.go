@@ -35,8 +35,8 @@ type badgerStores struct {
 	db *badger.DB
 }
 
-func newBadgerStores(dataDir string) (*badgerStores, error) {
-	opts := badger.DefaultOptions(filepath.Join(dataDir, "node-v1-badger"))
+func newBadgerStores(dataDir string, nodeID string) (*badgerStores, error) {
+	opts := badger.DefaultOptions(filepath.Join(dataDir, nodeID))
 	opts.Logger = nil
 	db, err := badger.Open(opts)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 type Runtime struct {
 	cfg         Config
-	transport   Transport
+	relay       Relay
 	stores      Stores
 	identity    *localIdentity
 	coordLookup *coordinatorLookup
@@ -32,37 +33,30 @@ type sessionMeta struct {
 }
 
 func NewRuntime(cfg Config) (*Runtime, error) {
-	transport, err := NewNATSTransport(cfg.NATSURL)
+	relay, err := NewRelayFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return NewRuntimeWithTransport(cfg, transport)
-}
-
-func NewRuntimeWithTransport(cfg Config, transport Transport) (*Runtime, error) {
-	if transport == nil {
-		return nil, errors.New("transport is required")
-	}
-	stores, err := newBadgerStores(cfg.DataDir)
+	stores, err := newBadgerStores(cfg.DataDir, cfg.NodeID)
 	if err != nil {
-		transport.Close()
+		relay.Close()
 		return nil, err
 	}
 	identity, err := NewLocalIdentity(cfg.NodeID, cfg.IdentityPrivateKey)
 	if err != nil {
-		transport.Close()
+		relay.Close()
 		_ = stores.Close()
 		return nil, err
 	}
 	coordLookup, err := NewCoordinatorLookup(cfg.CoordinatorID, cfg.CoordinatorPublicKey)
 	if err != nil {
-		transport.Close()
+		relay.Close()
 		_ = stores.Close()
 		return nil, err
 	}
 	return &Runtime{
 		cfg:         cfg,
-		transport:   transport,
+		relay:       relay,
 		stores:      stores,
 		identity:    identity,
 		coordLookup: coordLookup,
@@ -75,8 +69,8 @@ func (r *Runtime) Close() error {
 	for _, sub := range r.subs {
 		_ = sub.Unsubscribe()
 	}
-	if r.transport != nil {
-		r.transport.Close()
+	if r.relay != nil {
+		r.relay.Close()
 	}
 	if r.stores != nil {
 		return r.stores.Close()
@@ -101,7 +95,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			logger.Info("cosigner runtime stopping", "node_id", r.cfg.NodeID)
-			_ = r.publishPresence(sdkprotocol.PresenceStatusOffline)
+			r.publishPresenceOnShutdown()
 			return nil
 		case <-tick.C:
 			if err := r.tickSessions(); err != nil {
@@ -116,7 +110,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 func (r *Runtime) subscribe() error {
-	controlSub, err := r.transport.Subscribe(controlSubject(r.cfg.NodeID), func(raw []byte) {
+	controlSub, err := r.relay.Subscribe(controlSubject(r.cfg.NodeID), func(raw []byte) {
 		if err := r.handleControl(raw); err != nil {
 			logger.Error("handle control message failed", err)
 		}
@@ -124,10 +118,9 @@ func (r *Runtime) subscribe() error {
 	if err != nil {
 		return err
 	}
-	logger.Info("subscribed control subject", "subject", controlSubject(r.cfg.NodeID))
 	r.subs = append(r.subs, controlSub)
 
-	p2pSub, err := r.transport.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(raw []byte) {
+	p2pSub, err := r.relay.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(raw []byte) {
 		if err := r.handlePeer(raw); err != nil {
 			logger.Error("handle peer message failed", err)
 		}
@@ -135,10 +128,9 @@ func (r *Runtime) subscribe() error {
 	if err != nil {
 		return err
 	}
-	logger.Info("subscribed p2p subject", "subject", p2pWildcardSubject(r.cfg.NodeID))
 	r.subs = append(r.subs, p2pSub)
 
-	return r.transport.Flush()
+	return r.relay.Flush()
 }
 
 func (r *Runtime) handleControl(raw []byte) error {
@@ -147,6 +139,21 @@ func (r *Runtime) handleControl(raw []byte) error {
 		return err
 	}
 	if err := sdkprotocol.ValidateControlMessage(&msg); err != nil {
+		if !hasControlBody(&msg) {
+			logger.Warn("ignoring control message without body")
+			return nil
+		}
+		logger.Error("invalid control message received", err,
+			"node_id", r.cfg.NodeID,
+			"session_id", msg.SessionID,
+			"sequence", msg.Sequence,
+			"coordinator_id", msg.CoordinatorID,
+			"has_session_start", msg.SessionStart != nil,
+			"has_key_exchange", msg.KeyExchange != nil,
+			"has_mpc_begin", msg.MPCBegin != nil,
+			"has_session_abort", msg.SessionAbort != nil,
+			"raw_control_json", string(raw),
+		)
 		return err
 	}
 
@@ -175,8 +182,35 @@ func (r *Runtime) handleControl(raw []byte) error {
 		logger.Warn("ignoring control for unknown session", "session_id", msg.SessionID)
 		return nil
 	}
+	if msg.SessionAbort != nil {
+		// Current SDK participant session doesn't handle SessionAbort control messages.
+		// Treat abort as terminal, clean up local session state, and stop processing.
+		logger.Warn("cosigner received session abort",
+			"node_id", r.cfg.NodeID,
+			"session_id", msg.SessionID,
+			"reason", msg.SessionAbort.Reason,
+			"detail", msg.SessionAbort.Detail,
+		)
+		logger.Info("cosigner session ended",
+			"node_id", r.cfg.NodeID,
+			"session_id", msg.SessionID,
+			"outcome", "aborted",
+			"reason", msg.SessionAbort.Reason,
+		)
+		r.dropSessionMeta(msg.SessionID)
+		_ = r.stores.DeleteSessionArtifacts(msg.SessionID)
+		return nil
+	}
 	actions, err := session.HandleControl(&msg)
 	if err != nil {
+		logger.Error("session handle control failed", err,
+			"node_id", r.cfg.NodeID,
+			"session_id", msg.SessionID,
+			"sequence", msg.Sequence,
+			"coordinator_id", msg.CoordinatorID,
+			"control_type", controlType(&msg),
+			"raw_control_json", string(raw),
+		)
 		return err
 	}
 	return r.dispatchActions(actions)
@@ -269,26 +303,43 @@ func (r *Runtime) tickSessions() error {
 }
 
 func (r *Runtime) dispatchActions(actions participant.Actions) error {
-	logger.Debug("dispatching actions", "actions", actions)
 	for _, peerMsg := range actions.PeerMessages {
 		raw, err := json.Marshal(peerMsg)
 		if err != nil {
 			return err
 		}
-		if err := r.transport.Publish(p2pSubject(peerMsg.ToParticipantID, peerMsg.SessionID), raw); err != nil {
+		if err := r.relay.Publish(p2pSubject(peerMsg.ToParticipantID, peerMsg.SessionID), raw); err != nil {
 			return err
 		}
 	}
 	for _, event := range actions.SessionEvents {
-		raw, err := json.Marshal(event)
+		sanitized, err := sanitizeAndResignSessionEvent(event, r.cfg.IdentityPrivateKey)
 		if err != nil {
 			return err
 		}
-		if err := r.transport.Publish(sessionEventSubject(event.SessionID), raw); err != nil {
+		raw, err := json.Marshal(sanitized)
+		if err != nil {
+			return err
+		}
+		if err := r.relay.Publish(sessionEventSubject(sanitized.SessionID), raw); err != nil {
 			return err
 		}
 	}
 	if actions.Cleanup != nil && actions.Cleanup.DropArtifacts {
+		outcome := "cleanup"
+		if actions.Result != nil {
+			switch {
+			case actions.Result.KeyShare != nil:
+				outcome = "completed_keygen"
+			case actions.Result.Signature != nil:
+				outcome = "completed_sign"
+			}
+		}
+		logger.Info("cosigner session ended",
+			"node_id", r.cfg.NodeID,
+			"session_id", actions.Cleanup.SessionID,
+			"outcome", outcome,
+		)
 		r.dropSessionMeta(actions.Cleanup.SessionID)
 		_ = r.stores.DeleteSessionArtifacts(actions.Cleanup.SessionID)
 	}
@@ -328,6 +379,38 @@ func controlType(msg *sdkprotocol.ControlMessage) string {
 	}
 }
 
+func sanitizeSessionEvent(event *sdkprotocol.SessionEvent) *sdkprotocol.SessionEvent {
+	if event == nil || event.SessionCompleted == nil || event.SessionCompleted.Result == nil || event.SessionCompleted.Result.KeyShare == nil {
+		return event
+	}
+	clone := *event
+	completed := *event.SessionCompleted
+	result := *event.SessionCompleted.Result
+	keyShare := *event.SessionCompleted.Result.KeyShare
+	// Never publish secret share material over relay topics.
+	keyShare.ShareBlob = nil
+	result.KeyShare = &keyShare
+	completed.Result = &result
+	clone.SessionCompleted = &completed
+	return &clone
+}
+
+func sanitizeAndResignSessionEvent(event *sdkprotocol.SessionEvent, privateKey []byte) (*sdkprotocol.SessionEvent, error) {
+	sanitized := sanitizeSessionEvent(event)
+	if sanitized == nil || sanitized == event {
+		return event, nil
+	}
+	if len(privateKey) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("invalid identity private key size: %d", len(privateKey))
+	}
+	payload, err := sdkprotocol.SessionEventSigningBytes(sanitized)
+	if err != nil {
+		return nil, err
+	}
+	sanitized.Signature = ed25519.Sign(ed25519.PrivateKey(privateKey), payload)
+	return sanitized, nil
+}
+
 func protocolLabel(protocol sdkprotocol.ProtocolType) string {
 	value := strings.TrimSpace(string(protocol))
 	if value == "" || value == string(sdkprotocol.ProtocolTypeUnspecified) {
@@ -350,7 +433,7 @@ func actionLabel(operation sdkprotocol.OperationType) string {
 }
 
 func (r *Runtime) publishPresence(status sdkprotocol.PresenceStatus) error {
-	transportType := r.transport.ProtocolType()
+	transportType := r.relay.ProtocolType()
 	connectionPrefix := strings.ToLower(string(transportType))
 	if connectionPrefix == "" || transportType == sdkprotocol.TransportTypeUnspecified {
 		connectionPrefix = "transport"
@@ -368,7 +451,7 @@ func (r *Runtime) publishPresence(status sdkprotocol.PresenceStatus) error {
 	if err != nil {
 		return err
 	}
-	return r.transport.Publish(presenceSubject(r.cfg.NodeID), raw)
+	return r.relay.Publish(presenceSubject(r.cfg.NodeID), raw)
 }
 
 func (r *Runtime) getSession(sessionID string) *participant.ParticipantSession {
@@ -390,4 +473,29 @@ func (r *Runtime) verifyControlSignature(msg *sdkprotocol.ControlMessage) error 
 		return errors.New("invalid control signature")
 	}
 	return nil
+}
+
+func (r *Runtime) publishPresenceOnShutdown() {
+	done := make(chan error, 1)
+	go func() {
+		done <- r.publishPresence(sdkprotocol.PresenceStatusOffline)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			logger.Warn("failed to publish offline presence", "error", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		logger.Warn("timed out publishing offline presence")
+	}
+}
+
+func hasControlBody(msg *sdkprotocol.ControlMessage) bool {
+	if msg == nil {
+		return false
+	}
+	return msg.SessionStart != nil ||
+		msg.KeyExchange != nil ||
+		msg.MPCBegin != nil ||
+		msg.SessionAbort != nil
 }
