@@ -318,7 +318,7 @@ func (c *Coordinator) validateRequest(ctx context.Context, op Operation, msg *sd
 			return newCoordinatorError(ErrorCodeValidation, "party_key must equal participant_id bytes")
 		}
 		if !c.presence.IsOnline(ctx, participant.ParticipantID) {
-			return newCoordinatorError(ErrorCodeUnavailable, "participant is offline")
+			return newCoordinatorError(ErrorCodeUnavailable, fmt.Sprintf("participant %q is offline", participant.ParticipantID))
 		}
 	}
 	if op == OperationKeygen && c.keyInfoStore != nil {

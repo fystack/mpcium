@@ -97,6 +97,9 @@ func TestHandleRequestRejectsOfflineParticipant(t *testing.T) {
 	if reply.ErrorCode != ErrorCodeUnavailable {
 		t.Fatalf("error code = %s, want %s", reply.ErrorCode, ErrorCodeUnavailable)
 	}
+	if reply.ErrorMessage != `participant "p1" is offline` {
+		t.Fatalf("error message = %q", reply.ErrorMessage)
+	}
 }
 
 func TestLifecycleCompletesSignAndPublishesResult(t *testing.T) {

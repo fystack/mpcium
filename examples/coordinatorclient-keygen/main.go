@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -26,11 +25,15 @@ func main() {
 	participants := []coordinatorclient.KeygenParticipant{
 		{
 			ID:                "peer-node-01",
-			IdentityPublicKey: mustPublicKeyFromPrivateHex("b14d168636008a9c766a6c231c182446e4b636cd2116817a89d068ffb5cc49e456a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"),
+			IdentityPublicKey: mustDecodeHex("56a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"),
 		},
 		{
 			ID:                "peer-node-02",
-			IdentityPublicKey: mustPublicKeyFromPrivateHex("a96d8c0de1b5682740f6487b13dc7477aaa739b900c6f5c3db737ca019163efad9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"),
+			IdentityPublicKey: mustDecodeHex("d9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"),
+		},
+		{
+			ID:                "mobile-sample-01",
+			IdentityPublicKey: mustDecodeHex("0c67697e3142c1c87dd8fa034fdfece14fc8ba00145bc0f123d6cd8bd33640e2"),
 		},
 	}
 
@@ -45,21 +48,6 @@ func mustDecodeHex(value string) []byte {
 		panic(err)
 	}
 	return decoded
-}
-
-func mustPublicKeyFromPrivateHex(privateKeyHex string) []byte {
-	privateRaw := mustDecodeHex(privateKeyHex)
-	var private ed25519.PrivateKey
-	switch len(privateRaw) {
-	case ed25519.PrivateKeySize:
-		private = ed25519.PrivateKey(privateRaw)
-	case ed25519.SeedSize:
-		private = ed25519.NewKeyFromSeed(privateRaw)
-	default:
-		panic(fmt.Sprintf("invalid ed25519 private key length: %d", len(privateRaw)))
-	}
-	public := private.Public().(ed25519.PublicKey)
-	return append([]byte(nil), public...)
 }
 
 func runKeygenForProtocol(client *coordinatorclient.Client, participants []coordinatorclient.KeygenParticipant, walletID string, protocol sdkprotocol.ProtocolType) {

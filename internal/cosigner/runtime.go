@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/gob"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,7 +85,7 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
-	logger.Info("cosigner runtime started", "node_id", r.cfg.NodeID)
+	logger.Info("cosigner runtime started", "node_id", r.cfg.NodeID, "identity_public_key_hex", hex.EncodeToString(r.identity.PublicKey()))
 	if err := r.ensureECDSAPreparams(); err != nil {
 		return err
 	}

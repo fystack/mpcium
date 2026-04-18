@@ -25,15 +25,15 @@ func main() {
 	participants := []coordinatorclient.SignParticipant{
 		{
 			ID:                "peer-node-01",
-			IdentityPublicKey: mustPublicKeyFromPrivateHex("b14d168636008a9c766a6c231c182446e4b636cd2116817a89d068ffb5cc49e456a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"),
+			IdentityPublicKey: mustDecodeHex("56a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"),
 		},
 		{
-			ID:                "peer-node-02",
-			IdentityPublicKey: mustPublicKeyFromPrivateHex("a96d8c0de1b5682740f6487b13dc7477aaa739b900c6f5c3db737ca019163efad9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"),
+			ID:                "mobile-sample-01",
+			IdentityPublicKey: mustDecodeHex("0c67697e3142c1c87dd8fa034fdfece14fc8ba00145bc0f123d6cd8bd33640e2"),
 		},
 	}
 
-	walletID := "wallet_2834c034-489c-40f2-a237-2afd4a73bfaa"
+	walletID := "wallet_f8029c22-a222-4828-b135-8aacc021d716"
 	message := []byte("deadbeef")
 	protocol := sdkprotocol.ProtocolTypeEdDSA
 
