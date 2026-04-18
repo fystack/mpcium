@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type Signer interface {

@@ -14,9 +14,9 @@ import (
 	"time"
 
 	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	"github.com/fystack/mpcium-sdk/participant"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/logger"
-	"github.com/vietddude/mpcium-sdk/participant"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 type Runtime struct {

@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/coordinatorclient"
 	"github.com/google/uuid"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 func main() {

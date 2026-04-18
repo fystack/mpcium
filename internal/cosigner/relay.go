@@ -3,7 +3,7 @@ package cosigner
 import (
 	"fmt"
 
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type Subscription interface {

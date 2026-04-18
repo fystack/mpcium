@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/nats-io/nats.go"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 const (

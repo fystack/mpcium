@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/nats-io/nats.go"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 type NATSRuntime struct {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type PresenceView interface {

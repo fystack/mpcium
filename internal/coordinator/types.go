@@ -3,7 +3,7 @@ package coordinator
 import (
 	"time"
 
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type Operation string

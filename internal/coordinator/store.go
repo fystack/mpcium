@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type SnapshotStore interface {

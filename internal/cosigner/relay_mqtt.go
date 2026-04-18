@@ -6,8 +6,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/logger"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
 )
 
 const mqttOperationTimeout = 10 * time.Second

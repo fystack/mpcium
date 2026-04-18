@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/dgraph-io/badger/v4"
-	sdkprotocol "github.com/vietddude/mpcium-sdk/protocol"
+	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 )
 
 type PreparamsStore interface {
