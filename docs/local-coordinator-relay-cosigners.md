@@ -25,6 +25,41 @@ nats-server
 
 The relay listens on MQTT port `1883`. Make sure nothing else is using that port.
 
+## Local SDK Replace
+
+This repository imports the SDK as:
+
+```go
+github.com/fystack/mpcium-sdk
+```
+
+For local development, keep the SDK repository next to this repository:
+
+```txt
+work/
+  mpcium/
+  sdk/
+```
+
+Then make sure `go.mod` contains this replace directive:
+
+```go
+replace github.com/fystack/mpcium-sdk => ../sdk
+```
+
+You can check it with:
+
+```sh
+grep 'github.com/fystack/mpcium-sdk => ../sdk' go.mod
+```
+
+If the SDK is somewhere else, update the replace path:
+
+```sh
+go mod edit -replace github.com/fystack/mpcium-sdk=/absolute/path/to/sdk
+go mod tidy
+```
+
 ## Config Overview
 
 `cosigner.config.yaml` runs `peer-node-01` through NATS:
