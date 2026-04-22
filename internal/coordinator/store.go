@@ -292,18 +292,16 @@ func cloneParticipants(participants []*sdkprotocol.SessionParticipant) []*sdkpro
 	return out
 }
 
-func cloneResult(result *sdkprotocol.Result) *sdkprotocol.Result {
+func cloneResult(result *Result) *Result {
 	if result == nil {
 		return nil
 	}
 	cloned := *result
-	if result.KeyShare != nil {
-		keyShare := *result.KeyShare
-		keyShare.ShareBlob = append([]byte(nil), result.KeyShare.ShareBlob...)
-		keyShare.PublicKey = append([]byte(nil), result.KeyShare.PublicKey...)
-		keyShare.ECDSAPubKey = append([]byte(nil), result.KeyShare.ECDSAPubKey...)
-		keyShare.EDDSAPubKey = append([]byte(nil), result.KeyShare.EDDSAPubKey...)
-		cloned.KeyShare = &keyShare
+	if result.Keygen != nil {
+		keygen := *result.Keygen
+		keygen.ECDSAPubKey = append([]byte(nil), result.Keygen.ECDSAPubKey...)
+		keygen.EDDSAPubKey = append([]byte(nil), result.Keygen.EDDSAPubKey...)
+		cloned.Keygen = &keygen
 	}
 	if result.Signature != nil {
 		signature := *result.Signature

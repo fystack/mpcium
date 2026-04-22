@@ -33,12 +33,12 @@ func (p *fakeControlPublisher) PublishControl(_ context.Context, participantID s
 }
 
 type fakeResultPublisher struct {
-	results map[string]*sdkprotocol.Result
+	results map[string]*Result
 }
 
-func (p *fakeResultPublisher) PublishResult(_ context.Context, sessionID string, result *sdkprotocol.Result) error {
+func (p *fakeResultPublisher) PublishResult(_ context.Context, sessionID string, result *Result) error {
 	if p.results == nil {
-		p.results = map[string]*sdkprotocol.Result{}
+		p.results = map[string]*Result{}
 	}
 	p.results[sessionID] = result
 	return nil
@@ -186,11 +186,8 @@ func TestLifecycleCompletesKeygenWithoutShareBlob(t *testing.T) {
 	}
 
 	published := results.results[reply.SessionID]
-	if published == nil || published.KeyShare == nil {
+	if published == nil || published.Keygen == nil {
 		t.Fatalf("missing published keygen result")
-	}
-	if len(published.KeyShare.ShareBlob) != 0 {
-		t.Fatalf("share blob should not be required/published")
 	}
 }
 
@@ -412,25 +409,22 @@ func TestKeygenBothPublishesAggregatedPubKeys(t *testing.T) {
 	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_dual_result", []byte("eddsa-pub"))
 
 	published := results.results[accepted.SessionID]
-	if published == nil || published.KeyShare == nil {
+	if published == nil || published.Keygen == nil {
 		t.Fatalf("missing published dual keygen result")
 	}
-	if string(published.KeyShare.PublicKey) != "ecdsa-pub" {
-		t.Fatalf("public_key = %q", string(published.KeyShare.PublicKey))
+	if string(published.Keygen.ECDSAPubKey) != "ecdsa-pub" {
+		t.Fatalf("ecdsa_pub_key = %q", string(published.Keygen.ECDSAPubKey))
 	}
-	if string(published.KeyShare.ECDSAPubKey) != "ecdsa-pub" {
-		t.Fatalf("ecdsa_pubkey = %q", string(published.KeyShare.ECDSAPubKey))
-	}
-	if string(published.KeyShare.EDDSAPubKey) != "eddsa-pub" {
-		t.Fatalf("eddsa_pubkey = %q", string(published.KeyShare.EDDSAPubKey))
+	if string(published.Keygen.EDDSAPubKey) != "eddsa-pub" {
+		t.Fatalf("eddsa_pub_key = %q", string(published.Keygen.EDDSAPubKey))
 	}
 	session, ok := coord.store.Get(ctx, accepted.SessionID)
 	if !ok {
 		t.Fatalf("missing accepted session")
 	}
 	grpcResult := sessionToProtoResult(session)
-	if grpcResult.GetPublicKeyHex() != hex.EncodeToString([]byte("ecdsa-pub")) {
-		t.Fatalf("grpc public_key_hex = %q", grpcResult.GetPublicKeyHex())
+	if grpcResult.GetKeyId() != "wallet_dual_result" {
+		t.Fatalf("grpc key_id = %q", grpcResult.GetKeyId())
 	}
 }
 
@@ -606,14 +600,8 @@ func testGRPCDualKeygenReturnsAggregatedResult(t *testing.T, protocol string) {
 	if !result.GetCompleted() {
 		t.Fatalf("expected completed result: %+v", result)
 	}
-	if result.GetPublicKeyHex() != hex.EncodeToString([]byte("grpc-ecdsa-pub")) {
-		t.Fatalf("public_key_hex = %q", result.GetPublicKeyHex())
-	}
-	if result.GetEcdsaPubkey() != hex.EncodeToString([]byte("grpc-ecdsa-pub")) {
-		t.Fatalf("ecdsa_pubkey = %q", result.GetEcdsaPubkey())
-	}
-	if result.GetEddsaPubkey() != hex.EncodeToString([]byte("grpc-eddsa-pub")) {
-		t.Fatalf("eddsa_pubkey = %q", result.GetEddsaPubkey())
+	if result.GetKeyId() != "wallet_grpc_dual_"+protocol {
+		t.Fatalf("key_id = %q", result.GetKeyId())
 	}
 }
 
@@ -687,21 +675,18 @@ func TestNATSRuntimeKeygenEmptyAndBothProtocolsPublishAggregatedResult(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			var result sdkprotocol.Result
+			var result Result
 			if err := json.Unmarshal(resultMsg.Data, &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.KeyShare == nil {
-				t.Fatalf("missing key share result")
+			if result.Keygen == nil {
+				t.Fatalf("missing keygen result")
 			}
-			if string(result.KeyShare.PublicKey) != "nats-ecdsa-pub" {
-				t.Fatalf("public_key = %q", string(result.KeyShare.PublicKey))
+			if string(result.Keygen.ECDSAPubKey) != "nats-ecdsa-pub" {
+				t.Fatalf("ecdsa_pub_key = %q", string(result.Keygen.ECDSAPubKey))
 			}
-			if string(result.KeyShare.ECDSAPubKey) != "nats-ecdsa-pub" {
-				t.Fatalf("ecdsa_pubkey = %q", string(result.KeyShare.ECDSAPubKey))
-			}
-			if string(result.KeyShare.EDDSAPubKey) != "nats-eddsa-pub" {
-				t.Fatalf("eddsa_pubkey = %q", string(result.KeyShare.EDDSAPubKey))
+			if string(result.Keygen.EDDSAPubKey) != "nats-eddsa-pub" {
+				t.Fatalf("eddsa_pub_key = %q", string(result.Keygen.EDDSAPubKey))
 			}
 		})
 	}
@@ -896,21 +881,18 @@ func assertDualKeygenResult(t *testing.T, coord *Coordinator, sessionID, walletI
 	if session.State != SessionCompleted {
 		t.Fatalf("session state = %s, want %s", session.State, SessionCompleted)
 	}
-	if session.Result == nil || session.Result.KeyShare == nil {
-		t.Fatalf("missing key share result")
+	if session.Result == nil || session.Result.Keygen == nil {
+		t.Fatalf("missing keygen result")
 	}
-	keyShare := session.Result.KeyShare
-	if keyShare.KeyID != walletID {
-		t.Fatalf("key_id = %q, want %q", keyShare.KeyID, walletID)
+	keygen := session.Result.Keygen
+	if keygen.KeyID != walletID {
+		t.Fatalf("key_id = %q, want %q", keygen.KeyID, walletID)
 	}
-	if string(keyShare.PublicKey) != string(ecdsaPubKey) {
-		t.Fatalf("public_key = %q", string(keyShare.PublicKey))
+	if string(keygen.ECDSAPubKey) != string(ecdsaPubKey) {
+		t.Fatalf("ecdsa_pub_key = %q", string(keygen.ECDSAPubKey))
 	}
-	if string(keyShare.ECDSAPubKey) != string(ecdsaPubKey) {
-		t.Fatalf("ecdsa_pubkey = %q", string(keyShare.ECDSAPubKey))
-	}
-	if string(keyShare.EDDSAPubKey) != string(eddsaPubKey) {
-		t.Fatalf("eddsa_pubkey = %q", string(keyShare.EDDSAPubKey))
+	if string(keygen.EDDSAPubKey) != string(eddsaPubKey) {
+		t.Fatalf("eddsa_pub_key = %q", string(keygen.EDDSAPubKey))
 	}
 }
 

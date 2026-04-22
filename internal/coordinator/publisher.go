@@ -14,7 +14,7 @@ type ControlPublisher interface {
 }
 
 type ResultPublisher interface {
-	PublishResult(ctx context.Context, sessionID string, result *sdkprotocol.Result) error
+	PublishResult(ctx context.Context, sessionID string, result *Result) error
 }
 
 type NATSControlPublisher struct {
@@ -44,7 +44,7 @@ func NewNATSResultPublisher(nc *nats.Conn) *NATSResultPublisher {
 	return &NATSResultPublisher{nc: nc}
 }
 
-func (p *NATSResultPublisher) PublishResult(ctx context.Context, sessionID string, result *sdkprotocol.Result) error {
+func (p *NATSResultPublisher) PublishResult(ctx context.Context, sessionID string, result *Result) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

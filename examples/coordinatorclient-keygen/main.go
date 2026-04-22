@@ -63,17 +63,16 @@ func runKeygen(client *coordinatorclient.Client, participants []coordinatorclien
 	if err != nil {
 		log.Fatalf("wait session result: %v (check both cosigners are running and session events are flowing)", err)
 	}
-	if result == nil || result.KeyShare == nil {
+	if result == nil || result.Keygen == nil {
 		fmt.Printf("session_id=%s result=empty wait_seconds=%.3f\n", resp.SessionID, time.Since(acceptedAt).Seconds())
 		return
 	}
 
-	fmt.Printf("key_id=%s session_id=%s wait_seconds=%.3f\n", result.KeyShare.KeyID, resp.SessionID, time.Since(acceptedAt).Seconds())
-	fmt.Printf("public_key_hex=%s\n", hex.EncodeToString(result.KeyShare.PublicKey))
-	if len(result.KeyShare.ECDSAPubKey) > 0 {
-		fmt.Printf("ecdsa_pubkey_hex=%s\n", hex.EncodeToString(result.KeyShare.ECDSAPubKey))
+	fmt.Printf("key_id=%s session_id=%s wait_seconds=%.3f\n", result.Keygen.KeyID, resp.SessionID, time.Since(acceptedAt).Seconds())
+	if len(result.Keygen.ECDSAPubKey) > 0 {
+		fmt.Printf("ecdsa_pubkey_hex=%s\n", hex.EncodeToString(result.Keygen.ECDSAPubKey))
 	}
-	if len(result.KeyShare.EDDSAPubKey) > 0 {
-		fmt.Printf("eddsa_pubkey_hex=%s\n", hex.EncodeToString(result.KeyShare.EDDSAPubKey))
+	if len(result.Keygen.EDDSAPubKey) > 0 {
+		fmt.Printf("eddsa_pubkey_hex=%s\n", hex.EncodeToString(result.Keygen.EDDSAPubKey))
 	}
 }

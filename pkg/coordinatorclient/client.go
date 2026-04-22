@@ -65,6 +65,27 @@ type SignRequest struct {
 	Participants []SignParticipant
 }
 
+type KeygenResult struct {
+	KeyID       string `json:"key_id"`
+	ECDSAPubKey []byte `json:"ecdsa_pub_key,omitempty"`
+	EDDSAPubKey []byte `json:"eddsa_pub_key,omitempty"`
+}
+
+type SignResult struct {
+	KeyID             string `json:"key_id"`
+	Signature         []byte `json:"signature,omitempty"`
+	SignatureRecovery []byte `json:"signature_recovery,omitempty"`
+	R                 []byte `json:"r,omitempty"`
+	S                 []byte `json:"s,omitempty"`
+	SignedInput       []byte `json:"signed_input,omitempty"`
+	PublicKey         []byte `json:"public_key,omitempty"`
+}
+
+type Result struct {
+	Keygen    *KeygenResult `json:"keygen,omitempty"`
+	Signature *SignResult   `json:"signature,omitempty"`
+}
+
 func New(cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 5 * time.Second
@@ -234,7 +255,7 @@ func normalizeProtocol(protocol sdkprotocol.ProtocolType) sdkprotocol.ProtocolTy
 	return sdkprotocol.ProtocolType(value)
 }
 
-func (c *Client) WaitSessionResult(ctx context.Context, sessionID string) (*sdkprotocol.Result, error) {
+func (c *Client) WaitSessionResult(ctx context.Context, sessionID string) (*Result, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("sessionID is required")
 	}
@@ -264,7 +285,7 @@ func (c *Client) WaitSessionResult(ctx context.Context, sessionID string) (*sdkp
 		return nil, fmt.Errorf("wait session result: %w", err)
 	}
 
-	var result *sdkprotocol.Result
+	var result *Result
 	if err := json.Unmarshal(msg.Data, &result); err != nil {
 		return nil, fmt.Errorf("decode session result: %w", err)
 	}
@@ -319,7 +340,7 @@ func (c *Client) requestSignGRPC(ctx context.Context, req SignRequest) (*sdkprot
 	}, nil
 }
 
-func (c *Client) waitSessionResultGRPC(ctx context.Context, sessionID string) (*sdkprotocol.Result, error) {
+func (c *Client) waitSessionResultGRPC(ctx context.Context, sessionID string) (*Result, error) {
 	resp, err := c.grpcClient.WaitSessionResult(ctx, &coordinatorv1.SessionLookup{SessionId: sessionID})
 	if err != nil {
 		return nil, fmt.Errorf("wait session result: %w", err)
@@ -333,29 +354,10 @@ func (c *Client) waitSessionResultGRPC(ctx context.Context, sessionID string) (*
 		if err != nil {
 			return nil, err
 		}
-		return &sdkprotocol.Result{Signature: signature}, nil
+		return &Result{Signature: signature}, nil
 	}
 
-	publicKey, err := decodeHexField("public_key_hex", resp.GetPublicKeyHex())
-	if err != nil {
-		return nil, err
-	}
-	ecdsaPubKey, err := decodeHexField("ecdsa_pubkey", resp.GetEcdsaPubkey())
-	if err != nil {
-		return nil, err
-	}
-	eddsaPubKey, err := decodeHexField("eddsa_pubkey", resp.GetEddsaPubkey())
-	if err != nil {
-		return nil, err
-	}
-	return &sdkprotocol.Result{
-		KeyShare: &sdkprotocol.KeyShareResult{
-			KeyID:       resp.GetKeyId(),
-			PublicKey:   publicKey,
-			ECDSAPubKey: ecdsaPubKey,
-			EDDSAPubKey: eddsaPubKey,
-		},
-	}, nil
+	return &Result{Keygen: &KeygenResult{KeyID: resp.GetKeyId()}}, nil
 }
 
 func mapParticipantsToProto(participants []KeygenParticipant) []*coordinatorv1.Participant {
@@ -369,7 +371,7 @@ func mapParticipantsToProto(participants []KeygenParticipant) []*coordinatorv1.P
 	return mapped
 }
 
-func mapProtoSignature(resp *coordinatorv1.SessionResult) (*sdkprotocol.SignatureResult, error) {
+func mapProtoSignature(resp *coordinatorv1.SessionResult) (*SignResult, error) {
 	signature, err := decodeHexField("signature_hex", resp.GetSignatureHex())
 	if err != nil {
 		return nil, err
@@ -390,18 +392,13 @@ func mapProtoSignature(resp *coordinatorv1.SessionResult) (*sdkprotocol.Signatur
 	if err != nil {
 		return nil, err
 	}
-	publicKey, err := decodeHexField("public_key_hex", resp.GetPublicKeyHex())
-	if err != nil {
-		return nil, err
-	}
-	return &sdkprotocol.SignatureResult{
+	return &SignResult{
 		KeyID:             resp.GetKeyId(),
 		Signature:         signature,
 		SignatureRecovery: recovery,
 		R:                 r,
 		S:                 s,
 		SignedInput:       signedInput,
-		PublicKey:         publicKey,
 	}, nil
 }
 

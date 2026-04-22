@@ -177,16 +177,12 @@ func sessionToProtoResult(session *Session) *coordinatorv1.SessionResult {
 	if session.Result == nil {
 		return result
 	}
-	if session.Result.KeyShare != nil {
-		result.KeyId = session.Result.KeyShare.KeyID
-		result.PublicKeyHex = hex.EncodeToString(session.Result.KeyShare.PublicKey)
-		result.EcdsaPubkey = hex.EncodeToString(session.Result.KeyShare.ECDSAPubKey)
-		result.EddsaPubkey = hex.EncodeToString(session.Result.KeyShare.EDDSAPubKey)
+	if session.Result.Keygen != nil {
+		result.KeyId = session.Result.Keygen.KeyID
 	}
 	if session.Result.Signature != nil {
 		sig := session.Result.Signature
 		result.KeyId = sig.KeyID
-		result.PublicKeyHex = hex.EncodeToString(sig.PublicKey)
 		result.SignatureHex = hex.EncodeToString(sig.Signature)
 		result.SignatureRecoveryHex = hex.EncodeToString(sig.SignatureRecovery)
 		result.RHex = hex.EncodeToString(sig.R)

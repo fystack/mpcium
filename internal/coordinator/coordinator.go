@@ -37,7 +37,7 @@ type dualKeygenGroup struct {
 }
 
 type dualKeygenCompletion struct {
-	result     *sdkprotocol.Result
+	result     *Result
 	sessionIDs []string
 }
 
@@ -285,7 +285,7 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 		if event.SessionCompleted.Result == nil {
 			return c.failSession(ctx, session, ErrorCodeValidation, "missing result payload")
 		}
-		state.ResultHash = canonicalOperationResultHash(session.Op, event.SessionCompleted.Result)
+		state.ResultHash = canonicalSessionResultHash(session, event.SessionCompleted.Result)
 	case event.PeerFailed != nil:
 		state.Failed = true
 		state.ErrorCode = ErrorCodeParticipantFailed
@@ -474,11 +474,11 @@ func (c *Coordinator) advance(ctx context.Context, session *Session, event *sdkp
 	return nil
 }
 
-func (c *Coordinator) persistKeyInfoIfNeeded(session *Session, result *sdkprotocol.Result) error {
-	if c.keyInfoStore == nil || session == nil || result == nil || session.Op != OperationKeygen || result.KeyShare == nil {
+func (c *Coordinator) persistKeyInfoIfNeeded(session *Session, result *Result) error {
+	if c.keyInfoStore == nil || session == nil || session.Start == nil || result == nil || session.Op != OperationKeygen || result.Keygen == nil {
 		return nil
 	}
-	walletID := result.KeyShare.KeyID
+	walletID := result.Keygen.KeyID
 	if walletID == "" {
 		walletID = keygenWalletID(session.Start)
 	}
@@ -498,7 +498,7 @@ func (c *Coordinator) persistKeyInfoIfNeeded(session *Session, result *sdkprotoc
 		KeyType:      string(session.Start.Protocol),
 		Threshold:    int(session.Start.Threshold),
 		Participants: participantIDs,
-		PublicKey:    append([]byte(nil), result.KeyShare.PublicKey...),
+		PublicKey:    keygenPublicKeyForProtocol(result.Keygen, session.Start.Protocol),
 		CreatedAt:    c.now().UTC().Format(time.RFC3339Nano),
 	}
 	c.keyInfoStore.Save(info)
@@ -533,8 +533,8 @@ func (c *Coordinator) registerDualKeygen(sessionIDs []string, seeded map[sdkprot
 	}
 }
 
-func (c *Coordinator) recordDualKeygenResult(session *Session, result *sdkprotocol.Result) (*dualKeygenCompletion, bool, bool) {
-	if c == nil || session == nil || session.Start == nil || result == nil || result.KeyShare == nil {
+func (c *Coordinator) recordDualKeygenResult(session *Session, result *Result) (*dualKeygenCompletion, bool, bool) {
+	if c == nil || session == nil || session.Start == nil || result == nil || result.Keygen == nil {
 		return nil, false, false
 	}
 	c.dualKeygenMu.Lock()
@@ -543,7 +543,7 @@ func (c *Coordinator) recordDualKeygenResult(session *Session, result *sdkprotoc
 	if !ok {
 		return nil, false, false
 	}
-	group.results[session.Start.Protocol] = keySharePublicKeyForProtocol(result.KeyShare, session.Start.Protocol)
+	group.results[session.Start.Protocol] = keygenPublicKeyForProtocol(result.Keygen, session.Start.Protocol)
 	ecdsaPubKey := group.results[sdkprotocol.ProtocolTypeECDSA]
 	eddsaPubKey := group.results[sdkprotocol.ProtocolTypeEdDSA]
 	if len(ecdsaPubKey) == 0 || len(eddsaPubKey) == 0 {
@@ -551,12 +551,11 @@ func (c *Coordinator) recordDualKeygenResult(session *Session, result *sdkprotoc
 	}
 	walletID := keygenWalletID(session.Start)
 	if walletID == "" {
-		walletID = result.KeyShare.KeyID
+		walletID = result.Keygen.KeyID
 	}
-	aggregate := &sdkprotocol.Result{
-		KeyShare: &sdkprotocol.KeyShareResult{
+	aggregate := &Result{
+		Keygen: &KeygenResult{
 			KeyID:       walletID,
-			PublicKey:   append([]byte(nil), ecdsaPubKey...),
 			ECDSAPubKey: append([]byte(nil), ecdsaPubKey...),
 			EDDSAPubKey: append([]byte(nil), eddsaPubKey...),
 		},
@@ -577,7 +576,7 @@ func (c *Coordinator) completeDualKeygen(ctx context.Context, completion *dualKe
 		return fmt.Errorf("missing dual keygen completion")
 	}
 	result := completion.result
-	if result == nil || result.KeyShare == nil {
+	if result == nil || result.Keygen == nil || result.Keygen.KeyID == "" {
 		return fmt.Errorf("missing dual keygen result")
 	}
 	now := c.now()
@@ -715,9 +714,9 @@ func (c *Coordinator) expireSession(ctx context.Context, session *Session) error
 	return c.results.PublishResult(ctx, session.ID, nil)
 }
 
-func (c *Coordinator) buildCompletedResult(session *Session, event *sdkprotocol.SessionEvent) (*sdkprotocol.Result, string, error) {
+func (c *Coordinator) buildCompletedResult(session *Session, event *sdkprotocol.SessionEvent) (*Result, string, error) {
 	var resultHash string
-	var result *sdkprotocol.Result
+	var result *Result
 	for _, state := range session.ParticipantState {
 		if state.ResultHash == "" {
 			return nil, "", fmt.Errorf("participant completed without result hash")
@@ -739,20 +738,31 @@ func (c *Coordinator) buildCompletedResult(session *Session, event *sdkprotocol.
 		if in.KeyShare == nil {
 			return nil, "", fmt.Errorf("missing key share result")
 		}
-		result = &sdkprotocol.Result{
-			KeyShare: &sdkprotocol.KeyShareResult{
-				KeyID:       in.KeyShare.KeyID,
-				PublicKey:   append([]byte(nil), in.KeyShare.PublicKey...),
-				ECDSAPubKey: keyShareProtocolPubKey(in.KeyShare, sdkprotocol.ProtocolTypeECDSA, session.Start.Protocol),
-				EDDSAPubKey: keyShareProtocolPubKey(in.KeyShare, sdkprotocol.ProtocolTypeEdDSA, session.Start.Protocol),
-			},
+		keygen := &KeygenResult{KeyID: in.KeyShare.KeyID}
+		switch session.Start.Protocol {
+		case sdkprotocol.ProtocolTypeECDSA:
+			keygen.ECDSAPubKey = append([]byte(nil), in.KeyShare.PublicKey...)
+		case sdkprotocol.ProtocolTypeEdDSA:
+			keygen.EDDSAPubKey = append([]byte(nil), in.KeyShare.PublicKey...)
+		default:
+			return nil, "", fmt.Errorf("unsupported keygen protocol %q", session.Start.Protocol)
 		}
+		result = &Result{Keygen: keygen}
 	case OperationSign:
 		if in.Signature == nil {
 			return nil, "", fmt.Errorf("missing signature result")
 		}
-		result = &sdkprotocol.Result{
-			Signature: cloneResult(in).Signature,
+		sig := in.Signature
+		result = &Result{
+			Signature: &SignResult{
+				KeyID:             sig.KeyID,
+				Signature:         append([]byte(nil), sig.Signature...),
+				SignatureRecovery: append([]byte(nil), sig.SignatureRecovery...),
+				R:                 append([]byte(nil), sig.R...),
+				S:                 append([]byte(nil), sig.S...),
+				SignedInput:       append([]byte(nil), sig.SignedInput...),
+				PublicKey:         append([]byte(nil), sig.PublicKey...),
+			},
 		}
 	default:
 		return nil, "", fmt.Errorf("unsupported operation")
@@ -772,7 +782,7 @@ func (c *Coordinator) GetSession(ctx context.Context, sessionID string) (*Sessio
 	return c.store.Get(ctx, sessionID)
 }
 
-func (c *Coordinator) GetSessionResult(ctx context.Context, sessionID string) (*sdkprotocol.Result, bool) {
+func (c *Coordinator) GetSessionResult(ctx context.Context, sessionID string) (*Result, bool) {
 	session, ok := c.GetSession(ctx, sessionID)
 	if !ok {
 		return nil, false
@@ -789,30 +799,25 @@ func allParticipants(session *Session, predicate func(*ParticipantState) bool) b
 	return true
 }
 
-func canonicalOperationResultHash(op Operation, result *sdkprotocol.Result) string {
+func canonicalSessionResultHash(session *Session, result *sdkprotocol.Result) string {
 	if result == nil {
 		return ""
 	}
-	switch op {
+	if session == nil {
+		return canonicalResultHash(sdkResultToCoordinatorResult(result, sdkprotocol.ProtocolTypeUnspecified))
+	}
+	switch session.Op {
 	case OperationKeygen:
 		if result.KeyShare == nil {
 			return ""
 		}
-		normalized := &sdkprotocol.Result{
-			KeyShare: &sdkprotocol.KeyShareResult{
-				KeyID:       result.KeyShare.KeyID,
-				PublicKey:   append([]byte(nil), result.KeyShare.PublicKey...),
-				ECDSAPubKey: append([]byte(nil), result.KeyShare.ECDSAPubKey...),
-				EDDSAPubKey: append([]byte(nil), result.KeyShare.EDDSAPubKey...),
-			},
-		}
-		return canonicalResultHash(normalized)
+		return canonicalResultHash(&Result{Keygen: sdkKeyShareToCoordinatorKeygen(result.KeyShare, session.Start.Protocol)})
 	default:
-		return canonicalResultHash(result)
+		return canonicalResultHash(sdkResultToCoordinatorResult(result, sdkprotocol.ProtocolTypeUnspecified))
 	}
 }
 
-func canonicalResultHash(result *sdkprotocol.Result) string {
+func canonicalResultHash(result any) string {
 	if result == nil {
 		return ""
 	}
@@ -828,28 +833,61 @@ func keygenWalletID(start *sdkprotocol.SessionStart) string {
 	return start.Keygen.KeyID
 }
 
-func keySharePublicKeyForProtocol(keyShare *sdkprotocol.KeyShareResult, protocol sdkprotocol.ProtocolType) []byte {
+func sdkResultToCoordinatorResult(result *sdkprotocol.Result, protocol sdkprotocol.ProtocolType) *Result {
+	if result == nil {
+		return nil
+	}
+	if result.KeyShare != nil {
+		return &Result{Keygen: sdkKeyShareToCoordinatorKeygen(result.KeyShare, protocol)}
+	}
+	if result.Signature != nil {
+		sig := result.Signature
+		return &Result{
+			Signature: &SignResult{
+				KeyID:             sig.KeyID,
+				Signature:         append([]byte(nil), sig.Signature...),
+				SignatureRecovery: append([]byte(nil), sig.SignatureRecovery...),
+				R:                 append([]byte(nil), sig.R...),
+				S:                 append([]byte(nil), sig.S...),
+				SignedInput:       append([]byte(nil), sig.SignedInput...),
+				PublicKey:         append([]byte(nil), sig.PublicKey...),
+			},
+		}
+	}
+	return &Result{}
+}
+
+func sdkKeyShareToCoordinatorKeygen(keyShare *sdkprotocol.KeyShareResult, protocol sdkprotocol.ProtocolType) *KeygenResult {
 	if keyShare == nil {
+		return nil
+	}
+	keygen := &KeygenResult{KeyID: keyShare.KeyID}
+	switch protocol {
+	case sdkprotocol.ProtocolTypeECDSA:
+		keygen.ECDSAPubKey = append([]byte(nil), keyShare.PublicKey...)
+	case sdkprotocol.ProtocolTypeEdDSA:
+		keygen.EDDSAPubKey = append([]byte(nil), keyShare.PublicKey...)
+	default:
+		keygen.ECDSAPubKey = append([]byte(nil), keyShare.PublicKey...)
+	}
+	return keygen
+}
+
+func keygenPublicKeyForProtocol(keygen *KeygenResult, protocol sdkprotocol.ProtocolType) []byte {
+	if keygen == nil {
 		return nil
 	}
 	switch protocol {
 	case sdkprotocol.ProtocolTypeECDSA:
-		if len(keyShare.ECDSAPubKey) > 0 {
-			return append([]byte(nil), keyShare.ECDSAPubKey...)
-		}
+		return append([]byte(nil), keygen.ECDSAPubKey...)
 	case sdkprotocol.ProtocolTypeEdDSA:
-		if len(keyShare.EDDSAPubKey) > 0 {
-			return append([]byte(nil), keyShare.EDDSAPubKey...)
+		return append([]byte(nil), keygen.EDDSAPubKey...)
+	default:
+		if len(keygen.ECDSAPubKey) > 0 {
+			return append([]byte(nil), keygen.ECDSAPubKey...)
 		}
+		return append([]byte(nil), keygen.EDDSAPubKey...)
 	}
-	return append([]byte(nil), keyShare.PublicKey...)
-}
-
-func keyShareProtocolPubKey(keyShare *sdkprotocol.KeyShareResult, target, sessionProtocol sdkprotocol.ProtocolType) []byte {
-	if keyShare == nil || target != sessionProtocol {
-		return nil
-	}
-	return keySharePublicKeyForProtocol(keyShare, target)
 }
 
 func firstNonEmpty(values ...string) string {

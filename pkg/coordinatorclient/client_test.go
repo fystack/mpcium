@@ -228,20 +228,17 @@ func TestGRPCClientWaitSessionResultMapsKeygenAndSignature(t *testing.T) {
 	r := []byte("r")
 	s := []byte("s")
 	signedInput := []byte("message")
-	publicKey := []byte("public-key")
 	client, cleanup := newTestGRPCClient(t, &fakeCoordinatorServer{
 		results: map[string]*coordinatorv1.SessionResult{
 			"sess_keygen": {
-				Completed:    true,
-				SessionId:    "sess_keygen",
-				KeyId:        "wallet-1",
-				PublicKeyHex: hex.EncodeToString(publicKey),
+				Completed: true,
+				SessionId: "sess_keygen",
+				KeyId:     "wallet-1",
 			},
 			"sess_sign": {
 				Completed:            true,
 				SessionId:            "sess_sign",
 				KeyId:                "wallet-1",
-				PublicKeyHex:         hex.EncodeToString(publicKey),
 				SignatureHex:         hex.EncodeToString(signature),
 				SignatureRecoveryHex: hex.EncodeToString(recovery),
 				RHex:                 hex.EncodeToString(r),
@@ -256,7 +253,7 @@ func TestGRPCClientWaitSessionResultMapsKeygenAndSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if keygenResult.KeyShare == nil || keygenResult.KeyShare.KeyID != "wallet-1" || string(keygenResult.KeyShare.PublicKey) != string(publicKey) {
+	if keygenResult.Keygen == nil || keygenResult.Keygen.KeyID != "wallet-1" {
 		t.Fatalf("unexpected keygen result: %+v", keygenResult)
 	}
 
@@ -264,7 +261,7 @@ func TestGRPCClientWaitSessionResultMapsKeygenAndSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signResult.Signature == nil || string(signResult.Signature.Signature) != string(signature) || string(signResult.Signature.PublicKey) != string(publicKey) {
+	if signResult.Signature == nil || string(signResult.Signature.Signature) != string(signature) {
 		t.Fatalf("unexpected sign result: %+v", signResult)
 	}
 }

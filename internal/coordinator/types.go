@@ -69,7 +69,7 @@ type Session struct {
 	ParticipantState map[string]*ParticipantState      `json:"participant_state"`
 	ExchangeID       string                            `json:"exchange_id,omitempty"`
 	ResultHash       string                            `json:"result_hash,omitempty"`
-	Result           *sdkprotocol.Result               `json:"result,omitempty"`
+	Result           *Result                           `json:"result,omitempty"`
 	ErrorCode        string                            `json:"error_code,omitempty"`
 	ErrorMessage     string                            `json:"error_message,omitempty"`
 	CreatedAt        time.Time                         `json:"created_at"`
@@ -78,4 +78,25 @@ type Session struct {
 	CompletedAt      *time.Time                        `json:"completed_at,omitempty"`
 	ControlSeq       uint64                            `json:"control_seq"`
 	ParticipantKeys  map[string][]byte                 `json:"participant_keys"`
+}
+
+type KeygenResult struct {
+	KeyID       string `json:"key_id"`
+	ECDSAPubKey []byte `json:"ecdsa_pub_key"`
+	EDDSAPubKey []byte `json:"eddsa_pub_key"`
+}
+
+type SignResult struct {
+	KeyID             string `json:"key_id"`
+	Signature         []byte `json:"signature"`
+	SignatureRecovery []byte `json:"signature_recovery"`
+	R                 []byte `json:"r"`
+	S                 []byte `json:"s"`
+	SignedInput       []byte `json:"signed_input"`
+	PublicKey         []byte `json:"public_key"`
+}
+
+type Result struct {
+	Keygen    *KeygenResult `json:"keygen,omitempty"`
+	Signature *SignResult   `json:"signature,omitempty"`
 }
