@@ -14,8 +14,8 @@ import (
 
 func main() {
 	client, err := coordinatorclient.New(coordinatorclient.Config{
-		NATSURL: "nats://127.0.0.1:4222",
-		Timeout: 5 * time.Second,
+		GRPCAddress: "127.0.0.1:50051",
+		Timeout:     5 * time.Second,
 	})
 	if err != nil {
 		log.Fatalf("create coordinator client: %v", err)

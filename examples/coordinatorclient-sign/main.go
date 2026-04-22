@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -14,8 +13,8 @@ import (
 
 func main() {
 	client, err := coordinatorclient.New(coordinatorclient.Config{
-		NATSURL: "nats://127.0.0.1:4222",
-		Timeout: 5 * time.Second,
+		GRPCAddress: "127.0.0.1:50051",
+		Timeout:     5 * time.Second,
 	})
 	if err != nil {
 		log.Fatalf("create coordinator client: %v", err)
@@ -33,7 +32,7 @@ func main() {
 		},
 	}
 
-	walletID := "wallet_f8029c22-a222-4828-b135-8aacc021d716"
+	walletID := "wallet_eb791062-d9b4-4ed0-87a0-793f8f7370d3"
 	message := []byte("deadbeef")
 	protocol := sdkprotocol.ProtocolTypeEdDSA
 
@@ -77,19 +76,4 @@ func mustDecodeHex(value string) []byte {
 		panic(err)
 	}
 	return decoded
-}
-
-func mustPublicKeyFromPrivateHex(privateKeyHex string) []byte {
-	privateRaw := mustDecodeHex(privateKeyHex)
-	var private ed25519.PrivateKey
-	switch len(privateRaw) {
-	case ed25519.PrivateKeySize:
-		private = ed25519.PrivateKey(privateRaw)
-	case ed25519.SeedSize:
-		private = ed25519.NewKeyFromSeed(privateRaw)
-	default:
-		panic(fmt.Sprintf("invalid ed25519 private key length: %d", len(privateRaw)))
-	}
-	public := private.Public().(ed25519.PublicKey)
-	return append([]byte(nil), public...)
 }
