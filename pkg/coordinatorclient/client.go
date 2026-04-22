@@ -338,10 +338,20 @@ func (c *Client) waitSessionResultGRPC(ctx context.Context, sessionID string) (*
 	if err != nil {
 		return nil, err
 	}
+	ecdsaPubKey, err := decodeHexField("ecdsa_pubkey", resp.GetEcdsaPubkey())
+	if err != nil {
+		return nil, err
+	}
+	eddsaPubKey, err := decodeHexField("eddsa_pubkey", resp.GetEddsaPubkey())
+	if err != nil {
+		return nil, err
+	}
 	return &sdkprotocol.Result{
 		KeyShare: &sdkprotocol.KeyShareResult{
-			KeyID:     resp.GetKeyId(),
-			PublicKey: publicKey,
+			KeyID:       resp.GetKeyId(),
+			PublicKey:   publicKey,
+			ECDSAPubKey: ecdsaPubKey,
+			EDDSAPubKey: eddsaPubKey,
 		},
 	}, nil
 }

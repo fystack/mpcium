@@ -180,6 +180,8 @@ func sessionToProtoResult(session *Session) *coordinatorv1.SessionResult {
 	if session.Result.KeyShare != nil {
 		result.KeyId = session.Result.KeyShare.KeyID
 		result.PublicKeyHex = hex.EncodeToString(session.Result.KeyShare.PublicKey)
+		result.EcdsaPubkey = hex.EncodeToString(session.Result.KeyShare.ECDSAPubKey)
+		result.EddsaPubkey = hex.EncodeToString(session.Result.KeyShare.EDDSAPubKey)
 	}
 	if session.Result.Signature != nil {
 		sig := session.Result.Signature
