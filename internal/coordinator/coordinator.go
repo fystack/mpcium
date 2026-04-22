@@ -41,6 +41,11 @@ type dualKeygenCompletion struct {
 	sessionIDs []string
 }
 
+type dualKeygenPlan struct {
+	protocols []sdkprotocol.ProtocolType
+	seeded    map[sdkprotocol.ProtocolType][]byte
+}
+
 func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error) {
 	cfg = applyDefaults(cfg)
 	if err := cfg.Validate(); err != nil {
@@ -72,19 +77,25 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 	}
 	// Backward compatibility: keygen without protocol means dispatch both ECDSA and EdDSA sessions.
 	if op == OperationKeygen && req.SessionStart != nil && isBothKeygenProtocol(req.SessionStart.Protocol) {
-		protocols := []sdkprotocol.ProtocolType{sdkprotocol.ProtocolTypeECDSA, sdkprotocol.ProtocolTypeEdDSA}
-		sessionIDs := make([]string, 0, len(protocols))
+		plan, err := c.planDualKeygen(req.SessionStart)
+		if err != nil {
+			return rejectFromError(err), nil
+		}
+		sessionIDs := make([]string, 0, len(plan.protocols))
 		var firstAccepted *sdkprotocol.RequestAccepted
 		var firstErr error
 
-		for _, protocol := range protocols {
+		for _, protocol := range plan.protocols {
 			cloned := cloneSessionStart(req.SessionStart)
 			cloned.Protocol = protocol
 			accepted, err := c.acceptRequest(ctx, op, &sdkprotocol.ControlMessage{SessionStart: cloned})
 			if err != nil {
 				var coordErr *CoordinatorError
 				if AsCoordinatorError(err, &coordErr) && coordErr.Code == ErrorCodeConflict {
-					// Allow fanout to continue: one protocol might already exist while the other doesn't.
+					if seed, seedErr := c.existingDualKeygenSeed(req.SessionStart, protocol); seedErr == nil && len(seed) > 0 {
+						plan.seeded[protocol] = seed
+						continue
+					}
 					if firstErr == nil {
 						firstErr = err
 					}
@@ -103,7 +114,7 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 			}
 			return reject(ErrorCodeConflict, "no keygen sessions created"), nil
 		}
-		c.registerDualKeygen(sessionIDs)
+		c.registerDualKeygen(sessionIDs, plan.seeded)
 
 		logger.Info("coordinator expanded keygen request to both protocols",
 			"operation", string(op),
@@ -117,6 +128,52 @@ func (c *Coordinator) HandleRequest(ctx context.Context, op Operation, raw []byt
 		return rejectFromError(err), nil
 	}
 	return json.Marshal(accepted)
+}
+
+func (c *Coordinator) planDualKeygen(start *sdkprotocol.SessionStart) (*dualKeygenPlan, error) {
+	protocols := []sdkprotocol.ProtocolType{sdkprotocol.ProtocolTypeECDSA, sdkprotocol.ProtocolTypeEdDSA}
+	plan := &dualKeygenPlan{
+		protocols: make([]sdkprotocol.ProtocolType, 0, len(protocols)),
+		seeded:    make(map[sdkprotocol.ProtocolType][]byte, len(protocols)),
+	}
+	if c.keyInfoStore == nil {
+		plan.protocols = append(plan.protocols, protocols...)
+		return plan, nil
+	}
+
+	for _, protocol := range protocols {
+		seed, err := c.existingDualKeygenSeed(start, protocol)
+		if err != nil {
+			return nil, err
+		}
+		if len(seed) > 0 {
+			plan.seeded[protocol] = seed
+			continue
+		}
+		plan.protocols = append(plan.protocols, protocol)
+	}
+	if len(plan.protocols) == 0 {
+		return nil, newCoordinatorError(ErrorCodeConflict, "wallet keys already exist")
+	}
+	return plan, nil
+}
+
+func (c *Coordinator) existingDualKeygenSeed(start *sdkprotocol.SessionStart, protocol sdkprotocol.ProtocolType) ([]byte, error) {
+	if c.keyInfoStore == nil {
+		return nil, nil
+	}
+	walletID := keygenWalletID(start)
+	if walletID == "" {
+		return nil, newCoordinatorError(ErrorCodeValidation, "wallet_id is required")
+	}
+	info, exists := c.keyInfoStore.Get(walletID, string(protocol))
+	if !exists {
+		return nil, nil
+	}
+	if len(info.PublicKey) == 0 {
+		return nil, newCoordinatorError(ErrorCodeConflict, "wallet key already exists without public key")
+	}
+	return append([]byte(nil), info.PublicKey...), nil
 }
 
 func (c *Coordinator) acceptRequest(ctx context.Context, op Operation, req *sdkprotocol.ControlMessage) (*sdkprotocol.RequestAccepted, error) {
@@ -246,6 +303,14 @@ func (c *Coordinator) HandleSessionEvent(ctx context.Context, raw []byte) error 
 	session.UpdatedAt = c.now()
 	if err := c.advance(ctx, session, &event); err != nil {
 		return err
+	}
+	if latest, ok := c.store.Get(ctx, session.ID); ok && latest.State.Terminal() {
+		logger.Debug("coordinator processed terminal session event",
+			"session_id", latest.ID,
+			"participant_id", event.ParticipantID,
+			"state", string(latest.State),
+		)
+		return nil
 	}
 	logger.Debug("coordinator processed session event",
 		"session_id", session.ID,
@@ -440,13 +505,19 @@ func (c *Coordinator) persistKeyInfoIfNeeded(session *Session, result *sdkprotoc
 	return nil
 }
 
-func (c *Coordinator) registerDualKeygen(sessionIDs []string) {
+func (c *Coordinator) registerDualKeygen(sessionIDs []string, seeded map[sdkprotocol.ProtocolType][]byte) {
 	if c == nil || len(sessionIDs) == 0 {
 		return
 	}
 	group := &dualKeygenGroup{
 		sessionIDs: make(map[sdkprotocol.ProtocolType]string, len(sessionIDs)),
 		results:    make(map[sdkprotocol.ProtocolType][]byte, len(sessionIDs)),
+	}
+	for protocol, publicKey := range seeded {
+		if len(publicKey) == 0 {
+			continue
+		}
+		group.results[protocol] = append([]byte(nil), publicKey...)
 	}
 	for _, sessionID := range sessionIDs {
 		session, ok := c.store.Get(context.Background(), sessionID)
@@ -485,6 +556,7 @@ func (c *Coordinator) recordDualKeygenResult(session *Session, result *sdkprotoc
 	aggregate := &sdkprotocol.Result{
 		KeyShare: &sdkprotocol.KeyShareResult{
 			KeyID:       walletID,
+			PublicKey:   append([]byte(nil), ecdsaPubKey...),
 			ECDSAPubKey: append([]byte(nil), ecdsaPubKey...),
 			EDDSAPubKey: append([]byte(nil), eddsaPubKey...),
 		},

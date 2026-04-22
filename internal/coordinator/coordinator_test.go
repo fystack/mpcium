@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
 
+	coordinatorv1 "github.com/fystack/mpcium-sdk/integrations/coordinator-grpc/proto/coordinator/v1"
 	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
+	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 )
 
 type fakeSigner struct{}
@@ -311,6 +315,15 @@ func TestHandleRequestKeygenWithoutProtocolCreatesBothSessions(t *testing.T) {
 	if !seenProtocols[sdkprotocol.ProtocolTypeECDSA] || !seenProtocols[sdkprotocol.ProtocolTypeEdDSA] {
 		t.Fatalf("expected both ECDSA and EdDSA sessions, got %+v", seenProtocols)
 	}
+
+	sessionsByProtocol := map[sdkprotocol.ProtocolType]string{}
+	for _, session := range active {
+		sessionsByProtocol[session.Start.Protocol] = session.ID
+	}
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeECDSA], "wallet_dual_protocol", []byte("ecdsa-pub"))
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_dual_protocol", []byte("eddsa-pub"))
+
+	assertDualKeygenResult(t, coord, accepted.SessionID, "wallet_dual_protocol", []byte("ecdsa-pub"), []byte("eddsa-pub"))
 }
 
 func TestHandleRequestKeygenBothCreatesBothSessions(t *testing.T) {
@@ -348,6 +361,15 @@ func TestHandleRequestKeygenBothCreatesBothSessions(t *testing.T) {
 	if len(active) != 2 {
 		t.Fatalf("expected 2 active sessions, got %d", len(active))
 	}
+
+	sessionsByProtocol := map[sdkprotocol.ProtocolType]string{}
+	for _, session := range active {
+		sessionsByProtocol[session.Start.Protocol] = session.ID
+	}
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeECDSA], "wallet_explicit_both", []byte("ecdsa-pub"))
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_explicit_both", []byte("eddsa-pub"))
+
+	assertDualKeygenResult(t, coord, accepted.SessionID, "wallet_explicit_both", []byte("ecdsa-pub"), []byte("eddsa-pub"))
 }
 
 func TestKeygenBothPublishesAggregatedPubKeys(t *testing.T) {
@@ -393,11 +415,295 @@ func TestKeygenBothPublishesAggregatedPubKeys(t *testing.T) {
 	if published == nil || published.KeyShare == nil {
 		t.Fatalf("missing published dual keygen result")
 	}
+	if string(published.KeyShare.PublicKey) != "ecdsa-pub" {
+		t.Fatalf("public_key = %q", string(published.KeyShare.PublicKey))
+	}
 	if string(published.KeyShare.ECDSAPubKey) != "ecdsa-pub" {
 		t.Fatalf("ecdsa_pubkey = %q", string(published.KeyShare.ECDSAPubKey))
 	}
 	if string(published.KeyShare.EDDSAPubKey) != "eddsa-pub" {
 		t.Fatalf("eddsa_pubkey = %q", string(published.KeyShare.EDDSAPubKey))
+	}
+	session, ok := coord.store.Get(ctx, accepted.SessionID)
+	if !ok {
+		t.Fatalf("missing accepted session")
+	}
+	grpcResult := sessionToProtoResult(session)
+	if grpcResult.GetPublicKeyHex() != hex.EncodeToString([]byte("ecdsa-pub")) {
+		t.Fatalf("grpc public_key_hex = %q", grpcResult.GetPublicKeyHex())
+	}
+}
+
+func TestHandleRequestKeygenBothWithExistingProtocolSeedsAggregatedResult(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+	coord.keyInfoStore.Save(KeyInfo{
+		WalletID:  "wallet_seeded_both",
+		KeyType:   string(sdkprotocol.ProtocolTypeECDSA),
+		PublicKey: []byte("existing-ecdsa-pub"),
+	})
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolType("both"),
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_seeded_both"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted.Accepted {
+		t.Fatalf("expected request accepted")
+	}
+
+	active := coord.store.ListActive(ctx)
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active session, got %d", len(active))
+	}
+	if active[0].Start.Protocol != sdkprotocol.ProtocolTypeEdDSA {
+		t.Fatalf("expected missing EdDSA session, got %s", active[0].Start.Protocol)
+	}
+	completeKeygenSession(t, coord, fixtures, active[0].ID, "wallet_seeded_both", []byte("eddsa-pub"))
+
+	assertDualKeygenResult(t, coord, accepted.SessionID, "wallet_seeded_both", []byte("existing-ecdsa-pub"), []byte("eddsa-pub"))
+}
+
+func TestHandleRequestKeygenBothRejectsWhenBothProtocolsExist(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+	coord.keyInfoStore.Save(KeyInfo{WalletID: "wallet_existing_both", KeyType: string(sdkprotocol.ProtocolTypeECDSA), PublicKey: []byte("ecdsa-pub")})
+	coord.keyInfoStore.Save(KeyInfo{WalletID: "wallet_existing_both", KeyType: string(sdkprotocol.ProtocolTypeEdDSA), PublicKey: []byte("eddsa-pub")})
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolType("both"),
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_existing_both"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected sdkprotocol.RequestRejected
+	if err := json.Unmarshal(rawReply, &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Accepted {
+		t.Fatalf("expected request rejected")
+	}
+	if rejected.ErrorCode != ErrorCodeConflict {
+		t.Fatalf("error code = %s, want %s", rejected.ErrorCode, ErrorCodeConflict)
+	}
+}
+
+func TestHandleRequestKeygenBothRejectsExistingProtocolWithoutPublicKey(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+	coord.keyInfoStore.Save(KeyInfo{WalletID: "wallet_empty_existing", KeyType: string(sdkprotocol.ProtocolTypeECDSA)})
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolType("both"),
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_empty_existing"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected sdkprotocol.RequestRejected
+	if err := json.Unmarshal(rawReply, &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Accepted {
+		t.Fatalf("expected request rejected")
+	}
+	if rejected.ErrorCode != ErrorCodeConflict {
+		t.Fatalf("error code = %s, want %s", rejected.ErrorCode, ErrorCodeConflict)
+	}
+	if len(coord.store.ListActive(ctx)) != 0 {
+		t.Fatalf("expected no sessions to be created")
+	}
+}
+
+func TestGRPCKeygenEmptyProtocolReturnsAggregatedResult(t *testing.T) {
+	testGRPCDualKeygenReturnsAggregatedResult(t, "")
+}
+
+func TestGRPCKeygenBothProtocolReturnsAggregatedResult(t *testing.T) {
+	testGRPCDualKeygenReturnsAggregatedResult(t, "both")
+}
+
+func testGRPCDualKeygenReturnsAggregatedResult(t *testing.T, protocol string) {
+	t.Helper()
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+	server := NewOrchestrationGRPCServer(coord, time.Millisecond)
+
+	accepted, err := server.Keygen(ctx, &coordinatorv1.KeygenRequest{
+		Protocol:     protocol,
+		Threshold:    1,
+		WalletId:     "wallet_grpc_dual_" + protocol,
+		Participants: grpcParticipants(fixtures),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted.GetAccepted() || accepted.GetSessionId() == "" {
+		t.Fatalf("unexpected accepted response: %+v", accepted)
+	}
+
+	sessionsByProtocol := map[sdkprotocol.ProtocolType]string{}
+	for _, session := range coord.store.ListActive(ctx) {
+		sessionsByProtocol[session.Start.Protocol] = session.ID
+	}
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeECDSA], "wallet_grpc_dual_"+protocol, []byte("grpc-ecdsa-pub"))
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_grpc_dual_"+protocol, []byte("grpc-eddsa-pub"))
+
+	resultCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	result, err := server.WaitSessionResult(resultCtx, &coordinatorv1.SessionLookup{SessionId: accepted.GetSessionId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.GetCompleted() {
+		t.Fatalf("expected completed result: %+v", result)
+	}
+	if result.GetPublicKeyHex() != hex.EncodeToString([]byte("grpc-ecdsa-pub")) {
+		t.Fatalf("public_key_hex = %q", result.GetPublicKeyHex())
+	}
+	if result.GetEcdsaPubkey() != hex.EncodeToString([]byte("grpc-ecdsa-pub")) {
+		t.Fatalf("ecdsa_pubkey = %q", result.GetEcdsaPubkey())
+	}
+	if result.GetEddsaPubkey() != hex.EncodeToString([]byte("grpc-eddsa-pub")) {
+		t.Fatalf("eddsa_pubkey = %q", result.GetEddsaPubkey())
+	}
+}
+
+func TestNATSRuntimeKeygenEmptyAndBothProtocolsPublishAggregatedResult(t *testing.T) {
+	for _, protocol := range []sdkprotocol.ProtocolType{"", sdkprotocol.ProtocolType("both")} {
+		t.Run("protocol_"+string(protocol), func(t *testing.T) {
+			ctx := context.Background()
+			coord, _, _, fixtures := newTestCoordinator(t)
+			markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+			markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+			natsServer := startTestNATSServer(t)
+			nc, err := nats.Connect(natsServer.ClientURL())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer nc.Close()
+			defer natsServer.Shutdown()
+
+			coord.controls = NewNATSControlPublisher(nc)
+			coord.results = NewNATSResultPublisher(nc)
+			runtime := NewNATSRuntime(nc, coord, coord.presence)
+			if err := runtime.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer runtime.Stop()
+
+			req := &sdkprotocol.ControlMessage{
+				SessionStart: &sdkprotocol.SessionStart{
+					SessionID: "client-supplied",
+					Protocol:  protocol,
+					Operation: sdkprotocol.OperationTypeKeygen,
+					Threshold: 1,
+					Participants: []*sdkprotocol.SessionParticipant{
+						{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+						{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+					},
+					Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_nats_dual_" + string(protocol)},
+				},
+			}
+
+			replyMsg, err := nc.RequestWithContext(ctx, RequestSubject(OperationKeygen), mustJSON(t, req))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var accepted sdkprotocol.RequestAccepted
+			if err := json.Unmarshal(replyMsg.Data, &accepted); err != nil {
+				t.Fatal(err)
+			}
+			if !accepted.Accepted || accepted.SessionID == "" {
+				t.Fatalf("unexpected accepted response: %+v", accepted)
+			}
+
+			resultSub, err := nc.SubscribeSync(SessionResultSubject(accepted.SessionID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resultSub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatal(err)
+			}
+
+			sessionsByProtocol := map[sdkprotocol.ProtocolType]string{}
+			for _, session := range coord.store.ListActive(ctx) {
+				sessionsByProtocol[session.Start.Protocol] = session.ID
+			}
+			completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeECDSA], "wallet_nats_dual_"+string(protocol), []byte("nats-ecdsa-pub"))
+			completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_nats_dual_"+string(protocol), []byte("nats-eddsa-pub"))
+
+			resultMsg, err := resultSub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result sdkprotocol.Result
+			if err := json.Unmarshal(resultMsg.Data, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.KeyShare == nil {
+				t.Fatalf("missing key share result")
+			}
+			if string(result.KeyShare.PublicKey) != "nats-ecdsa-pub" {
+				t.Fatalf("public_key = %q", string(result.KeyShare.PublicKey))
+			}
+			if string(result.KeyShare.ECDSAPubKey) != "nats-ecdsa-pub" {
+				t.Fatalf("ecdsa_pubkey = %q", string(result.KeyShare.ECDSAPubKey))
+			}
+			if string(result.KeyShare.EDDSAPubKey) != "nats-eddsa-pub" {
+				t.Fatalf("eddsa_pubkey = %q", string(result.KeyShare.EDDSAPubKey))
+			}
+		})
 	}
 }
 
@@ -579,6 +885,59 @@ func completeKeygenSession(t *testing.T, coord *Coordinator, keys map[string]par
 	for _, participant := range []string{"p1", "p2"} {
 		emitSignedEvent(t, coord, sessionID, keys, participant, &sdkprotocol.SessionEvent{SessionCompleted: &sdkprotocol.SessionCompleted{Result: result}})
 	}
+}
+
+func assertDualKeygenResult(t *testing.T, coord *Coordinator, sessionID, walletID string, ecdsaPubKey, eddsaPubKey []byte) {
+	t.Helper()
+	session, ok := coord.store.Get(context.Background(), sessionID)
+	if !ok {
+		t.Fatalf("missing session %s", sessionID)
+	}
+	if session.State != SessionCompleted {
+		t.Fatalf("session state = %s, want %s", session.State, SessionCompleted)
+	}
+	if session.Result == nil || session.Result.KeyShare == nil {
+		t.Fatalf("missing key share result")
+	}
+	keyShare := session.Result.KeyShare
+	if keyShare.KeyID != walletID {
+		t.Fatalf("key_id = %q, want %q", keyShare.KeyID, walletID)
+	}
+	if string(keyShare.PublicKey) != string(ecdsaPubKey) {
+		t.Fatalf("public_key = %q", string(keyShare.PublicKey))
+	}
+	if string(keyShare.ECDSAPubKey) != string(ecdsaPubKey) {
+		t.Fatalf("ecdsa_pubkey = %q", string(keyShare.ECDSAPubKey))
+	}
+	if string(keyShare.EDDSAPubKey) != string(eddsaPubKey) {
+		t.Fatalf("eddsa_pubkey = %q", string(keyShare.EDDSAPubKey))
+	}
+}
+
+func grpcParticipants(keys map[string]participantKey) []*coordinatorv1.Participant {
+	return []*coordinatorv1.Participant{
+		{Id: "p1", IdentityPublicKeyHex: hex.EncodeToString(keys["p1"].pub)},
+		{Id: "p2", IdentityPublicKeyHex: hex.EncodeToString(keys["p2"].pub)},
+	}
+}
+
+func startTestNATSServer(t *testing.T) *natsserver.Server {
+	t.Helper()
+	server, err := natsserver.NewServer(&natsserver.Options{
+		Host:   "127.0.0.1",
+		Port:   -1,
+		NoLog:  true,
+		NoSigs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.Start()
+	if !server.ReadyForConnections(5 * time.Second) {
+		server.Shutdown()
+		t.Fatal("nats server did not become ready")
+	}
+	return server
 }
 
 func markOnline(t *testing.T, presence PresenceView, _ ed25519.PublicKey, participantID string) {
