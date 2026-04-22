@@ -7,15 +7,14 @@ import (
 	"log"
 	"time"
 
-	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/coordinatorclient"
 	"github.com/google/uuid"
 )
 
 func main() {
 	client, err := coordinatorclient.New(coordinatorclient.Config{
-		GRPCAddress: "127.0.0.1:50051",
-		Timeout:     5 * time.Second,
+		NATSURL: "nats://127.0.0.1:4222",
+		Timeout: 5 * time.Second,
 	})
 	if err != nil {
 		log.Fatalf("create coordinator client: %v", err)
@@ -31,15 +30,10 @@ func main() {
 			ID:                "peer-node-02",
 			IdentityPublicKey: mustDecodeHex("d9034dd84e0dd10a57d6a09a8267b217051d5f121ff52fca66c2b485be16ae02"),
 		},
-		{
-			ID:                "mobile-sample-01",
-			IdentityPublicKey: mustDecodeHex("0c67697e3142c1c87dd8fa034fdfece14fc8ba00145bc0f123d6cd8bd33640e2"),
-		},
 	}
 
 	walletID := "wallet_" + uuid.New().String()
-	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeECDSA)
-	runKeygenForProtocol(client, participants, walletID, sdkprotocol.ProtocolTypeEdDSA)
+	runKeygen(client, participants, walletID)
 }
 
 func mustDecodeHex(value string) []byte {
@@ -50,17 +44,16 @@ func mustDecodeHex(value string) []byte {
 	return decoded
 }
 
-func runKeygenForProtocol(client *coordinatorclient.Client, participants []coordinatorclient.KeygenParticipant, walletID string, protocol sdkprotocol.ProtocolType) {
+func runKeygen(client *coordinatorclient.Client, participants []coordinatorclient.KeygenParticipant, walletID string) {
 	requestCtx, cancelRequest := context.WithTimeout(context.Background(), 10*time.Second)
 	resp, err := client.RequestKeygen(requestCtx, coordinatorclient.KeygenRequest{
-		Protocol:     protocol,
 		Threshold:    1,
 		WalletID:     walletID,
 		Participants: participants,
 	})
 	cancelRequest()
 	if err != nil {
-		log.Fatalf("request keygen (%s): %v (verify both cosigners are online and publishing real presence)", protocol, err)
+		log.Fatalf("request keygen: %v (verify both cosigners are online and publishing real presence)", err)
 	}
 	acceptedAt := time.Now()
 
@@ -68,14 +61,19 @@ func runKeygenForProtocol(client *coordinatorclient.Client, participants []coord
 	result, err := client.WaitSessionResult(resultCtx, resp.SessionID)
 	cancelResult()
 	if err != nil {
-		log.Fatalf("wait session result (%s): %v (check both cosigners are running and session events are flowing)", protocol, err)
+		log.Fatalf("wait session result: %v (check both cosigners are running and session events are flowing)", err)
 	}
-	if result == nil {
-		fmt.Printf("protocol=%s session_id=%s result=empty wait_seconds=%.3f\n", protocol, resp.SessionID, time.Since(acceptedAt).Seconds())
+	if result == nil || result.KeyShare == nil {
+		fmt.Printf("session_id=%s result=empty wait_seconds=%.3f\n", resp.SessionID, time.Since(acceptedAt).Seconds())
 		return
 	}
-	fmt.Printf("protocol=%s key_id=%s session_id=%s wait_seconds=%.3f\n", protocol, result.KeyShare.KeyID, resp.SessionID, time.Since(acceptedAt).Seconds())
-	if result.KeyShare != nil {
-		fmt.Printf("public_key_hex=%s\n", hex.EncodeToString(result.KeyShare.PublicKey))
+
+	fmt.Printf("key_id=%s session_id=%s wait_seconds=%.3f\n", result.KeyShare.KeyID, resp.SessionID, time.Since(acceptedAt).Seconds())
+	fmt.Printf("public_key_hex=%s\n", hex.EncodeToString(result.KeyShare.PublicKey))
+	if len(result.KeyShare.ECDSAPubKey) > 0 {
+		fmt.Printf("ecdsa_pubkey_hex=%s\n", hex.EncodeToString(result.KeyShare.ECDSAPubKey))
+	}
+	if len(result.KeyShare.EDDSAPubKey) > 0 {
+		fmt.Printf("eddsa_pubkey_hex=%s\n", hex.EncodeToString(result.KeyShare.EDDSAPubKey))
 	}
 }

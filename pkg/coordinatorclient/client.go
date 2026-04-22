@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	coordinatorv1 "github.com/fystack/mpcium-sdk/integrations/coordinator-grpc/proto/coordinator/v1"
@@ -226,10 +227,11 @@ func (c *Client) requestSessionNATS(ctx context.Context, subject string, msg *sd
 }
 
 func normalizeProtocol(protocol sdkprotocol.ProtocolType) sdkprotocol.ProtocolType {
-	if string(protocol) == "" {
+	value := strings.TrimSpace(string(protocol))
+	if value == "" {
 		return sdkprotocol.ProtocolTypeUnspecified
 	}
-	return protocol
+	return sdkprotocol.ProtocolType(value)
 }
 
 func (c *Client) WaitSessionResult(ctx context.Context, sessionID string) (*sdkprotocol.Result, error) {
@@ -271,7 +273,7 @@ func (c *Client) WaitSessionResult(ctx context.Context, sessionID string) (*sdkp
 
 func (c *Client) requestKeygenGRPC(ctx context.Context, req KeygenRequest) (*sdkprotocol.RequestAccepted, error) {
 	grpcReq := &coordinatorv1.KeygenRequest{
-		Protocol:     string(req.Protocol),
+		Protocol:     string(normalizeProtocol(req.Protocol)),
 		Threshold:    req.Threshold,
 		WalletId:     req.WalletID,
 		Participants: mapParticipantsToProto(req.Participants),

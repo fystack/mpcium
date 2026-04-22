@@ -3,6 +3,7 @@ package coordinatorclient
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 
 	coordinatorv1 "github.com/fystack/mpcium-sdk/integrations/coordinator-grpc/proto/coordinator/v1"
 	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
+	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -22,9 +25,13 @@ type fakeCoordinatorServer struct {
 	keygenResp *coordinatorv1.RequestAccepted
 	signResp   *coordinatorv1.RequestAccepted
 	results    map[string]*coordinatorv1.SessionResult
+	keygenReqs []*coordinatorv1.KeygenRequest
 }
 
-func (s *fakeCoordinatorServer) Keygen(context.Context, *coordinatorv1.KeygenRequest) (*coordinatorv1.RequestAccepted, error) {
+func (s *fakeCoordinatorServer) Keygen(_ context.Context, req *coordinatorv1.KeygenRequest) (*coordinatorv1.RequestAccepted, error) {
+	cloned := *req
+	cloned.Participants = append([]*coordinatorv1.Participant(nil), req.GetParticipants()...)
+	s.keygenReqs = append(s.keygenReqs, &cloned)
 	if s.keygenResp != nil {
 		return s.keygenResp, nil
 	}
@@ -125,6 +132,96 @@ func TestGRPCClientRequestKeygenAndSignResponses(t *testing.T) {
 	}
 }
 
+func TestGRPCClientRequestKeygenNormalizesProtocol(t *testing.T) {
+	fake := &fakeCoordinatorServer{}
+	client, cleanup := newTestGRPCClient(t, fake)
+	defer cleanup()
+
+	for _, protocol := range []sdkprotocol.ProtocolType{"", sdkprotocol.ProtocolType(" both ")} {
+		_, err := client.RequestKeygen(context.Background(), KeygenRequest{
+			Protocol:  protocol,
+			Threshold: 1,
+			WalletID:  "wallet-1",
+			Participants: []KeygenParticipant{
+				{ID: "p1", IdentityPublicKey: []byte("pub-1")},
+				{ID: "p2", IdentityPublicKey: []byte("pub-2")},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(fake.keygenReqs) != 2 {
+		t.Fatalf("keygen request count = %d, want 2", len(fake.keygenReqs))
+	}
+	if fake.keygenReqs[0].GetProtocol() != string(sdkprotocol.ProtocolTypeUnspecified) {
+		t.Fatalf("empty protocol sent as %q", fake.keygenReqs[0].GetProtocol())
+	}
+	if fake.keygenReqs[1].GetProtocol() != "both" {
+		t.Fatalf("both protocol sent as %q", fake.keygenReqs[1].GetProtocol())
+	}
+}
+
+func TestNATSClientRequestKeygenNormalizesProtocol(t *testing.T) {
+	server := startTestNATSServer(t)
+	defer server.Shutdown()
+
+	responder, err := nats.Connect(server.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer responder.Close()
+
+	seenProtocols := make(chan sdkprotocol.ProtocolType, 2)
+	sub, err := responder.Subscribe(requestKeygenSubject, func(msg *nats.Msg) {
+		var control sdkprotocol.ControlMessage
+		if err := json.Unmarshal(msg.Data, &control); err != nil {
+			t.Errorf("unmarshal keygen request: %v", err)
+			_ = msg.Respond(mustJSON(t, &sdkprotocol.RequestRejected{Accepted: false, ErrorCode: "decode", ErrorMessage: err.Error()}))
+			return
+		}
+		seenProtocols <- control.SessionStart.Protocol
+		_ = msg.Respond(mustJSON(t, &sdkprotocol.RequestAccepted{Accepted: true, SessionID: "sess_keygen", ExpiresAt: "2026-04-22T10:00:00Z"}))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+	if err := responder.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	clientConn, err := nats.Connect(server.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{nc: clientConn, timeout: time.Second, transport: transportNATS}
+	defer client.Close()
+
+	for _, protocol := range []sdkprotocol.ProtocolType{"", sdkprotocol.ProtocolType(" both ")} {
+		_, err := client.RequestKeygen(context.Background(), KeygenRequest{
+			Protocol:  protocol,
+			Threshold: 1,
+			WalletID:  "wallet-1",
+			Participants: []KeygenParticipant{
+				{ID: "p1", IdentityPublicKey: []byte("pub-1")},
+				{ID: "p2", IdentityPublicKey: []byte("pub-2")},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := <-seenProtocols; got != sdkprotocol.ProtocolTypeUnspecified {
+		t.Fatalf("empty protocol sent as %q", got)
+	}
+	if got := <-seenProtocols; got != sdkprotocol.ProtocolType("both") {
+		t.Fatalf("both protocol sent as %q", got)
+	}
+}
+
 func TestGRPCClientWaitSessionResultMapsKeygenAndSignature(t *testing.T) {
 	signature := []byte("signature")
 	recovery := []byte("recovery")
@@ -170,4 +267,32 @@ func TestGRPCClientWaitSessionResultMapsKeygenAndSignature(t *testing.T) {
 	if signResult.Signature == nil || string(signResult.Signature.Signature) != string(signature) || string(signResult.Signature.PublicKey) != string(publicKey) {
 		t.Fatalf("unexpected sign result: %+v", signResult)
 	}
+}
+
+func startTestNATSServer(t *testing.T) *natsserver.Server {
+	t.Helper()
+	server, err := natsserver.NewServer(&natsserver.Options{
+		Host:   "127.0.0.1",
+		Port:   -1,
+		NoLog:  true,
+		NoSigs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.Start()
+	if !server.ReadyForConnections(5 * time.Second) {
+		server.Shutdown()
+		t.Fatal("nats server did not become ready")
+	}
+	return server
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
