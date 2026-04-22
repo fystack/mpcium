@@ -5,33 +5,28 @@ This runtime implements the v1 control-plane coordinator from `docs/architecture
 It owns:
 
 - NATS request-reply intake on `mpc.v1.request.keygen`, `mpc.v1.request.sign`, and `mpc.v1.request.reshare`
+- optional plaintext gRPC client orchestration API for `Keygen`, `Sign`, and `WaitSessionResult`
 - pinned participant validation
 - session lifecycle state
 - signed control fan-out to `mpc.v1.peer.<peerId>.control`
 - participant event intake from `mpc.v1.session.<sessionId>.event`
 - terminal result publishing to `mpc.v1.session.<sessionId>.result`
 
-It does not implement relay, MQTT mailboxing, p2p MPC packet routing, or legacy `mpc.*` subjects.
+It does not implement relay, MQTT mailboxing, p2p MPC packet routing, gRPC participant transport, or legacy `mpc.*` subjects. NATS is still required for cosigner presence, control fan-out, participant session events, and result publishing.
 
 ## Run
 
 ```sh
-go run ./cmd/mpcium-coordinator \
-  --nats-url nats://127.0.0.1:4222 \
-  --coordinator-id coordinator-01 \
-  --coordinator-private-key-hex <ed25519-private-key-hex> \
-  --snapshot-dir ./coordinator-snapshots \
-  --relay-available=true
+go run ./cmd/mpcium-coordinator/main.go -c coordinator.config.yaml
 ```
 
-The same settings can be provided through environment variables:
+The runtime config includes:
 
-- `NATS_URL`
-- `COORDINATOR_ID`
-- `COORDINATOR_PRIVATE_KEY_HEX`
-- `COORDINATOR_SNAPSHOT_DIR`
-- `COORDINATOR_RELAY_AVAILABLE`
-- `COORDINATOR_TICK_INTERVAL`
+- `nats.url`: NATS server used for participant transport.
+- `grpc.enabled`: enables the client orchestration API.
+- `grpc.listen_addr`: plaintext gRPC listen address.
+- `grpc.poll_interval`: result wait polling interval.
+- `coordinator.id`, `coordinator.private_key_hex`, and `coordinator.snapshot_dir`.
 
 Each operation has its own request shape. The operation comes from the NATS subject, so a sign request to `mpc.v1.request.sign` looks like:
 

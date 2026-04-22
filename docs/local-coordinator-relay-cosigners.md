@@ -133,7 +133,7 @@ Open one terminal per process.
 go run ./cmd/mpcium-coordinator/main.go -c coordinator.config.yaml
 ```
 
-Expected logs include coordinator request, presence, and session event subscriptions.
+Expected logs include coordinator request, presence, and session event subscriptions. If `grpc.enabled` is true, the coordinator also listens on `grpc.listen_addr` for the plaintext client orchestration API. NATS is still required for cosigner control messages, presence, session events, and result publishing.
 
 ### 2. Relay
 
@@ -196,6 +196,8 @@ After both cosigners are online, run:
 ```sh
 go run ./examples/coordinatorclient-keygen
 ```
+
+The example submits `Keygen` over gRPC and waits for the terminal result over gRPC. The actual participant session still flows through NATS/relay transport.
 
 Expected output:
 
