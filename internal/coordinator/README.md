@@ -4,7 +4,7 @@ This package implements the control-plane coordinator for the new MPC runtime.
 
 It is responsible for:
 
-- request intake on versioned subjects (`keygen`, `sign`, `reshare`)
+- request intake through NATS subjects or the gRPC client orchestration API (`keygen`, `sign`, `reshare`)
 - session creation and lifecycle state transitions
 - participant readiness and key exchange gating
 - control message fan-out to participants
@@ -24,6 +24,7 @@ It is not responsible for:
    - `mpc.v1.request.keygen`
    - `mpc.v1.request.sign`
    - `mpc.v1.request.reshare`
+   or over the gRPC `CoordinatorOrchestration` service for client orchestration.
 2. Validate request shape and participant constraints.
 3. Create a new `session_id` and initial session state.
 4. Fan out `session.start` control messages to each selected participant.
@@ -36,6 +37,8 @@ It is not responsible for:
   core orchestration logic and state machine.
 - `NATSRuntime`:
   wiring from subjects to coordinator handlers.
+- `GRPCRuntime`:
+  optional plaintext client API for submitting keygen/sign requests and waiting for terminal session results.
 - `MemorySessionStore`:
   in-memory session state.
 - `AtomicFileSnapshotStore`:
@@ -44,6 +47,8 @@ It is not responsible for:
   online/offline view used during request validation.
 - `NATSControlPublisher` / `NATSResultPublisher`:
   delivery adapters for control and result messages.
+
+The gRPC API is client-facing only. Participant control fan-out, participant session events, presence, and result publishing still use NATS/relay transport.
 
 ## Request Models
 

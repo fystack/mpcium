@@ -1,8 +1,12 @@
 nats:
   url: nats://127.0.0.1:4222
 
+grpc:
+  enabled: true
+  listen_addr: 127.0.0.1:50051
+  poll_interval: 200ms
+
 coordinator:
   id: coordinator-01
   private_key_hex: "86ed171146e6003841f1686c0958b68ae84f9992974c2c6febfb9df7f424b3adb64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
   snapshot_dir: coordinator-snapshots
-  relay_available: true

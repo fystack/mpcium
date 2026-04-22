@@ -18,7 +18,7 @@ import (
 const coordinatorConfigPath = "coordinator.config.yaml"
 
 func main() {
-	logger.Init(os.Getenv("ENVIRONMENT"), true)
+	logger.Init(os.Getenv("ENVIRONMENT"), false)
 
 	cmd := &cli.Command{
 		Name:  "mpcium-coordinator",
@@ -92,22 +92,35 @@ func run(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	runtime := coordinator.NewNATSRuntime(nc, coord, presence)
-	if err := runtime.Start(ctx); err != nil {
-		return err
+	natsRuntime := coordinator.NewNATSRuntime(nc, coord, presence)
+	composite := coordinator.NewCompositeRuntime(natsRuntime)
+	if cfg.GRPCEnabled {
+		composite = coordinator.NewCompositeRuntime(
+			natsRuntime,
+			coordinator.NewGRPCRuntime(cfg.GRPCListenAddr, coord, cfg.GRPCPollInterval),
+		)
 	}
 
-	return runTickLoop(ctx, runtime, coord, cfg.TickInterval)
+	if err := composite.Start(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		if err := composite.Stop(); err != nil {
+			logger.Error("stop coordinator runtime failed", err)
+		}
+	}()
+
+	return runTickLoop(ctx, coord, cfg.TickInterval)
 }
 
-func runTickLoop(ctx context.Context, runtime *coordinator.NATSRuntime, coord *coordinator.Coordinator, interval time.Duration) error {
+func runTickLoop(ctx context.Context, coord *coordinator.Coordinator, interval time.Duration) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return runtime.Stop()
+			return nil
 		case <-ticker.C:
 			if _, err := coord.Tick(ctx); err != nil {
 				logger.Error("coordinator tick error", err)

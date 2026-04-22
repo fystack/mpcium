@@ -299,7 +299,10 @@ func cloneResult(result *sdkprotocol.Result) *sdkprotocol.Result {
 	cloned := *result
 	if result.KeyShare != nil {
 		keyShare := *result.KeyShare
+		keyShare.ShareBlob = append([]byte(nil), result.KeyShare.ShareBlob...)
 		keyShare.PublicKey = append([]byte(nil), result.KeyShare.PublicKey...)
+		keyShare.ECDSAPubKey = append([]byte(nil), result.KeyShare.ECDSAPubKey...)
+		keyShare.EDDSAPubKey = append([]byte(nil), result.KeyShare.EDDSAPubKey...)
 		cloned.KeyShare = &keyShare
 	}
 	if result.Signature != nil {

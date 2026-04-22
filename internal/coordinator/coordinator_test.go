@@ -313,6 +313,94 @@ func TestHandleRequestKeygenWithoutProtocolCreatesBothSessions(t *testing.T) {
 	}
 }
 
+func TestHandleRequestKeygenBothCreatesBothSessions(t *testing.T) {
+	ctx := context.Background()
+	coord, _, _, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolType("both"),
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_explicit_both"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted.Accepted {
+		t.Fatalf("expected request accepted")
+	}
+	active := coord.store.ListActive(ctx)
+	if len(active) != 2 {
+		t.Fatalf("expected 2 active sessions, got %d", len(active))
+	}
+}
+
+func TestKeygenBothPublishesAggregatedPubKeys(t *testing.T) {
+	ctx := context.Background()
+	coord, _, results, fixtures := newTestCoordinator(t)
+	markOnline(t, coord.presence, fixtures["p1"].pub, "p1")
+	markOnline(t, coord.presence, fixtures["p2"].pub, "p2")
+
+	req := &sdkprotocol.ControlMessage{
+		SessionStart: &sdkprotocol.SessionStart{
+			SessionID: "client-supplied",
+			Protocol:  sdkprotocol.ProtocolType("both"),
+			Operation: sdkprotocol.OperationTypeKeygen,
+			Threshold: 1,
+			Participants: []*sdkprotocol.SessionParticipant{
+				{ParticipantID: "p1", PartyKey: []byte("p1"), IdentityPublicKey: fixtures["p1"].pub},
+				{ParticipantID: "p2", PartyKey: []byte("p2"), IdentityPublicKey: fixtures["p2"].pub},
+			},
+			Keygen: &sdkprotocol.KeygenPayload{KeyID: "wallet_dual_result"},
+		},
+	}
+
+	rawReply, err := coord.HandleRequest(ctx, OperationKeygen, mustJSON(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted sdkprotocol.RequestAccepted
+	if err := json.Unmarshal(rawReply, &accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsByProtocol := map[sdkprotocol.ProtocolType]string{}
+	for _, session := range coord.store.ListActive(ctx) {
+		sessionsByProtocol[session.Start.Protocol] = session.ID
+	}
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeECDSA], "wallet_dual_result", []byte("ecdsa-pub"))
+	if results.results[accepted.SessionID] != nil {
+		t.Fatalf("dual keygen result should wait for both protocols")
+	}
+	completeKeygenSession(t, coord, fixtures, sessionsByProtocol[sdkprotocol.ProtocolTypeEdDSA], "wallet_dual_result", []byte("eddsa-pub"))
+
+	published := results.results[accepted.SessionID]
+	if published == nil || published.KeyShare == nil {
+		t.Fatalf("missing published dual keygen result")
+	}
+	if string(published.KeyShare.ECDSAPubKey) != "ecdsa-pub" {
+		t.Fatalf("ecdsa_pubkey = %q", string(published.KeyShare.ECDSAPubKey))
+	}
+	if string(published.KeyShare.EDDSAPubKey) != "eddsa-pub" {
+		t.Fatalf("eddsa_pubkey = %q", string(published.KeyShare.EDDSAPubKey))
+	}
+}
+
 func TestHandleRequestSignWithoutProtocolRejected(t *testing.T) {
 	ctx := context.Background()
 	coord, _, _, fixtures := newTestCoordinator(t)
@@ -470,6 +558,26 @@ func emitSignedEvent(t *testing.T, coord *Coordinator, sessionID string, keys ma
 	event.Signature = ed25519.Sign(keys[participant].priv, payload)
 	if err := coord.HandleSessionEvent(context.Background(), mustJSON(t, event)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func completeKeygenSession(t *testing.T, coord *Coordinator, keys map[string]participantKey, sessionID, walletID string, publicKey []byte) {
+	t.Helper()
+	result := &sdkprotocol.Result{
+		KeyShare: &sdkprotocol.KeyShareResult{
+			KeyID:     walletID,
+			PublicKey: publicKey,
+		},
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, sessionID, keys, participant, &sdkprotocol.SessionEvent{PeerJoined: &sdkprotocol.PeerJoined{ParticipantID: participant}})
+		emitSignedEvent(t, coord, sessionID, keys, participant, &sdkprotocol.SessionEvent{PeerReady: &sdkprotocol.PeerReady{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, sessionID, keys, participant, &sdkprotocol.SessionEvent{PeerKeyExchangeDone: &sdkprotocol.PeerKeyExchangeDone{ParticipantID: participant}})
+	}
+	for _, participant := range []string{"p1", "p2"} {
+		emitSignedEvent(t, coord, sessionID, keys, participant, &sdkprotocol.SessionEvent{SessionCompleted: &sdkprotocol.SessionCompleted{Result: result}})
 	}
 }
 

@@ -15,11 +15,18 @@ const (
 
 type fileConfig struct {
 	NATS        natsConfig        `mapstructure:"nats"`
+	GRPC        grpcConfig        `mapstructure:"grpc"`
 	Coordinator coordinatorConfig `mapstructure:"coordinator"`
 }
 
 type natsConfig struct {
 	URL string `mapstructure:"url"`
+}
+
+type grpcConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	ListenAddr   string        `mapstructure:"listen_addr"`
+	PollInterval time.Duration `mapstructure:"poll_interval"`
 }
 
 type coordinatorConfig struct {
@@ -30,6 +37,9 @@ type coordinatorConfig struct {
 
 type RuntimeConfig struct {
 	NATSURL           string
+	GRPCEnabled       bool
+	GRPCListenAddr    string
+	GRPCPollInterval  time.Duration
 	ID                string
 	PrivateKeyHex     string
 	SnapshotDir       string
@@ -39,16 +49,19 @@ type RuntimeConfig struct {
 
 func (cfg RuntimeConfig) Validate() error {
 	if cfg.NATSURL == "" {
-		return fmt.Errorf("nats-url is required")
+		return fmt.Errorf("nats.url is required")
 	}
 	if cfg.ID == "" {
-		return fmt.Errorf("coordinator-id is required")
+		return fmt.Errorf("coordinator.id is required")
 	}
 	if cfg.PrivateKeyHex == "" {
-		return fmt.Errorf("coordinator-private-key-hex is required")
+		return fmt.Errorf("coordinator.private_key_hex is required")
 	}
 	if cfg.SnapshotDir == "" {
-		return fmt.Errorf("coordinator-snapshot-dir is required")
+		return fmt.Errorf("coordinator.snapshot_dir is required")
+	}
+	if cfg.GRPCEnabled && cfg.GRPCListenAddr == "" {
+		return fmt.Errorf("grpc.listen_addr is required when grpc is enabled")
 	}
 	return nil
 }
@@ -58,12 +71,19 @@ func LoadRuntimeConfig() (RuntimeConfig, error) {
 	if err := viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return RuntimeConfig{}, fmt.Errorf("decode config: %w", err)
 	}
-	return cfg.Coordinator.runtimeConfig(cfg.NATS.URL), nil
+	return cfg.Coordinator.runtimeConfig(cfg.NATS.URL, cfg.GRPC), nil
 }
 
-func (cfg coordinatorConfig) runtimeConfig(natsURL string) RuntimeConfig {
+func (cfg coordinatorConfig) runtimeConfig(natsURL string, grpc grpcConfig) RuntimeConfig {
+	pollInterval := 200 * time.Millisecond
+	if grpc.PollInterval > 0 {
+		pollInterval = grpc.PollInterval
+	}
 	return RuntimeConfig{
 		NATSURL:           natsURL,
+		GRPCEnabled:       grpc.Enabled,
+		GRPCListenAddr:    grpc.ListenAddr,
+		GRPCPollInterval:  pollInterval,
 		ID:                cfg.ID,
 		PrivateKeyHex:     cfg.PrivateKeyHex,
 		SnapshotDir:       cfg.SnapshotDir,

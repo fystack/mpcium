@@ -1,4 +1,4 @@
-.PHONY: all build clean mpcium mpc install reset test test-verbose test-coverage e2e-test e2e-clean cleanup-test-env
+.PHONY: all build clean mpcium mpc install reset test test-verbose test-coverage e2e-test e2e-clean cleanup-test-env proto proto-tools
 
 BIN_DIR := bin
 
@@ -82,6 +82,13 @@ endif
 # Run all tests
 test:
 	go test ./...
+
+proto-tools:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+proto:
+	$(MAKE) -C ../sdk proto
 
 # Run tests with verbose output
 test-verbose:
