@@ -20,17 +20,17 @@ import (
 )
 
 type Runtime struct {
-	cfg          Config
-	relay        Relay
-	stores       Stores
-	identity     *localIdentity
-	coordLookup  *coordinatorLookup
-	sessionsMu   sync.RWMutex
-	sessionOpsMu sync.Mutex
-	sessions     map[string]*participant.ParticipantSession
-	sessionMeta  map[string]sessionMeta
-	pendingPeer  map[string][]*sdkprotocol.PeerMessage
-	subs         []Subscription
+	cfg                Config
+	relay              Relay
+	stores             Stores
+	identity           *localIdentity
+	orchestratorLookup *orchestratorLookup
+	sessionsMu         sync.RWMutex
+	sessionOpsMu       sync.Mutex
+	sessions           map[string]*participant.ParticipantSession
+	sessionMeta        map[string]sessionMeta
+	pendingPeer        map[string][]*sdkprotocol.PeerMessage
+	subs               []Subscription
 }
 
 type sessionMeta struct {
@@ -57,21 +57,21 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 		_ = stores.Close()
 		return nil, err
 	}
-	coordLookup, err := NewCoordinatorLookup(cfg.CoordinatorID, cfg.CoordinatorPublicKey)
+	orchestratorLookup, err := NewOrchestratorLookup(cfg.OrchestratorID, cfg.OrchestratorPublicKey)
 	if err != nil {
 		relay.Close()
 		_ = stores.Close()
 		return nil, err
 	}
 	return &Runtime{
-		cfg:         cfg,
-		relay:       relay,
-		stores:      stores,
-		identity:    identity,
-		coordLookup: coordLookup,
-		sessions:    map[string]*participant.ParticipantSession{},
-		sessionMeta: map[string]sessionMeta{},
-		pendingPeer: map[string][]*sdkprotocol.PeerMessage{},
+		cfg:                cfg,
+		relay:              relay,
+		stores:             stores,
+		identity:           identity,
+		orchestratorLookup: orchestratorLookup,
+		sessions:           map[string]*participant.ParticipantSession{},
+		sessionMeta:        map[string]sessionMeta{},
+		pendingPeer:        map[string][]*sdkprotocol.PeerMessage{},
 	}, nil
 }
 
@@ -205,7 +205,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 			"node_id", r.cfg.NodeID,
 			"session_id", msg.SessionID,
 			"sequence", msg.Sequence,
-			"coordinator_id", msg.CoordinatorID,
+			"orchestrator_id", msg.OrchestratorID,
 			"has_session_start", msg.SessionStart != nil,
 			"has_key_exchange", msg.KeyExchange != nil,
 			"has_mpc_begin", msg.MPCBegin != nil,
@@ -226,7 +226,17 @@ func (r *Runtime) handleControl(raw []byte) error {
 		)
 		r.sessionOpsMu.Lock()
 		defer r.sessionOpsMu.Unlock()
-		return r.startSession(&msg, meta)
+		if err := r.startSession(&msg, meta); err != nil {
+			reason := sdkprotocol.FailureReasonInvalidMessage
+			if strings.Contains(err.Error(), "orchestrator") || strings.Contains(err.Error(), "signature") {
+				reason = sdkprotocol.FailureReasonInvalidSignature
+			}
+			if publishErr := r.publishSessionFailed(msg.SessionID, reason, err.Error()); publishErr != nil {
+				logger.Warn("failed to publish session failed event", "session_id", msg.SessionID, "error", publishErr)
+			}
+			return err
+		}
+		return nil
 	}
 	meta := r.getSessionMeta(msg.SessionID)
 	logger.Debug("cosigner received control message",
@@ -260,7 +270,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 			"reason", msg.SessionAbort.Reason,
 		)
 		r.dropSessionMeta(msg.SessionID)
-		_ = r.stores.DeleteSessionArtifacts(msg.SessionID)
+		_ = r.stores.DeleteSessionCheckpoint(msg.SessionID)
 		return nil
 	}
 	actions, err := session.HandleControl(&msg)
@@ -269,7 +279,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 			"node_id", r.cfg.NodeID,
 			"session_id", msg.SessionID,
 			"sequence", msg.Sequence,
-			"coordinator_id", msg.CoordinatorID,
+			"orchestrator_id", msg.OrchestratorID,
 			"control_type", controlType(&msg),
 			"raw_control_json", string(raw),
 		)
@@ -303,10 +313,10 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta
 		LocalParticipantID: r.cfg.NodeID,
 		Identity:           r.identity,
 		Peers:              NewPeerLookup(peerKeys),
-		Coordinator:        r.coordLookup,
+		Orchestrator:       r.orchestratorLookup,
 		Preparams:          r.stores,
 		Shares:             r.stores,
-		SessionArtifacts:   r.stores,
+		SessionCheckpoint:  r.stores,
 	})
 	if err != nil {
 		return err
@@ -485,7 +495,7 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 			return err
 		}
 	}
-	if actions.Cleanup != nil && actions.Cleanup.DropArtifacts {
+	if actions.Cleanup != nil && actions.Cleanup.DropCheckpoint {
 		outcome := "cleanup"
 		if actions.Result != nil {
 			switch {
@@ -501,9 +511,37 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 			"outcome", outcome,
 		)
 		r.dropSessionMeta(actions.Cleanup.SessionID)
-		_ = r.stores.DeleteSessionArtifacts(actions.Cleanup.SessionID)
+		_ = r.stores.DeleteSessionCheckpoint(actions.Cleanup.SessionID)
 	}
 	return nil
+}
+
+func (r *Runtime) publishSessionFailed(sessionID string, reason sdkprotocol.FailureReason, detail string) error {
+	if sessionID == "" {
+		return nil
+	}
+	event := &sdkprotocol.SessionEvent{
+		SessionID:     sessionID,
+		ParticipantID: r.cfg.NodeID,
+		Sequence:      uint64(time.Now().UTC().UnixNano()),
+		SessionFailed: &sdkprotocol.SessionFailed{
+			Reason: reason,
+			Detail: detail,
+		},
+	}
+	payload, err := sdkprotocol.SessionEventSigningBytes(event)
+	if err != nil {
+		return err
+	}
+	if len(r.cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("invalid identity private key size: %d", len(r.cfg.IdentityPrivateKey))
+	}
+	event.Signature = ed25519.Sign(ed25519.PrivateKey(r.cfg.IdentityPrivateKey), payload)
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return r.relay.Publish(sessionEventSubject(sessionID), raw)
 }
 
 func (r *Runtime) getSessionMeta(sessionID string) sessionMeta {
@@ -622,7 +660,7 @@ func (r *Runtime) getSession(sessionID string) *participant.ParticipantSession {
 }
 
 func (r *Runtime) verifyControlSignature(msg *sdkprotocol.ControlMessage) error {
-	pub, err := r.coordLookup.LookupCoordinator(msg.CoordinatorID)
+	pub, err := r.orchestratorLookup.LookupOrchestrator(msg.OrchestratorID)
 	if err != nil {
 		return err
 	}

@@ -25,29 +25,29 @@ const (
 )
 
 type Config struct {
-	RelayProvider        RelayProvider
-	NodeID               string
-	NATS                 natsConfig
-	MQTT                 mqttConfig
-	CoordinatorID        string
-	CoordinatorPublicKey []byte
-	IdentityPrivateKey   []byte
-	DataDir              string
-	MaxActiveSessions    int
-	PresenceInterval     time.Duration
-	TickInterval         time.Duration
+	RelayProvider         RelayProvider
+	NodeID                string
+	NATS                  natsConfig
+	MQTT                  mqttConfig
+	OrchestratorID        string
+	OrchestratorPublicKey []byte
+	IdentityPrivateKey    []byte
+	DataDir               string
+	MaxActiveSessions     int
+	PresenceInterval      time.Duration
+	TickInterval          time.Duration
 }
 
 // Flat keys for compact config style.
 type fileConfig struct {
-	RelayProvider           RelayProvider `mapstructure:"relay_provider"`
-	NATS                    natsConfig    `mapstructure:"nats"`
-	MQTT                    mqttConfig    `mapstructure:"mqtt"`
-	NodeID                  string        `mapstructure:"node_id"`
-	DataDir                 string        `mapstructure:"data_dir"`
-	CoordinatorID           string        `mapstructure:"coordinator_id"`
-	CoordinatorPublicKeyHex string        `mapstructure:"coordinator_public_key_hex"`
-	IdentityPrivateKeyHex   string        `mapstructure:"identity_private_key_hex"`
+	RelayProvider            RelayProvider `mapstructure:"relay_provider"`
+	NATS                     natsConfig    `mapstructure:"nats"`
+	MQTT                     mqttConfig    `mapstructure:"mqtt"`
+	NodeID                   string        `mapstructure:"node_id"`
+	DataDir                  string        `mapstructure:"data_dir"`
+	OrchestratorID           string        `mapstructure:"orchestrator_id"`
+	OrchestratorPublicKeyHex string        `mapstructure:"orchestrator_public_key_hex"`
+	IdentityPrivateKeyHex    string        `mapstructure:"identity_private_key_hex"`
 }
 
 type natsConfig struct {
@@ -75,7 +75,7 @@ func LoadConfig() (Config, error) {
 	if err := viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
-	coordinatorKey, err := decodeHexKey(cfg.CoordinatorPublicKeyHex, "coordinator public key")
+	orchestratorKey, err := decodeHexKey(cfg.OrchestratorPublicKeyHex, "orchestrator public key")
 	if err != nil {
 		return Config{}, err
 	}
@@ -86,14 +86,14 @@ func LoadConfig() (Config, error) {
 	}
 
 	runtimeCfg := Config{
-		RelayProvider:        cfg.RelayProvider,
-		NodeID:               cfg.NodeID,
-		NATS:                 cfg.NATS,
-		MQTT:                 cfg.MQTT,
-		CoordinatorID:        cfg.CoordinatorID,
-		CoordinatorPublicKey: coordinatorKey,
-		IdentityPrivateKey:   privateKey,
-		DataDir:              cfg.DataDir,
+		RelayProvider:         cfg.RelayProvider,
+		NodeID:                cfg.NodeID,
+		NATS:                  cfg.NATS,
+		MQTT:                  cfg.MQTT,
+		OrchestratorID:        cfg.OrchestratorID,
+		OrchestratorPublicKey: orchestratorKey,
+		IdentityPrivateKey:    privateKey,
+		DataDir:               cfg.DataDir,
 	}
 	runtimeCfg.applyDefaults()
 	if err := runtimeCfg.Validate(); err != nil {
@@ -161,8 +161,8 @@ func (cfg Config) Validate() error {
 	default:
 		return fmt.Errorf("unsupported relay provider: %s", cfg.RelayProvider)
 	}
-	if cfg.CoordinatorID == "" || len(cfg.CoordinatorPublicKey) != ed25519.PublicKeySize {
-		return fmt.Errorf("valid coordinator key is required")
+	if cfg.OrchestratorID == "" || len(cfg.OrchestratorPublicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("valid orchestrator key is required")
 	}
 	if len(cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
 		return fmt.Errorf("valid identity private key is required")

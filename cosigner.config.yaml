@@ -17,5 +17,5 @@ node_id: peer-node-01
 data_dir: node-v1-data
 identity_private_key_hex: "b14d168636008a9c766a6c231c182446e4b636cd2116817a89d068ffb5cc49e456a47a1103b610d6c85bf23ddb1f78ff6404f7c6f170d46441a268e105873cc4"
 
-coordinator_id: coordinator-01
-coordinator_public_key_hex: "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"
+orchestrator_id: orch-01
+orchestrator_public_key_hex: "b64ca8ec459081a299aecc2b2b5d555265b15ddfd29e792ddd08bedb418bdd0d"

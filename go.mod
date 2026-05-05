@@ -19,7 +19,6 @@ require (
 	github.com/hashicorp/consul/api v1.33.2
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
-	github.com/nats-io/nats-server/v2 v2.10.29
 	github.com/nats-io/nats.go v1.48.0
 	github.com/rs/zerolog v1.34.0
 	github.com/samber/lo v1.52.0
@@ -28,17 +27,12 @@ require (
 	github.com/urfave/cli/v3 v3.6.2
 	golang.org/x/crypto v0.50.0
 	golang.org/x/term v0.42.0
-	google.golang.org/grpc v1.80.0
 )
 
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/minio/highwayhash v1.0.4-0.20251030100505-070ab1a87a76 // indirect
-	github.com/nats-io/jwt/v2 v2.8.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
 )
 
 require (
@@ -67,7 +61,6 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fystack/mpcium-sdk v0.0.0
-	github.com/fystack/mpcium-sdk/integrations/coordinator-grpc v0.0.0
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -121,6 +114,4 @@ replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-2
 
 replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3
 
-replace github.com/fystack/mpcium-sdk => ../sdk
-
-replace github.com/fystack/mpcium-sdk/integrations/coordinator-grpc => ../sdk/integrations/coordinator-grpc
+replace github.com/fystack/mpcium-sdk => ../mpcium-sdk

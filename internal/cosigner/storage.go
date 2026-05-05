@@ -26,9 +26,16 @@ type SessionArtifactsStore interface {
 	DeleteSessionArtifacts(sessionID string) error
 }
 
+type SessionCheckpointStore interface {
+	LoadSessionCheckpoint(sessionID string) ([]byte, error)
+	SaveSessionCheckpoint(sessionID string, checkpoint []byte) error
+	DeleteSessionCheckpoint(sessionID string) error
+}
+
 type Stores interface {
 	PreparamsStore
 	SharesStore
+	SessionCheckpointStore
 	SessionArtifactsStore
 	Close() error
 }
@@ -96,6 +103,20 @@ func (s *badgerStores) DeleteSessionArtifacts(sessionID string) error {
 	})
 }
 
+func (s *badgerStores) LoadSessionCheckpoint(sessionID string) ([]byte, error) {
+	return s.load(keyCheckpoint(sessionID))
+}
+
+func (s *badgerStores) SaveSessionCheckpoint(sessionID string, checkpoint []byte) error {
+	return s.save(keyCheckpoint(sessionID), checkpoint)
+}
+
+func (s *badgerStores) DeleteSessionCheckpoint(sessionID string) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete([]byte(keyCheckpoint(sessionID)))
+	})
+}
+
 func (s *badgerStores) load(key string) ([]byte, error) {
 	var value []byte
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -135,4 +156,8 @@ func keyShare(protocolType sdkprotocol.ProtocolType, keyID string) string {
 
 func keyArtifact(sessionID string) string {
 	return "artifacts:" + sessionID
+}
+
+func keyCheckpoint(sessionID string) string {
+	return "checkpoint:" + sessionID
 }
