@@ -46,12 +46,12 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	stores, err := newBadgerStores(cfg.DataDir, cfg.NodeID)
+	stores, err := newBadgerStores(cfg.DataDir, cfg.ParticipantID)
 	if err != nil {
 		relay.Close()
 		return nil, err
 	}
-	identity, err := NewLocalIdentity(cfg.NodeID, cfg.IdentityPrivateKey)
+	identity, err := NewLocalIdentity(cfg.ParticipantID, cfg.IdentityPrivateKey)
 	if err != nil {
 		relay.Close()
 		_ = stores.Close()
@@ -89,7 +89,7 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
-	logger.Info("cosigner runtime started", "node_id", r.cfg.NodeID, "identity_public_key_hex", hex.EncodeToString(r.identity.PublicKey()))
+	logger.Info("cosigner runtime started", "participant_id", r.cfg.ParticipantID, "identity_public_key_hex", hex.EncodeToString(r.identity.PublicKey()))
 	if err := r.ensureECDSAPreparams(); err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("cosigner runtime stopping", "node_id", r.cfg.NodeID)
+			logger.Info("cosigner runtime stopping", "participant_id", r.cfg.ParticipantID)
 			r.publishPresenceOnShutdown()
 			return nil
 		case <-tick.C:
@@ -168,7 +168,7 @@ func encodeECDSAPreparams(data *ecdsaKeygen.LocalPreParams) ([]byte, error) {
 }
 
 func (r *Runtime) subscribe() error {
-	controlSub, err := r.relay.Subscribe(controlSubject(r.cfg.NodeID), func(raw []byte) {
+	controlSub, err := r.relay.Subscribe(controlSubject(r.cfg.ParticipantID), func(raw []byte) {
 		if err := r.handleControl(raw); err != nil {
 			logger.Error("handle control message failed", err)
 		}
@@ -178,7 +178,7 @@ func (r *Runtime) subscribe() error {
 	}
 	r.subs = append(r.subs, controlSub)
 
-	p2pSub, err := r.relay.Subscribe(p2pWildcardSubject(r.cfg.NodeID), func(raw []byte) {
+	p2pSub, err := r.relay.Subscribe(p2pWildcardSubject(r.cfg.ParticipantID), func(raw []byte) {
 		if err := r.handlePeer(raw); err != nil {
 			logger.Error("handle peer message failed", err)
 		}
@@ -202,7 +202,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 			return nil
 		}
 		logger.Error("invalid control message received", err,
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"sequence", msg.Sequence,
 			"orchestrator_id", msg.OrchestratorID,
@@ -240,7 +240,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 	}
 	meta := r.getSessionMeta(msg.SessionID)
 	logger.Debug("cosigner received control message",
-		"node_id", r.cfg.NodeID,
+		"participant_id", r.cfg.ParticipantID,
 		"session_id", msg.SessionID,
 		"sequence", msg.Sequence,
 		"control_type", controlType(&msg),
@@ -258,13 +258,13 @@ func (r *Runtime) handleControl(raw []byte) error {
 		// Current SDK participant session doesn't handle SessionAbort control messages.
 		// Treat abort as terminal, clean up local session state, and stop processing.
 		logger.Warn("cosigner received session abort",
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"reason", msg.SessionAbort.Reason,
 			"detail", msg.SessionAbort.Detail,
 		)
 		logger.Info("cosigner session ended",
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"outcome", "aborted",
 			"reason", msg.SessionAbort.Reason,
@@ -276,7 +276,7 @@ func (r *Runtime) handleControl(raw []byte) error {
 	actions, err := session.HandleControl(&msg)
 	if err != nil {
 		logger.Error("session handle control failed", err,
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"sequence", msg.Sequence,
 			"orchestrator_id", msg.OrchestratorID,
@@ -303,14 +303,14 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta
 	}
 	peerKeys := make(map[string]ed25519.PublicKey, len(msg.SessionStart.Participants))
 	for _, participantDef := range msg.SessionStart.Participants {
-		if participantDef.ParticipantID == r.cfg.NodeID {
+		if participantDef.ParticipantID == r.cfg.ParticipantID {
 			continue
 		}
 		peerKeys[participantDef.ParticipantID] = append([]byte(nil), participantDef.IdentityPublicKey...)
 	}
 	sess, err := participant.New(participant.Config{
 		Start:              msg.SessionStart,
-		LocalParticipantID: r.cfg.NodeID,
+		LocalParticipantID: r.cfg.ParticipantID,
 		Identity:           r.identity,
 		Peers:              NewPeerLookup(peerKeys),
 		Orchestrator:       r.orchestratorLookup,
@@ -340,7 +340,7 @@ func (r *Runtime) handlePeer(raw []byte) error {
 		return err
 	}
 	logger.Debug("cosigner received peer message",
-		"node_id", r.cfg.NodeID,
+		"participant_id", r.cfg.ParticipantID,
 		"session_id", msg.SessionID,
 		"from_participant", msg.FromParticipantID,
 		"phase", string(msg.Phase),
@@ -357,7 +357,7 @@ func (r *Runtime) handlePeer(raw []byte) error {
 		if errors.Is(err, participant.ErrPartyNotRunning) && msg.MPCPacket != nil {
 			if r.enqueuePendingPeerMessage(&msg) {
 				logger.Warn("queued peer mpc message until local party starts",
-					"node_id", r.cfg.NodeID,
+					"participant_id", r.cfg.ParticipantID,
 					"session_id", msg.SessionID,
 					"from_participant", msg.FromParticipantID,
 					"phase", string(msg.Phase),
@@ -366,7 +366,7 @@ func (r *Runtime) handlePeer(raw []byte) error {
 			}
 		}
 		logger.Error("session handle peer failed", err,
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"from_participant", msg.FromParticipantID,
 			"phase", string(msg.Phase),
@@ -386,7 +386,7 @@ func (r *Runtime) enqueuePendingPeerMessage(msg *sdkprotocol.PeerMessage) bool {
 	if len(queue) >= maxPendingPeerMessagesPerSession {
 		logger.Error("dropping peer mpc message because pending queue is full",
 			fmt.Errorf("pending peer queue full"),
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", msg.SessionID,
 			"from_participant", msg.FromParticipantID,
 			"limit", maxPendingPeerMessagesPerSession,
@@ -422,7 +422,7 @@ func (r *Runtime) flushPendingPeerMessages(sessionID string) error {
 		return nil
 	}
 	logger.Info("flushing queued peer mpc messages",
-		"node_id", r.cfg.NodeID,
+		"participant_id", r.cfg.ParticipantID,
 		"session_id", sessionID,
 		"count", len(pending),
 	)
@@ -506,7 +506,7 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 			}
 		}
 		logger.Info("cosigner session ended",
-			"node_id", r.cfg.NodeID,
+			"participant_id", r.cfg.ParticipantID,
 			"session_id", actions.Cleanup.SessionID,
 			"outcome", outcome,
 		)
@@ -522,7 +522,7 @@ func (r *Runtime) publishSessionFailed(sessionID string, reason sdkprotocol.Fail
 	}
 	event := &sdkprotocol.SessionEvent{
 		SessionID:     sessionID,
-		ParticipantID: r.cfg.NodeID,
+		ParticipantID: r.cfg.ParticipantID,
 		Sequence:      uint64(time.Now().UTC().UnixNano()),
 		SessionFailed: &sdkprotocol.SessionFailed{
 			Reason: reason,
@@ -638,19 +638,19 @@ func (r *Runtime) publishPresence(status sdkprotocol.PresenceStatus) error {
 		connectionPrefix = "transport"
 	}
 	event := sdkprotocol.PresenceEvent{
-		PeerID:         r.cfg.NodeID,
+		ParticipantID:  r.cfg.ParticipantID,
 		Status:         status,
 		Transport:      transportType,
 		LastSeenUnixMs: time.Now().UTC().UnixMilli(),
 	}
 	if status == sdkprotocol.PresenceStatusOnline {
-		event.ConnectionID = connectionPrefix + ":" + r.cfg.NodeID
+		event.ConnectionID = connectionPrefix + ":" + r.cfg.ParticipantID
 	}
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	return r.relay.Publish(presenceSubject(r.cfg.NodeID), raw)
+	return r.relay.Publish(presenceSubject(r.cfg.ParticipantID), raw)
 }
 
 func (r *Runtime) getSession(sessionID string) *participant.ParticipantSession {

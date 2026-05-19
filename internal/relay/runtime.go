@@ -195,27 +195,27 @@ func (r *Runtime) subscribeMQTTInline() error {
 	return nil
 }
 
-func (r *Runtime) publishPresence(peerID string, status sdkprotocol.PresenceStatus) {
+func (r *Runtime) publishPresence(participantID string, status sdkprotocol.PresenceStatus) {
 	if !r.cfg.Presence.EmitConnectDisconnect {
 		return
 	}
 	event := sdkprotocol.PresenceEvent{
-		PeerID:         peerID,
+		ParticipantID:  participantID,
 		Status:         status,
 		Transport:      sdkprotocol.TransportTypeMQTT,
 		LastSeenUnixMs: time.Now().UTC().UnixMilli(),
 	}
 	if status == sdkprotocol.PresenceStatusOnline {
-		event.ConnectionID = "mqtt:" + peerID
+		event.ConnectionID = "mqtt:" + participantID
 	}
 	raw, err := json.Marshal(event)
 	if err != nil {
-		logger.Error("relay marshal presence failed", err, "peer_id", peerID)
+		logger.Error("relay marshal presence failed", err, "participant_id", participantID)
 		return
 	}
-	subject := r.mapper.natsPresenceSubject(peerID)
+	subject := r.mapper.natsPresenceSubject(participantID)
 	if err := r.nc.Publish(subject, raw); err != nil {
-		logger.Error("relay publish presence failed", err, "subject", subject, "peer_id", peerID)
+		logger.Error("relay publish presence failed", err, "subject", subject, "participant_id", participantID)
 	}
 }
 

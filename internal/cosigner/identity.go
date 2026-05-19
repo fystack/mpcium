@@ -13,7 +13,7 @@ type localIdentity struct {
 
 func NewLocalIdentity(nodeID string, privateKey []byte) (*localIdentity, error) {
 	if nodeID == "" {
-		return nil, fmt.Errorf("node_id is required")
+		return nil, fmt.Errorf("participant_id is required")
 	}
 	if len(privateKey) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("invalid identity private key size")

@@ -26,7 +26,7 @@ const (
 
 type Config struct {
 	RelayProvider         RelayProvider
-	NodeID                string
+	ParticipantID         string
 	NATS                  natsConfig
 	MQTT                  mqttConfig
 	OrchestratorID        string
@@ -43,7 +43,7 @@ type fileConfig struct {
 	RelayProvider            RelayProvider `mapstructure:"relay_provider"`
 	NATS                     natsConfig    `mapstructure:"nats"`
 	MQTT                     mqttConfig    `mapstructure:"mqtt"`
-	NodeID                   string        `mapstructure:"node_id"`
+	ParticipantID            string        `mapstructure:"participant_id"`
 	DataDir                  string        `mapstructure:"data_dir"`
 	OrchestratorID           string        `mapstructure:"orchestrator_id"`
 	OrchestratorPublicKeyHex string        `mapstructure:"orchestrator_public_key_hex"`
@@ -87,7 +87,7 @@ func LoadConfig() (Config, error) {
 
 	runtimeCfg := Config{
 		RelayProvider:         cfg.RelayProvider,
-		NodeID:                cfg.NodeID,
+		ParticipantID:         cfg.ParticipantID,
 		NATS:                  cfg.NATS,
 		MQTT:                  cfg.MQTT,
 		OrchestratorID:        cfg.OrchestratorID,
@@ -135,8 +135,8 @@ func (cfg *Config) applyDefaults() {
 }
 
 func (cfg Config) Validate() error {
-	if cfg.NodeID == "" {
-		return fmt.Errorf("node_id is required")
+	if cfg.ParticipantID == "" {
+		return fmt.Errorf("participant_id is required")
 	}
 	switch cfg.RelayProvider {
 	case RelayProviderNATS:
