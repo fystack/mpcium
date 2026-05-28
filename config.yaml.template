@@ -25,6 +25,16 @@ healthcheck:
   enabled: false  # disabled by default, set to true for cloud deployment
   address: "0.0.0.0:8080"
 
+# Embedded cosigner runtime (optional)
+# cosigner:
+#   enabled: true
+#   # Defaults to <db_path>/<node_name>/cosigner.
+#   data_dir: "./<node_name>/cosigner"
+#   orchestrator_id: "cosigner-orch-01"
+#   orchestrator_public_key_hex: ""
+#   max_active_sessions: 5
+#   presence_interval: 5s
+#   tick_interval: 100ms
 
 # Authorization (optional)
 # authorization:

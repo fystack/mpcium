@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fystack/mpcium/internal/cosigner"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/constant"
 	"github.com/fystack/mpcium/pkg/event"
@@ -298,6 +300,18 @@ func runNode(ctx context.Context, c *cli.Command) error {
 		}()
 	}
 
+	cosignerRuntime, err := buildCosignerRuntime(nodeName, nodeID, identityStore, natsConn)
+	if err != nil {
+		logger.Fatal("Failed to build cosigner runtime", err)
+	}
+	if cosignerRuntime != nil {
+		defer func() {
+			if cerr := cosignerRuntime.Close(); cerr != nil {
+				logger.Error("Failed to close cosigner runtime", cerr)
+			}
+		}()
+	}
+
 	logger.Info("Starting consumers", "nodeID", nodeID)
 	appContext, cancel := context.WithCancel(context.Background())
 	//Setup signal handling to cancel context on termination signals.
@@ -337,7 +351,22 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	}()
 
 	var wg sync.WaitGroup
-	errChan := make(chan error, 3)
+	errChan := make(chan error, 4)
+
+	if cosignerRuntime != nil {
+		wg.Go(func() {
+			if err := cosignerRuntime.Run(appContext); err != nil {
+				if appContext.Err() != context.Canceled {
+					logger.Error("error running cosigner runtime", err)
+					errChan <- fmt.Errorf("cosigner runtime error: %w", err)
+				} else {
+					logger.Info("Cosigner runtime finished successfully")
+				}
+				return
+			}
+			logger.Info("Cosigner runtime finished successfully")
+		})
+	}
 
 	wg.Add(1)
 	go func() {
@@ -657,4 +686,48 @@ func GetNATSConnection(environment string, appConfig *config.AppConfig) (*nats.C
 	}
 
 	return nats.Connect(url, opts...)
+}
+
+// buildCosignerRuntime constructs the embedded cosigner runtime when enabled
+// via the `cosigner:` block in config.yaml. The cosigner reuses mpcium's
+// identity key, node ID, and NATS connection. Returns (nil, nil) when
+// cosigner is disabled or omitted from config.
+type identityKeyProvider interface {
+	PrivateKey() ed25519.PrivateKey
+}
+
+func buildCosignerRuntime(nodeName, nodeID string, identityStore identityKeyProvider, natsConn *nats.Conn) (*cosigner.Runtime, error) {
+	sub := viper.Sub("cosigner")
+	if sub == nil {
+		return nil, nil
+	}
+	if !sub.GetBool("enabled") {
+		return nil, nil
+	}
+
+	// Cosigner Badger lives at <db_path>/<nodeName>/cosigner, nested under the
+	// node's own data directory.
+	mpcDBBase := viper.GetString("db_path")
+	if mpcDBBase == "" {
+		mpcDBBase = "."
+	}
+	if strings.TrimSpace(sub.GetString("data_dir")) == "" {
+		sub.Set("data_dir", filepath.Join(mpcDBBase, nodeName, "cosigner"))
+	}
+
+	cfg, err := cosigner.LoadEmbeddedConfig(sub, nodeID, identityStore.PrivateKey())
+	if err != nil {
+		return nil, err
+	}
+	relay := cosigner.NewNATSRelayWithConn(natsConn)
+	runtime, err := cosigner.NewRuntimeWithRelay(cfg, relay)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("Embedded cosigner runtime configured",
+		"participant_id", nodeID,
+		"orchestrator_id", cfg.OrchestratorID,
+		"data_dir", cfg.DataDir,
+	)
+	return runtime, nil
 }

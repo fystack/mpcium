@@ -46,6 +46,20 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newRuntime(cfg, relay)
+}
+
+// NewRuntimeWithRelay builds a Runtime around a host-supplied relay. Used
+// when the cosigner is embedded in another process (e.g. mpcium) so the
+// outer process owns the underlying transport connection.
+func NewRuntimeWithRelay(cfg Config, relay Relay) (*Runtime, error) {
+	if relay == nil {
+		return nil, fmt.Errorf("relay is required")
+	}
+	return newRuntime(cfg, relay)
+}
+
+func newRuntime(cfg Config, relay Relay) (*Runtime, error) {
 	stores, err := newBadgerStores(cfg.DataDir, cfg.ParticipantID)
 	if err != nil {
 		relay.Close()

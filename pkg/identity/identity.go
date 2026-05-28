@@ -448,6 +448,14 @@ func (s *fileStore) CheckSymmetricKeyComplete(desired int) bool {
 	return len(s.symmetricKeys) == desired
 }
 
+// PrivateKey returns a copy of the node's ed25519 private key. Callers must
+// treat the returned bytes as sensitive.
+func (s *fileStore) PrivateKey() ed25519.PrivateKey {
+	out := make(ed25519.PrivateKey, len(s.privateKey))
+	copy(out, s.privateKey)
+	return out
+}
+
 // GetPublicKey retrieves a node's public key by its ID
 func (s *fileStore) GetPublicKey(nodeID string) ([]byte, error) {
 	s.mu.RLock()

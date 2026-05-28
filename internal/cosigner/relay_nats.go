@@ -13,7 +13,15 @@ import (
 )
 
 type NATSRelay struct {
-	nc *nats.Conn
+	nc        *nats.Conn
+	ownedConn bool
+}
+
+// NewNATSRelayWithConn wraps an existing NATS connection without taking
+// ownership. Close() will not tear down the underlying connection — the
+// caller (e.g. mpcium) is responsible for that.
+func NewNATSRelayWithConn(nc *nats.Conn) Relay {
+	return &NATSRelay{nc: nc, ownedConn: false}
 }
 
 func NewNATSRelay(cfg natsConfig) (Relay, error) {
@@ -35,7 +43,7 @@ func NewNATSRelay(cfg natsConfig) (Relay, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect nats: %w", err)
 	}
-	return &NATSRelay{nc: nc}, nil
+	return &NATSRelay{nc: nc, ownedConn: true}, nil
 }
 
 func buildNATSTLSConfig(cfg *tlsConfig) (*tls.Config, error) {
@@ -81,7 +89,9 @@ func (t *NATSRelay) Flush() error {
 }
 
 func (t *NATSRelay) Close() {
-	t.nc.Close()
+	if t.ownedConn {
+		t.nc.Close()
+	}
 }
 
 func (t *NATSRelay) ProtocolType() sdkprotocol.TransportType {

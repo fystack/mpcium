@@ -11,13 +11,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-type RelayProvider string
-
-const (
-	RelayProviderNATS RelayProvider = "nats"
-	RelayProviderMQTT RelayProvider = "mqtt"
-)
-
 const (
 	DefaultMaxActiveSessions = 5
 	DefaultPresenceInterval  = 5 * time.Second
@@ -25,10 +18,8 @@ const (
 )
 
 type Config struct {
-	RelayProvider         RelayProvider
 	ParticipantID         string
 	NATS                  natsConfig
-	MQTT                  mqttConfig
 	OrchestratorID        string
 	OrchestratorPublicKey []byte
 	IdentityPrivateKey    []byte
@@ -38,16 +29,75 @@ type Config struct {
 	TickInterval          time.Duration
 }
 
-// Flat keys for compact config style.
-type fileConfig struct {
-	RelayProvider            RelayProvider `mapstructure:"relay_provider"`
-	NATS                     natsConfig    `mapstructure:"nats"`
-	MQTT                     mqttConfig    `mapstructure:"mqtt"`
-	ParticipantID            string        `mapstructure:"participant_id"`
-	DataDir                  string        `mapstructure:"data_dir"`
+// EmbeddedFileConfig is the subset of config read from the parent process
+// (e.g. mpcium) when the cosigner runtime is embedded in another binary.
+// ParticipantID, IdentityPrivateKey, and the relay are supplied by the host.
+type EmbeddedFileConfig struct {
 	OrchestratorID           string        `mapstructure:"orchestrator_id"`
 	OrchestratorPublicKeyHex string        `mapstructure:"orchestrator_public_key_hex"`
-	IdentityPrivateKeyHex    string        `mapstructure:"identity_private_key_hex"`
+	DataDir                  string        `mapstructure:"data_dir"`
+	MaxActiveSessions        int           `mapstructure:"max_active_sessions"`
+	PresenceInterval         time.Duration `mapstructure:"presence_interval"`
+	TickInterval             time.Duration `mapstructure:"tick_interval"`
+}
+
+// LoadEmbeddedConfig builds a Config from a viper subtree plus host-supplied
+// participant identity. The relay is created separately and injected via
+// NewRuntimeWithRelay.
+func LoadEmbeddedConfig(sub *viper.Viper, participantID string, identityPrivateKey []byte) (Config, error) {
+	if sub == nil {
+		return Config{}, fmt.Errorf("cosigner config is required")
+	}
+	var fc EmbeddedFileConfig
+	if err := sub.Unmarshal(&fc, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
+		return Config{}, fmt.Errorf("decode cosigner config: %w", err)
+	}
+	orchestratorKey, err := decodeHexKey(fc.OrchestratorPublicKeyHex, "orchestrator public key")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := Config{
+		ParticipantID:         participantID,
+		OrchestratorID:        fc.OrchestratorID,
+		OrchestratorPublicKey: orchestratorKey,
+		IdentityPrivateKey:    append([]byte(nil), identityPrivateKey...),
+		DataDir:               fc.DataDir,
+		MaxActiveSessions:     fc.MaxActiveSessions,
+		PresenceInterval:      fc.PresenceInterval,
+		TickInterval:          fc.TickInterval,
+	}
+	cfg.applyDefaults()
+	if err := cfg.ValidateEmbedded(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// ValidateEmbedded checks the fields required when the relay is host-supplied.
+func (cfg Config) ValidateEmbedded() error {
+	if cfg.ParticipantID == "" {
+		return fmt.Errorf("participant_id is required")
+	}
+	if cfg.OrchestratorID == "" || len(cfg.OrchestratorPublicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("valid orchestrator key is required")
+	}
+	if len(cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("valid identity private key is required")
+	}
+	if cfg.DataDir == "" {
+		return fmt.Errorf("cosigner.data_dir is required")
+	}
+	return nil
+}
+
+// Flat keys for compact config style.
+type fileConfig struct {
+	NATS                     natsConfig `mapstructure:"nats"`
+	ParticipantID            string     `mapstructure:"participant_id"`
+	DataDir                  string     `mapstructure:"data_dir"`
+	OrchestratorID           string     `mapstructure:"orchestrator_id"`
+	OrchestratorPublicKeyHex string     `mapstructure:"orchestrator_public_key_hex"`
+	IdentityPrivateKeyHex    string     `mapstructure:"identity_private_key_hex"`
 }
 
 type natsConfig struct {
@@ -61,13 +111,6 @@ type tlsConfig struct {
 	ClientCert string `mapstructure:"client_cert"`
 	ClientKey  string `mapstructure:"client_key"`
 	CACert     string `mapstructure:"ca_cert"`
-}
-
-type mqttConfig struct {
-	Broker   string `mapstructure:"broker"`
-	ClientID string `mapstructure:"client_id"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
 }
 
 func LoadConfig() (Config, error) {
@@ -86,10 +129,8 @@ func LoadConfig() (Config, error) {
 	}
 
 	runtimeCfg := Config{
-		RelayProvider:         cfg.RelayProvider,
 		ParticipantID:         cfg.ParticipantID,
 		NATS:                  cfg.NATS,
-		MQTT:                  cfg.MQTT,
 		OrchestratorID:        cfg.OrchestratorID,
 		OrchestratorPublicKey: orchestratorKey,
 		IdentityPrivateKey:    privateKey,
@@ -111,9 +152,6 @@ func decodeHexKey(value, name string) ([]byte, error) {
 }
 
 func (cfg *Config) applyDefaults() {
-	if cfg.RelayProvider == "" {
-		cfg.RelayProvider = RelayProviderNATS
-	}
 	if cfg.MaxActiveSessions <= 0 {
 		cfg.MaxActiveSessions = DefaultMaxActiveSessions
 	}
@@ -138,28 +176,16 @@ func (cfg Config) Validate() error {
 	if cfg.ParticipantID == "" {
 		return fmt.Errorf("participant_id is required")
 	}
-	switch cfg.RelayProvider {
-	case RelayProviderNATS:
-		if cfg.NATS.URL == "" {
-			return fmt.Errorf("nats.url is required for relay provider nats")
+	if cfg.NATS.URL == "" {
+		return fmt.Errorf("nats.url is required")
+	}
+	if cfg.NATS.TLS != nil {
+		if cfg.NATS.TLS.ClientCert == "" {
+			return fmt.Errorf("nats.tls.client_cert is required when nats.tls is set")
 		}
-		if cfg.NATS.TLS != nil {
-			if cfg.NATS.TLS.ClientCert == "" {
-				return fmt.Errorf("nats.tls.client_cert is required when nats.tls is set")
-			}
-			if cfg.NATS.TLS.ClientKey == "" {
-				return fmt.Errorf("nats.tls.client_key is required when nats.tls is set")
-			}
+		if cfg.NATS.TLS.ClientKey == "" {
+			return fmt.Errorf("nats.tls.client_key is required when nats.tls is set")
 		}
-	case RelayProviderMQTT:
-		if cfg.MQTT.Broker == "" {
-			return fmt.Errorf("mqtt.broker is required for relay provider mqtt")
-		}
-		if cfg.MQTT.ClientID == "" {
-			return fmt.Errorf("mqtt.client_id is required for relay provider mqtt")
-		}
-	default:
-		return fmt.Errorf("unsupported relay provider: %s", cfg.RelayProvider)
 	}
 	if cfg.OrchestratorID == "" || len(cfg.OrchestratorPublicKey) != ed25519.PublicKeySize {
 		return fmt.Errorf("valid orchestrator key is required")
