@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 
@@ -765,4 +767,33 @@ func TestAuthorizeInitiatorMessage_NilSignature(t *testing.T) {
 	if err == nil {
 		t.Error("AuthorizeInitiatorMessage() should fail with nil signature")
 	}
+}
+
+func TestVerifyInitiatorMessage_DerivationPathBound(t *testing.T) {
+	pub, priv, _ := generateTestEd25519Key()
+
+	store := &fileStore{
+		initiatorKey: &InitiatorKey{
+			Algorithm: types.EventInitiatorKeyTypeEd25519,
+			Ed25519:   pub,
+		},
+	}
+
+	msg := &types.SignTxMessage{
+		KeyType:             types.KeyTypeSecp256k1,
+		WalletID:            "w",
+		NetworkInternalCode: "ETH",
+		TxID:                "tx",
+		Tx:                  []byte("d"),
+		DerivationPath:      []uint32{44, 60, 0, 0, 0, 1},
+	}
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	msg.Signature = ed25519.Sign(priv, raw)
+
+	require.NoError(t, store.VerifyInitiatorMessage(msg), "should verify")
+
+	// tamper path
+	msg.DerivationPath = []uint32{44, 60, 0, 0, 0, 999}
+	assert.Error(t, store.VerifyInitiatorMessage(msg), "should not verify")
 }
