@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	tsscrypto "github.com/bnb-chain/tss-lib/v2/crypto"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	tsscrypto "github.com/bnb-chain/tss-lib/v3/crypto"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium/pkg/ckdutil"
@@ -413,8 +413,8 @@ func deriveChildPublicKeyEd25519ViaTSS(masterPubKey []byte, chainCodeHex string,
 
 	childPub := edwards.PublicKey{
 		Curve: tss.Edwards(),
-		X:     childKey.PublicKey.X(),
-		Y:     childKey.PublicKey.Y(),
+		X:     childKey.PublicKey.X,
+		Y:     childKey.PublicKey.Y,
 	}
 
 	return childPub.SerializeCompressed(), nil

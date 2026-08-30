@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/eddsa/resharing"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/resharing"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/keyinfo"
