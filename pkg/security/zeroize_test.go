@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"testing"
 
-	ecdsakeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	eddsakeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
 )
 func TestZeroBigInt_OverwritesBackingWords(t *testing.T) {
 	x := new(big.Int).Lsh(big.NewInt(1), 2048)

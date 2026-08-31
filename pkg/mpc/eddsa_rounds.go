@@ -1,10 +1,10 @@
 package mpc
 
 import (
-	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/eddsa/resharing"
-	"github.com/bnb-chain/tss-lib/v2/eddsa/signing"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/resharing"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/signing"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/fystack/mpcium/pkg/common/errors"
 )
 
