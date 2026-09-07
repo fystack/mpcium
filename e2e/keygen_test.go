@@ -14,6 +14,7 @@ import (
 
 func TestKeyGeneration(t *testing.T) {
 	suite := NewE2ETestSuite(".")
+	logger.Init("dev", true)
 
 	// Comprehensive cleanup before starting tests
 	t.Log("Performing pre-test cleanup...")
@@ -78,10 +79,23 @@ func testKeyGeneration(t *testing.T, suite *E2ETestSuite) {
 	if suite.mpcClient == nil {
 		t.Fatal("MPC client is not initialized. Make sure Setup subtest runs first.")
 	}
+
+	walletID := uuid.New().String()
+
+	// Create a new wallet
+	createWalletAndVerify(t, suite, walletID)
+
+	// Create another new wallet with the same wallet ID
+	createWalletAndVerify(t, suite, walletID)
+
+	t.Log("Key generation test completed")
+}
+
+func createWalletAndVerify(t *testing.T, suite *E2ETestSuite, walletID string) {
 	// Generate 1 wallet ID for testing
 	walletIDs := make([]string, 0, 10)
 	for i := 0; i < 1; i++ {
-		walletIDs = append(walletIDs, uuid.New().String())
+		walletIDs = append(walletIDs, walletID)
 		suite.walletIDs = append(suite.walletIDs, walletIDs[i])
 	}
 
@@ -91,7 +105,11 @@ func testKeyGeneration(t *testing.T, suite *E2ETestSuite) {
 	err := suite.mpcClient.OnWalletCreationResult(func(result event.KeygenResultEvent) {
 		logger.Info("On wallet creation result", "event", result)
 		t.Logf("Received keygen result for wallet %s: %s", result.WalletID, result.ResultType)
-		suite.keygenResults[result.WalletID] = &result
+
+		// For testing replay properly, don't overwrite existing result for the same wallet ID to preserve the first result
+		if _, exists := suite.keygenResults[result.WalletID]; !exists {
+			suite.keygenResults[result.WalletID] = &result
+		}
 
 		if result.ResultType == event.ResultTypeError {
 			t.Logf("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
@@ -164,8 +182,6 @@ checkResults:
 			assert.NotEmpty(t, result.EDDSAPubKey, "EdDSA public key should not be empty for wallet %s", walletID)
 		}
 	}
-
-	t.Log("Key generation test completed")
 }
 
 func verifyKeyConsistency(t *testing.T, suite *E2ETestSuite) {

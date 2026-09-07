@@ -11,6 +11,7 @@ import (
 
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -36,6 +37,7 @@ type multiClientObserver struct {
 
 func TestMultiClientResultRouting(t *testing.T) {
 	suite := NewE2ETestSuite(".")
+	logger.Init("dev", true)
 
 	t.Log("Performing pre-test cleanup...")
 	suite.CleanupTestEnvironment(t)

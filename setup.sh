@@ -1,3 +1,5 @@
+export PATH="$(go env GOPATH)/bin:$PATH"
+
 NUM_NODES=3
 
 make build

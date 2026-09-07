@@ -80,7 +80,20 @@ func (s *E2ETestSuite) LoadConfig() error {
 		return err
 	}
 
-	return yaml.Unmarshal(data, &s.config)
+	if err := yaml.Unmarshal(data, &s.config); err != nil {
+		return err
+	}
+
+	return validateBadgerEncryptionKey(s.config.BadgerPassword)
+}
+
+func validateBadgerEncryptionKey(key string) error {
+	switch len([]byte(key)) {
+	case 16, 24, 32:
+		return nil
+	default:
+		return fmt.Errorf("badger_password must be 16, 24, or 32 bytes for Badger encryption, got %d bytes", len([]byte(key)))
+	}
 }
 
 func (s *E2ETestSuite) RunMakeClean() error {
@@ -284,6 +297,7 @@ func (s *E2ETestSuite) SeedPreParams(t *testing.T) {
 		DbPath         string `yaml:"db_path"`
 	}
 	require.NoError(t, yaml.Unmarshal(configData, &nodeConfig), "Failed to parse node config")
+	require.NoError(t, validateBadgerEncryptionKey(nodeConfig.BadgerPassword), "Invalid badger_password in %s", configPath)
 
 	dbBasePath := nodeConfig.DbPath
 	if dbBasePath == "" {

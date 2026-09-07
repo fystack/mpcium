@@ -152,6 +152,13 @@ func (s *ecdhSession) Close() error {
 }
 
 func (e *ecdhSession) BroadcastPublicKey() error {
+	// Peer restart mid-handshake can schedule this broadcast goroutine
+	// before the local publicKey is populated; crypto/ecdh.(*PublicKey).Bytes
+	// then panics with nil pointer dereference. Return an error so the
+	// caller's retrigger logic takes over instead of the goroutine dying.
+	if e == nil || e.publicKey == nil {
+		return fmt.Errorf("ecdh session %s has no public key to broadcast yet", e.nodeID)
+	}
 	publicKeyBytes := e.publicKey.Bytes()
 	msg := types.ECDHMessage{
 		From:      e.nodeID,

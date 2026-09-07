@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
+	ecdsaKeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 	"github.com/fystack/mpcium-sdk/participant"
 	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/logger"

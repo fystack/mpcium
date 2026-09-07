@@ -6,8 +6,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/fystack/mpcium/pkg/common/errors"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/keyinfo"
@@ -407,6 +407,18 @@ func (p *Node) CreateReshareSession(
 	default:
 		return nil, fmt.Errorf("unsupported session type: %v", sessionType)
 	}
+}
+
+const walletCreationResultPrefix = "wallet_creation_result_prefix"
+
+func (p *Node) StoreWalletCreationResult(walletID string, result []byte) error {
+	key := fmt.Sprintf("%s:%s", walletCreationResultPrefix, walletID)
+	return p.kvstore.Put(key, result)
+}
+
+func (p *Node) GetWalletCreationResult(walletID string) ([]byte, error) {
+	key := fmt.Sprintf("%s:%s", walletCreationResultPrefix, walletID)
+	return p.kvstore.Get(key)
 }
 
 func ComposeReadyKey(nodeID string) string {

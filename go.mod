@@ -8,13 +8,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/kms v1.49.5
-	github.com/bnb-chain/tss-lib/v2 v2.0.3
+	github.com/bnb-chain/tss-lib/v3 v3.0.1
 	github.com/btcsuite/btcd v0.25.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
 	github.com/dgraph-io/badger/v4 v4.9.0
-	github.com/fystack/mpcium-sdk v0.0.2
+	github.com/fystack/mpcium-sdk v0.0.4
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/consul/api v1.33.2
 	github.com/mitchellh/mapstructure v1.5.0
@@ -29,6 +29,7 @@ require (
 )
 
 require (
+	filippo.io/bigmod v0.1.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -104,4 +105,4 @@ require (
 
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
-replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3
+replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.1

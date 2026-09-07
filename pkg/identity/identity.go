@@ -15,7 +15,7 @@ import (
 	"syscall"
 
 	"filippo.io/age"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"golang.org/x/term"
 
 	"github.com/fystack/mpcium/pkg/common/pathutil"

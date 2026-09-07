@@ -64,17 +64,19 @@ type ResharingMessage struct {
 func (m *SignTxMessage) Raw() ([]byte, error) {
 	// omit the Signature field itself when computing the signed‐over data
 	payload := struct {
-		KeyType             KeyType `json:"key_type"`
-		WalletID            string  `json:"wallet_id"`
-		NetworkInternalCode string  `json:"network_internal_code"`
-		TxID                string  `json:"tx_id"`
-		Tx                  []byte  `json:"tx"`
+		KeyType             KeyType  `json:"key_type"`
+		WalletID            string   `json:"wallet_id"`
+		NetworkInternalCode string   `json:"network_internal_code"`
+		TxID                string   `json:"tx_id"`
+		Tx                  []byte   `json:"tx"`
+		DerivationPath      []uint32 `json:"derivation_path,omitempty"`
 	}{
 		KeyType:             m.KeyType,
 		WalletID:            m.WalletID,
 		NetworkInternalCode: m.NetworkInternalCode,
 		TxID:                m.TxID,
 		Tx:                  m.Tx,
+		DerivationPath:      m.DerivationPath,
 	}
 	return json.Marshal(payload)
 }

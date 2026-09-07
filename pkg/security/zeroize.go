@@ -3,8 +3,8 @@ package security
 import (
 	"math/big"
 
-	ecdsakeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	eddsakeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
 )
 
 // ZeroEcdsaKeygenLocalPartySaveData securely zeros out sensitive fields in an ECDSA LocalPartySaveData struct.

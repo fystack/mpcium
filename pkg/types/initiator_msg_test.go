@@ -1,6 +1,8 @@
 package types
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"testing"
 
@@ -208,4 +210,50 @@ func TestGenerateKeyMessage_EmptyWallet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte(""), raw)
 	assert.Equal(t, "", msg.InitiatorID())
+}
+
+func TestSignTxMessage_Raw_IncludesDerivationPath(t *testing.T) {
+	msg := &SignTxMessage{
+		KeyType:             KeyTypeSecp256k1,
+		WalletID:            "wallet-123",
+		NetworkInternalCode: "BTC",
+		TxID:                "tx-456",
+		Tx:                  []byte("transaction-data"),
+		Signature:           []byte("signature-data"),
+		DerivationPath:      []uint32{44, 60, 0, 0, 0, 1},
+	}
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	assert.NotEmpty(t, raw)
+	assert.Contains(t, string(raw), `"derivation_path":[44,60,0,0,0,1]`)
+}
+
+func TestSignTxMessage_DerivationPathIsSignatureBound(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	msg := &SignTxMessage{
+		KeyType:             KeyTypeSecp256k1,
+		WalletID:            "w",
+		NetworkInternalCode: "ETH",
+		TxID:                "tx",
+		Tx:                  []byte("d"),
+		DerivationPath:      []uint32{44, 60, 0, 0, 1},
+	}
+
+	// initiator sign on Raw()
+	raw, err := msg.Raw()
+	require.NoError(t, err)
+	assert.NotEmpty(t, raw)
+	sig := ed25519.Sign(priv, raw)
+
+	// verify pass
+	rawOK, _ := msg.Raw()
+	assert.True(t, ed25519.Verify(pub, rawOK, sig), "original raw should be valid")
+
+	// Attacker: change derivation_path, same sig
+	msg.DerivationPath = []uint32{44, 60, 0, 0, 2}
+	rawTempered, err := msg.Raw()
+	require.NoError(t, err)
+	assert.False(t, ed25519.Verify(pub, rawTempered, sig), "changed derivation_path should invalidate sig")
 }

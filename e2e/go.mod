@@ -3,7 +3,7 @@ module github.com/fystack/mpcium/e2e
 go 1.25.8
 
 require (
-	github.com/bnb-chain/tss-lib/v2 v2.0.2
+	github.com/bnb-chain/tss-lib/v3 v3.0.1
 	github.com/dgraph-io/badger/v4 v4.9.0
 	github.com/fystack/mpcium v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
@@ -15,6 +15,7 @@ require (
 
 require (
 	filippo.io/age v1.3.1 // indirect
+	filippo.io/bigmod v0.1.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/agl/ed25519 v0.0.0-20200225211852-fd4d107ace12 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -104,4 +105,4 @@ replace github.com/fystack/mpcium => ../
 
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
-replace github.com/bnb-chain/tss-lib/v2 => github.com/fystack/tss-lib/v2 v2.0.3
+replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.1

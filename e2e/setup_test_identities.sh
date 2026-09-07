@@ -25,7 +25,17 @@ echo "🚀 Setting up E2E Test Node Identities..."
 
 # Generate random password for badger encryption
 echo "🔐 Generating random password for badger encryption..."
-BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 32)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    BADGER_PASSWORD=$(openssl rand -hex 16)
+else
+    # Linux and others
+    BADGER_PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 32)
+fi
+if [ ${#BADGER_PASSWORD} -ne 32 ]; then
+    echo "❌ Generated Badger password must be exactly 32 bytes, got ${#BADGER_PASSWORD}"
+    exit 1
+fi
 echo "✅ Generated password: $BADGER_PASSWORD"
 
 # Generate chain_code (32-byte hex value, 64 hex characters)
