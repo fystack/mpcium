@@ -50,6 +50,7 @@ func newEDDSASigningSession(
 	derivationPath []uint32,
 	idempotentKey string,
 	ckd *CKD,
+	sessionNonce *big.Int,
 ) *eddsaSigningSession {
 	return &eddsaSigningSession{
 		session: session{
@@ -60,6 +61,7 @@ func newEDDSASigningSession(
 			participantPeerIDs: participantPeerIDs,
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
+			sessionNonce:       sessionNonce,
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error, 1),
 			doneCh:             make(chan struct{}),
@@ -93,7 +95,10 @@ func newEDDSASigningSession(
 func (s *eddsaSigningSession) Init(tx *big.Int) error {
 	logger.Infof("Initializing signing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	ctx := tss.NewPeerContext(s.partyIDs)
-	params := tss.NewParameters(tss.Edwards(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold)
+	params, err := newTSSParameters(tss.Edwards(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold, s.sessionNonce)
+	if err != nil {
+		return errors.Wrap(err, "Failed to build EdDSA signing parameters")
+	}
 
 	keyInfo, err := s.keyinfoStore.Get(s.composeKey(s.walletID))
 	if err != nil {

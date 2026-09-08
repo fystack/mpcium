@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"math/big"
 
 	"github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 	"github.com/bnb-chain/tss-lib/v3/tss"
@@ -19,7 +20,7 @@ import (
 type KeyGenSession interface {
 	Session
 
-	Init()
+	Init() error
 	GenerateKey(done func())
 	GetPubKeyResult() []byte
 	WaitForPeersReady() error
@@ -43,6 +44,7 @@ func newECDSAKeygenSession(
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
+	sessionNonce *big.Int,
 ) *ecdsaKeygenSession {
 	return &ecdsaKeygenSession{
 		session: session{
@@ -54,6 +56,7 @@ func newECDSAKeygenSession(
 			participantPeerIDs: participantPeerIDs,
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
+			sessionNonce:       sessionNonce,
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error, 1),
 			doneCh:             make(chan struct{}),
@@ -80,12 +83,16 @@ func newECDSAKeygenSession(
 	}
 }
 
-func (s *ecdsaKeygenSession) Init() {
+func (s *ecdsaKeygenSession) Init() error {
 	logger.Infof("Initializing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	ctx := tss.NewPeerContext(s.partyIDs)
-	params := tss.NewParameters(tss.S256(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold)
+	params, err := newTSSParameters(tss.S256(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold, s.sessionNonce)
+	if err != nil {
+		return fmt.Errorf("failed to build ECDSA keygen parameters: %w", err)
+	}
 	s.party = keygen.NewLocalParty(params, s.outCh, s.endCh, *s.preParams)
 	logger.Infof("[INITIALIZED] Initialized session successfully partyID: %s, peerIDs %s, walletID %s, threshold = %d", s.selfPartyID, s.partyIDs, s.walletID, s.threshold)
+	return nil
 }
 
 func (s *ecdsaKeygenSession) GenerateKey(done func()) {

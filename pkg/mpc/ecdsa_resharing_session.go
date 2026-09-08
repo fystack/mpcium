@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"math/big"
 
 	"github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 	"github.com/bnb-chain/tss-lib/v3/ecdsa/resharing"
@@ -33,7 +34,10 @@ type ecdsaReshareSession struct {
 	oldPeerIDs    []string
 	newPeerIDs    []string
 	reshareParams *tss.ReSharingParameters
-	endCh         chan *keygen.LocalPartySaveData
+	// paramsErr defers a session-nonce failure to Init, since the constructor
+	// cannot return an error.
+	paramsErr error
+	endCh     chan *keygen.LocalPartySaveData
 }
 
 func NewECDSAReshareSession(
@@ -54,6 +58,7 @@ func NewECDSAReshareSession(
 	newPeerIDs []string,
 	isNewParty bool,
 	version int,
+	sessionNonce *big.Int,
 ) *ecdsaReshareSession {
 
 	realPartyIDs := oldPartyIDs
@@ -69,6 +74,7 @@ func NewECDSAReshareSession(
 		participantPeerIDs: participantPeerIDs,
 		selfPartyID:        selfID,
 		partyIDs:           realPartyIDs,
+		sessionNonce:       sessionNonce,
 		outCh:              make(chan tss.Message),
 		ErrCh:              make(chan error, 1),
 		doneCh:             make(chan struct{}),
@@ -92,7 +98,7 @@ func NewECDSAReshareSession(
 		sessionType:   SessionTypeECDSA,
 		identityStore: identityStore,
 	}
-	reshareParams := tss.NewReSharingParameters(
+	reshareParams, paramsErr := newTSSReSharingParameters(
 		tss.S256(),
 		tss.NewPeerContext(oldPartyIDs),
 		tss.NewPeerContext(newPartyIDs),
@@ -101,6 +107,7 @@ func NewECDSAReshareSession(
 		threshold,
 		len(newPartyIDs),
 		newThreshold,
+		sessionNonce,
 	)
 
 	var oldPeerIDs []string
@@ -111,6 +118,7 @@ func NewECDSAReshareSession(
 	return &ecdsaReshareSession{
 		session:       &session,
 		reshareParams: reshareParams,
+		paramsErr:     paramsErr,
 		isNewParty:    isNewParty,
 		oldPeerIDs:    oldPeerIDs,
 		newPeerIDs:    newPeerIDs,
@@ -141,6 +149,9 @@ func (s *ecdsaReshareSession) GetLegacyCommitteePeers() []string {
 }
 
 func (s *ecdsaReshareSession) Init() error {
+	if s.paramsErr != nil {
+		return fmt.Errorf("failed to build ecdsa resharing parameters: %w", s.paramsErr)
+	}
 	logger.Infof("Initializing ecdsa resharing session with partyID: %s, newPartyIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 
