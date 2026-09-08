@@ -407,6 +407,17 @@ func (r *Runtime) handlePeer(raw []byte) error {
 			"from_participant", msg.FromParticipantID,
 			"phase", string(msg.Phase),
 		)
+		// A terminal failure (e.g. incompatible wire version, invalid peer
+		// signature) still returns a signed SessionFailed report in actions.
+		// Dispatch it so the orchestrator fails fast instead of waiting for the
+		// session TTL to expire.
+		if derr := r.dispatchActions(actions); derr != nil {
+			logger.Error("dispatch failure actions failed", derr,
+				"participant_id", r.cfg.ParticipantID,
+				"session_id", msg.SessionID,
+				"from_participant", msg.FromParticipantID,
+			)
+		}
 		return err
 	}
 	return r.dispatchActions(actions)
@@ -473,6 +484,15 @@ func (r *Runtime) flushPendingPeerMessages(sessionID string) error {
 			if errors.Is(err, participant.ErrPartyNotRunning) {
 				r.enqueuePendingPeerMessage(msg)
 				return nil
+			}
+			// Dispatch any signed SessionFailed report so the orchestrator
+			// fails fast rather than waiting for the session TTL.
+			if derr := r.dispatchActions(actions); derr != nil {
+				logger.Error("dispatch failure actions failed", derr,
+					"participant_id", r.cfg.ParticipantID,
+					"session_id", sessionID,
+					"from_participant", msg.FromParticipantID,
+				)
 			}
 			return err
 		}
