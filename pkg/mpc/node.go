@@ -3,11 +3,12 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/fystack/mpcium/pkg/common/errors"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/keyinfo"
@@ -83,6 +84,7 @@ func (p *Node) CreateKeyGenSession(
 	walletID string,
 	threshold int,
 	resultQueue messaging.MessageQueue,
+	sessionNonce *big.Int,
 ) (KeyGenSession, error) {
 	if !p.peerRegistry.ArePeersReady() {
 		return nil, errors.New("All nodes are not ready!")
@@ -95,15 +97,15 @@ func (p *Node) CreateKeyGenSession(
 
 	switch sessionType {
 	case SessionTypeECDSA:
-		return p.createECDSAKeyGenSession(walletID, threshold, DefaultVersion, resultQueue)
+		return p.createECDSAKeyGenSession(walletID, threshold, DefaultVersion, resultQueue, sessionNonce)
 	case SessionTypeEDDSA:
-		return p.createEDDSAKeyGenSession(walletID, threshold, DefaultVersion, resultQueue)
+		return p.createEDDSAKeyGenSession(walletID, threshold, DefaultVersion, resultQueue, sessionNonce)
 	default:
 		return nil, fmt.Errorf("Unknown session type: %s", sessionType)
 	}
 }
 
-func (p *Node) createECDSAKeyGenSession(walletID string, threshold int, version int, resultQueue messaging.MessageQueue) (KeyGenSession, error) {
+func (p *Node) createECDSAKeyGenSession(walletID string, threshold int, version int, resultQueue messaging.MessageQueue, sessionNonce *big.Int) (KeyGenSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generatePartyIDs(PurposeKeygen, readyPeerIDs, version)
 	session := newECDSAKeygenSession(
@@ -119,11 +121,12 @@ func (p *Node) createECDSAKeyGenSession(walletID string, threshold int, version 
 		p.keyinfoStore,
 		resultQueue,
 		p.identityStore,
+		sessionNonce,
 	)
 	return session, nil
 }
 
-func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version int, resultQueue messaging.MessageQueue) (KeyGenSession, error) {
+func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version int, resultQueue messaging.MessageQueue, sessionNonce *big.Int) (KeyGenSession, error) {
 	readyPeerIDs := p.peerRegistry.GetReadyPeersIncludeSelf()
 	selfPartyID, allPartyIDs := p.generatePartyIDs(PurposeKeygen, readyPeerIDs, version)
 	session := newEDDSAKeygenSession(
@@ -138,6 +141,7 @@ func (p *Node) createEDDSAKeyGenSession(walletID string, threshold int, version 
 		p.keyinfoStore,
 		resultQueue,
 		p.identityStore,
+		sessionNonce,
 	)
 	return session, nil
 }
@@ -151,6 +155,7 @@ func (p *Node) CreateSigningSession(
 	resultQueue messaging.MessageQueue,
 	derivationPath []uint32,
 	idempotentKey string,
+	sessionNonce *big.Int,
 ) (SigningSession, error) {
 	version := p.getVersion(sessionType, walletID)
 	keyInfo, err := p.getKeyInfo(sessionType, walletID)
@@ -201,6 +206,7 @@ func (p *Node) CreateSigningSession(
 			derivationPath,
 			idempotentKey,
 			p.ckd,
+			sessionNonce,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -222,6 +228,7 @@ func (p *Node) CreateSigningSession(
 			derivationPath,
 			idempotentKey,
 			p.ckd,
+			sessionNonce,
 		), nil
 	}
 
@@ -267,6 +274,7 @@ func (p *Node) CreateReshareSession(
 	newPeerIDs []string,
 	isNewPeer bool,
 	resultQueue messaging.MessageQueue,
+	sessionNonce *big.Int,
 ) (ReshareSession, error) {
 	// 1. Check peer readiness
 	count := p.peerRegistry.GetReadyPeersCount()
@@ -382,6 +390,7 @@ func (p *Node) CreateReshareSession(
 			newPeerIDs,
 			isNewPeer,
 			oldKeyInfo.Version,
+			sessionNonce,
 		), nil
 
 	case SessionTypeEDDSA:
@@ -402,6 +411,7 @@ func (p *Node) CreateReshareSession(
 			newPeerIDs,
 			isNewPeer,
 			oldKeyInfo.Version,
+			sessionNonce,
 		), nil
 
 	default:

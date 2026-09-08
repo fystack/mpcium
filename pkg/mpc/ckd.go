@@ -1,16 +1,17 @@
 package mpc
 
 import (
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 
-	"github.com/bnb-chain/tss-lib/v2/crypto"
-	"github.com/bnb-chain/tss-lib/v2/crypto/ckd"
-	ecdsaKeygen "github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	eddsaKeygen "github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/crypto"
+	"github.com/bnb-chain/tss-lib/v3/crypto/ckd"
+	ecdsaKeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	eddsaKeygen "github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
@@ -69,7 +70,12 @@ func (c *CKD) Derive(walletID string, masterPub *crypto.ECPoint, path []uint32, 
 func (c *CKD) derivingPubkeyFromPath(masterPub *crypto.ECPoint, chainCode []byte, path []uint32, ec elliptic.Curve) (*big.Int, *ckd.ExtendedKey, error) {
 	net := &chaincfg.MainNetParams
 	parent := &ckd.ExtendedKey{
-		PublicKey:  masterPub,
+		// tss-lib v3 changed ExtendedKey.PublicKey from *crypto.ECPoint to ecdsa.PublicKey.
+		PublicKey: ecdsa.PublicKey{
+			Curve: masterPub.Curve(),
+			X:     masterPub.X(),
+			Y:     masterPub.Y(),
+		},
 		Depth:      0,
 		ChildIndex: 0,
 		ChainCode:  chainCode,
@@ -85,15 +91,16 @@ func (c *CKD) derivingPubkeyFromPath(masterPub *crypto.ECPoint, chainCode []byte
 }
 
 // ECDSAUpdateSinglePublicKeyAndAdjustBigXj updates ECDSA public key and BigXj.
-func (c *CKD) ECDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *ecdsaKeygen.LocalPartySaveData, childPk *crypto.ECPoint, ec elliptic.Curve) error {
+func (c *CKD) ECDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *ecdsaKeygen.LocalPartySaveData, childPk ecdsa.PublicKey, ec elliptic.Curve) error {
 	if key == nil {
 		return ErrNilKey
 	}
-	if childPk == nil {
-		return ErrNilPoint
+	childPoint, err := crypto.NewECPoint(ec, childPk.X, childPk.Y)
+	if err != nil {
+		return fmt.Errorf("invalid child public key: %w", err)
 	}
 	gDelta := crypto.ScalarBaseMult(ec, delta)
-	key.ECDSAPub = childPk
+	key.ECDSAPub = childPoint
 	for i := range key.BigXj {
 		updated, err := key.BigXj[i].Add(gDelta)
 		if err != nil {
@@ -105,15 +112,16 @@ func (c *CKD) ECDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *ecds
 }
 
 // EDDSAUpdateSinglePublicKeyAndAdjustBigXj updates EdDSA public key and BigXj.
-func (c *CKD) EDDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *eddsaKeygen.LocalPartySaveData, childPk *crypto.ECPoint, ec elliptic.Curve) error {
+func (c *CKD) EDDSAUpdateSinglePublicKeyAndAdjustBigXj(delta *big.Int, key *eddsaKeygen.LocalPartySaveData, childPk ecdsa.PublicKey, ec elliptic.Curve) error {
 	if key == nil {
 		return ErrNilKey
 	}
-	if childPk == nil {
-		return ErrNilPoint
+	childPoint, err := crypto.NewECPoint(ec, childPk.X, childPk.Y)
+	if err != nil {
+		return fmt.Errorf("invalid child public key: %w", err)
 	}
 	gDelta := crypto.ScalarBaseMult(ec, delta)
-	key.EDDSAPub = childPk
+	key.EDDSAPub = childPoint
 	for i := range key.BigXj {
 		updated, err := key.BigXj[i].Add(gDelta)
 		if err != nil {

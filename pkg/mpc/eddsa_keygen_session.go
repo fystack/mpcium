@@ -3,9 +3,10 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 
-	"github.com/bnb-chain/tss-lib/v2/eddsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
 	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/keyinfo"
@@ -32,6 +33,7 @@ func newEDDSAKeygenSession(
 	keyinfoStore keyinfo.Store,
 	resultQueue messaging.MessageQueue,
 	identityStore identity.Store,
+	sessionNonce *big.Int,
 ) *eddsaKeygenSession {
 	return &eddsaKeygenSession{session: session{
 		walletID:           walletID,
@@ -42,6 +44,7 @@ func newEDDSAKeygenSession(
 		participantPeerIDs: participantPeerIDs,
 		selfPartyID:        selfID,
 		partyIDs:           partyIDs,
+		sessionNonce:       sessionNonce,
 		outCh:              make(chan tss.Message),
 		ErrCh:              make(chan error, 1),
 		doneCh:             make(chan struct{}),
@@ -67,12 +70,16 @@ func newEDDSAKeygenSession(
 	}
 }
 
-func (s *eddsaKeygenSession) Init() {
+func (s *eddsaKeygenSession) Init() error {
 	logger.Infof("Initializing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	ctx := tss.NewPeerContext(s.partyIDs)
-	params := tss.NewParameters(tss.Edwards(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold)
+	params, err := newTSSParameters(tss.Edwards(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold, s.sessionNonce)
+	if err != nil {
+		return fmt.Errorf("failed to build EdDSA keygen parameters: %w", err)
+	}
 	s.party = keygen.NewLocalParty(params, s.outCh, s.endCh)
 	logger.Infof("[INITIALIZED] Initialized session successfully partyID: %s, peerIDs %s, walletID %s, threshold = %d", s.selfPartyID, s.partyIDs, s.walletID, s.threshold)
+	return nil
 }
 
 func (s *eddsaKeygenSession) GenerateKey(done func()) {

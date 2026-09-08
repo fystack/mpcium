@@ -3,7 +3,7 @@ package types
 import (
 	"encoding/json"
 
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type TssMessage struct {

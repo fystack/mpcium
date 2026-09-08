@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/bnb-chain/tss-lib/v2/common"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/signing"
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	"github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/ecdsa/signing"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/fystack/mpcium/pkg/common/errors"
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/identity"
@@ -66,6 +66,7 @@ func newECDSASigningSession(
 	derivationPath []uint32,
 	idempotentKey string,
 	ckd *CKD,
+	sessionNonce *big.Int,
 ) *ecdsaSigningSession {
 
 	return &ecdsaSigningSession{
@@ -77,6 +78,7 @@ func newECDSASigningSession(
 			participantPeerIDs: participantPeerIDs,
 			selfPartyID:        selfID,
 			partyIDs:           partyIDs,
+			sessionNonce:       sessionNonce,
 			outCh:              make(chan tss.Message),
 			ErrCh:              make(chan error, 1),
 			doneCh:             make(chan struct{}),
@@ -112,7 +114,10 @@ func newECDSASigningSession(
 func (s *ecdsaSigningSession) Init(tx *big.Int) error {
 	logger.Infof("Initializing signing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	ctx := tss.NewPeerContext(s.partyIDs)
-	params := tss.NewParameters(tss.S256(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold)
+	params, err := newTSSParameters(tss.S256(), ctx, s.selfPartyID, len(s.partyIDs), s.threshold, s.sessionNonce)
+	if err != nil {
+		return errors.Wrap(err, "Failed to build ECDSA signing parameters")
+	}
 
 	keyInfo, err := s.keyinfoStore.Get(s.composeKey(s.walletID))
 	if err != nil {

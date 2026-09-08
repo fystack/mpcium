@@ -159,6 +159,15 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 
 	walletID := msg.WalletID
 
+	// Bind this ceremony's ZK proofs to a session-unique nonce, derived from the
+	// already-verified initiator request so every node computes the same value
+	// without a coordination round.
+	sessionNonce, err := mpc.SessionNonceFromInitiator(mpc.NonceDomainKeygen, &msg)
+	if err != nil {
+		ec.handleKeygenSessionError(walletID, err, "Failed to derive session nonce", natMsg)
+		return
+	}
+
 	// Attempt to get previously stored wallet creation result (if any) by the wallet ID
 	storedWalletCreationResult, storedWalletCreationResultError := ec.node.GetWalletCreationResult(walletID)
 
@@ -194,18 +203,24 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	}
 	defer ec.removeSession(walletID, "keygen")
 
-	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
+	ecdsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeECDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue, sessionNonce)
 	if err != nil {
 		ec.handleKeygenSessionError(walletID, err, "Failed to create ECDSA key generation session", natMsg)
 		return
 	}
-	eddsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeEDDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue)
+	eddsaSession, err := ec.node.CreateKeyGenSession(mpc.SessionTypeEDDSA, walletID, ec.mpcThreshold, ec.genKeyResultQueue, sessionNonce)
 	if err != nil {
 		ec.handleKeygenSessionError(walletID, err, "Failed to create EdDSA key generation session", natMsg)
 		return
 	}
-	ecdsaSession.Init()
-	eddsaSession.Init()
+	if err := ecdsaSession.Init(); err != nil {
+		ec.handleKeygenSessionError(walletID, err, "Failed to initialize ECDSA key generation session", natMsg)
+		return
+	}
+	if err := eddsaSession.Init(); err != nil {
+		ec.handleKeygenSessionError(walletID, err, "Failed to initialize EdDSA key generation session", natMsg)
+		return
+	}
 
 	ctxEcdsa, doneEcdsa := context.WithCancel(baseCtx)
 	ctxEddsa, doneEddsa := context.WithCancel(baseCtx)
@@ -436,6 +451,19 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		return
 	}
 
+	sessionNonce, err := mpc.SessionNonceFromInitiator(mpc.NonceDomainSigning, &msg)
+	if err != nil {
+		ec.handleSigningSessionError(
+			msg.WalletID,
+			msg.TxID,
+			msg.NetworkInternalCode,
+			err,
+			"Failed to derive session nonce",
+			natMsg,
+		)
+		return
+	}
+
 	var session mpc.SigningSession
 	idempotentKey := composeSigningIdempotentKey(msg.TxID, natMsg)
 	resultTopic := event.SigningResultSubject(natMsg.Header.Get(event.ClientIDHeader))
@@ -451,6 +479,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			ec.signingResultQueue,
 			msg.DerivationPath,
 			idempotentKey,
+			sessionNonce,
 		)
 	case types.KeyTypeEd25519:
 		session, sessionErr = ec.node.CreateSigningSession(
@@ -462,6 +491,7 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 			ec.signingResultQueue,
 			msg.DerivationPath,
 			idempotentKey,
+			sessionNonce,
 		)
 	default:
 		sessionErr = fmt.Errorf("unsupported key type: %v", msg.KeyType)
@@ -676,6 +706,13 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 			return
 		}
 
+		sessionNonce, err := mpc.SessionNonceFromInitiator(mpc.NonceDomainReshare, &msg)
+		if err != nil {
+			logger.Error("Failed to derive session nonce", err)
+			ec.handleReshareSessionError(msg.SessionID, walletID, keyType, msg.NewThreshold, err, "Failed to derive session nonce", natMsg)
+			return
+		}
+
 		createSession := func(isNewPeer bool) (mpc.ReshareSession, error) {
 			return ec.node.CreateReshareSession(
 				sessionType,
@@ -684,6 +721,7 @@ func (ec *eventConsumer) consumeReshareEvent() error {
 				msg.NodeIDs,
 				isNewPeer,
 				ec.reshareResultQueue,
+				sessionNonce,
 			)
 		}
 

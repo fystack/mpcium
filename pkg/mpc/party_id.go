@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/bnb-chain/tss-lib/v2/tss"
+	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/google/uuid"
 )
 
