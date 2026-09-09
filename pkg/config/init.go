@@ -40,6 +40,9 @@ type ConsulConfig struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	Token    string `mapstructure:"token"`
+	// CACert is the path to the CA certificate used to verify the Consul
+	// server certificate when connecting over HTTPS (production only).
+	CACert string `mapstructure:"ca_cert"`
 }
 
 type NATsConfig struct {

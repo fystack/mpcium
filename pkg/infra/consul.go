@@ -28,6 +28,13 @@ func GetConsulClient(environment string) *api.Client {
 				Password: password,
 			}
 		}
+
+		// Trust a custom CA for the Consul HTTPS endpoint. When unset, the
+		// client falls back to CONSUL_CACERT/CONSUL_CAPATH env vars and then
+		// the system trust store.
+		if caCert := viper.GetString("consul.ca_cert"); caCert != "" {
+			config.TLSConfig.CAFile = caCert
+		}
 	}
 
 	config.Address = viper.GetString("consul.address")
@@ -44,6 +51,7 @@ func GetConsulClient(environment string) *api.Client {
 		"wait_time", config.WaitTime,
 		"token_length", tokenLength,
 		"http_auth", config.HttpAuth,
+		"ca_cert", config.TLSConfig.CAFile,
 	)
 
 	// Ping the Consul server to verify connectivity
