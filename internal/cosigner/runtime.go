@@ -17,6 +17,7 @@ import (
 	"github.com/fystack/mpcium-sdk/participant"
 	sdkprotocol "github.com/fystack/mpcium-sdk/protocol"
 	"github.com/fystack/mpcium/pkg/logger"
+	"github.com/fystack/mpcium/pkg/security"
 )
 
 type Runtime struct {
@@ -34,8 +35,10 @@ type Runtime struct {
 }
 
 type sessionMeta struct {
-	protocol string
-	action   string
+	protocol     string
+	action       string
+	protocolType sdkprotocol.ProtocolType
+	workspaceID  string
 }
 
 const bootstrapPreparamsSlot = "bootstrap"
@@ -231,8 +234,10 @@ func (r *Runtime) handleControl(raw []byte) error {
 
 	if msg.SessionStart != nil {
 		meta := sessionMeta{
-			protocol: protocolLabel(msg.SessionStart.Protocol),
-			action:   actionLabel(msg.SessionStart.Operation),
+			protocol:     protocolLabel(msg.SessionStart.Protocol),
+			action:       actionLabel(msg.SessionStart.Operation),
+			protocolType: msg.SessionStart.Protocol,
+			workspaceID:  msg.SessionStart.WorkspaceID,
 		}
 		logger.Info("cosigner received session start",
 			"session_id", msg.SessionID,
@@ -252,6 +257,28 @@ func (r *Runtime) handleControl(raw []byte) error {
 		}
 		return nil
 	}
+
+	if msg.ExportShare != nil {
+		r.sessionOpsMu.Lock()
+		defer r.sessionOpsMu.Unlock()
+		if err := r.handleExportShare(&msg); err != nil {
+			logger.Error("export share failed", err,
+				"participant_id", r.cfg.ParticipantID,
+				"session_id", msg.SessionID,
+				"key_id", msg.ExportShare.KeyID,
+			)
+			reason := sdkprotocol.FailureReasonInvalidMessage
+			if strings.Contains(err.Error(), "orchestrator") || strings.Contains(err.Error(), "signature") {
+				reason = sdkprotocol.FailureReasonInvalidSignature
+			}
+			if pubErr := r.publishSessionFailed(msg.SessionID, reason, err.Error()); pubErr != nil {
+				logger.Warn("failed to publish export failed event", "session_id", msg.SessionID, "error", pubErr)
+			}
+			return err
+		}
+		return nil
+	}
+
 	meta := r.getSessionMeta(msg.SessionID)
 	logger.Debug("cosigner received control message",
 		"participant_id", r.cfg.ParticipantID,
@@ -551,6 +578,9 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 			return err
 		}
 	}
+	if actions.Result != nil && actions.Result.KeyShare != nil {
+		r.recordShareWorkspace(actions.Result.KeyShare.KeyID, actions.Cleanup)
+	}
 	if actions.Cleanup != nil && actions.Cleanup.DropCheckpoint {
 		outcome := "cleanup"
 		if actions.Result != nil {
@@ -570,6 +600,95 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 		_ = r.stores.DeleteSessionCheckpoint(actions.Cleanup.SessionID)
 	}
 	return nil
+}
+
+// handleExportShare returns this node's local share for the requested key,
+// end-to-end encrypted to the recipient RSA key. It is not an MPC session.
+// Authorization is layered: orchestrator signature, node enablement gate,
+// and a workspace match against the share's stored metadata.
+func (r *Runtime) handleExportShare(msg *sdkprotocol.ControlMessage) error {
+	req := msg.ExportShare
+	if err := r.verifyControlSignature(msg); err != nil {
+		return err
+	}
+	if !r.cfg.ExportEnabled {
+		return errors.New("share export is disabled on this node")
+	}
+	storedWorkspace, err := r.stores.LoadShareWorkspace(req.Protocol, req.KeyID)
+	if err != nil {
+		return fmt.Errorf("load share workspace: %w", err)
+	}
+	if storedWorkspace == "" {
+		// Legacy share generated before node-side workspace binding existed.
+		// Authorization falls back to the orchestrator signature (already
+		// verified) plus the orchestrator-supplied, apex-authorized workspace.
+		logger.Warn("exporting share without node workspace metadata; relying on orchestrator authorization",
+			"key_id", req.KeyID, "workspace_id", req.WorkspaceID)
+	} else if storedWorkspace != req.WorkspaceID {
+		return errors.New("workspace mismatch for requested key")
+	}
+
+	share, err := r.stores.LoadShare(req.Protocol, req.KeyID)
+	if err != nil {
+		return fmt.Errorf("load share: %w", err)
+	}
+	if len(share) == 0 {
+		return errors.New("share not found")
+	}
+	defer security.ZeroBytes(share)
+
+	aad := sdkprotocol.ExportEnvelopeAAD(req.KeyID, req.Protocol, r.cfg.ParticipantID)
+	envelope, err := sdkprotocol.BuildExportEnvelope(share, req.RecipientPubKeyPEM, aad)
+	if err != nil {
+		return fmt.Errorf("build export envelope: %w", err)
+	}
+
+	event := &sdkprotocol.SessionEvent{
+		SessionID:     msg.SessionID,
+		ParticipantID: r.cfg.ParticipantID,
+		Sequence:      uint64(time.Now().UTC().UnixNano()),
+		ExportShareDone: &sdkprotocol.ExportShareResult{
+			KeyID:         req.KeyID,
+			Protocol:      req.Protocol,
+			ParticipantID: r.cfg.ParticipantID,
+			Envelope:      envelope,
+		},
+	}
+	payload, err := sdkprotocol.SessionEventSigningBytes(event)
+	if err != nil {
+		return err
+	}
+	if len(r.cfg.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("invalid identity private key size: %d", len(r.cfg.IdentityPrivateKey))
+	}
+	event.Signature = ed25519.Sign(ed25519.PrivateKey(r.cfg.IdentityPrivateKey), payload)
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	logger.Info("cosigner exported share",
+		"participant_id", r.cfg.ParticipantID,
+		"key_id", req.KeyID,
+		"workspace_id", req.WorkspaceID,
+	)
+	return r.relay.Publish(sessionEventSubject(msg.SessionID), raw)
+}
+
+// recordShareWorkspace persists the owning workspace for a freshly generated
+// share so a later export can be authorized at the node. A legacy
+// orchestrator that omits WorkspaceID leaves no record, and export for that
+// key fails closed until backfilled.
+func (r *Runtime) recordShareWorkspace(keyID string, cleanup *participant.CleanupHint) {
+	if cleanup == nil {
+		return
+	}
+	meta := r.getSessionMeta(cleanup.SessionID)
+	if meta.workspaceID == "" || meta.protocolType == "" || keyID == "" {
+		return
+	}
+	if err := r.stores.SaveShareWorkspace(meta.protocolType, keyID, meta.workspaceID); err != nil {
+		logger.Warn("failed to record share workspace", "key_id", keyID, "error", err)
+	}
 }
 
 func (r *Runtime) publishSessionFailed(sessionID string, reason sdkprotocol.FailureReason, detail string) error {
@@ -631,6 +750,8 @@ func controlType(msg *sdkprotocol.ControlMessage) string {
 		return "session_abort"
 	case msg.SessionStart != nil:
 		return "session_start"
+	case msg.ExportShare != nil:
+		return "export_share"
 	default:
 		return "unknown"
 	}
@@ -784,5 +905,6 @@ func hasControlBody(msg *sdkprotocol.ControlMessage) bool {
 		msg.KeyExchange != nil ||
 		msg.MPCBegin != nil ||
 		msg.ReshareCommit != nil ||
-		msg.SessionAbort != nil
+		msg.SessionAbort != nil ||
+		msg.ExportShare != nil
 }

@@ -24,6 +24,15 @@ type SharesStore interface {
 	SaveShare(protocolType sdkprotocol.ProtocolType, keyID string, share []byte) error
 }
 
+// ShareMetaStore binds a stored share to its owning workspace so an export
+// request can be authorized at the node (defense in depth against an
+// orchestrator bypass). It is written at keygen completion; legacy shares
+// have no record and export fails closed for them.
+type ShareMetaStore interface {
+	LoadShareWorkspace(protocolType sdkprotocol.ProtocolType, keyID string) (string, error)
+	SaveShareWorkspace(protocolType sdkprotocol.ProtocolType, keyID, workspaceID string) error
+}
+
 type SessionArtifactsStore interface {
 	LoadSessionArtifacts(sessionID string) ([]byte, error)
 	SaveSessionArtifacts(sessionID string, artifact []byte) error
@@ -48,6 +57,7 @@ type ShareRotationStore interface {
 type Stores interface {
 	PreparamsStore
 	SharesStore
+	ShareMetaStore
 	ShareRotationStore
 	SessionCheckpointStore
 	SessionArtifactsStore
@@ -102,6 +112,18 @@ func (s *badgerStores) LoadShare(protocolType sdkprotocol.ProtocolType, keyID st
 
 func (s *badgerStores) SaveShare(protocolType sdkprotocol.ProtocolType, keyID string, share []byte) error {
 	return s.save(keyShare(protocolType, keyID), share)
+}
+
+func (s *badgerStores) LoadShareWorkspace(protocolType sdkprotocol.ProtocolType, keyID string) (string, error) {
+	value, err := s.load(keyShareMeta(protocolType, keyID))
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
+}
+
+func (s *badgerStores) SaveShareWorkspace(protocolType sdkprotocol.ProtocolType, keyID, workspaceID string) error {
+	return s.save(keyShareMeta(protocolType, keyID), []byte(workspaceID))
 }
 
 // StageShareRotation records the pending mutation for (keyID, sessionID). It is
@@ -286,6 +308,10 @@ func keyPreparamsActiveSlot(protocolType sdkprotocol.ProtocolType) string {
 
 func keyShare(protocolType sdkprotocol.ProtocolType, keyID string) string {
 	return fmt.Sprintf("shares:%s:%s", protocolType, keyID)
+}
+
+func keyShareMeta(protocolType sdkprotocol.ProtocolType, keyID string) string {
+	return fmt.Sprintf("share-meta:%s:%s", protocolType, keyID)
 }
 
 func keyShareRotationPending(protocolType sdkprotocol.ProtocolType, keyID, sessionID string) string {
