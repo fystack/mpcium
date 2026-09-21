@@ -14,7 +14,7 @@ require (
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
 	github.com/dgraph-io/badger/v4 v4.9.0
-	github.com/fystack/mpcium-sdk v0.0.4
+	github.com/fystack/mpcium-sdk v0.0.5
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/consul/api v1.33.2
 	github.com/mitchellh/mapstructure v1.5.0
