@@ -106,5 +106,3 @@ require (
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
 replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.1
-
-replace github.com/fystack/mpcium-sdk => ../mpcium-sdk

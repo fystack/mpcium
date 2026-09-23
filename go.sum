@@ -103,6 +103,8 @@ github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7z
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
+github.com/fystack/mpcium-sdk v0.0.5 h1:Uf+ySyYAFaMPzH12JouHJ4p+bVe9oz+l0WCyAjKfUhY=
+github.com/fystack/mpcium-sdk v0.0.5/go.mod h1:aXchzJmovcKrlviAzub0r7OQBXtCVlpO+f5ZyB3YtaE=
 github.com/fystack/tss-lib/v3 v3.0.1 h1:0pGxiJZfFMxScNvmrgoTKhbVUVlwhX0a6ihsK8Wo0Is=
 github.com/fystack/tss-lib/v3 v3.0.1/go.mod h1:2YiekCEVQ+XNOq2ECsJDvYeGs1vgK+cfOHJ357XIWIk=
 github.com/go-kit/kit v0.8.0/go.mod h1:xBxKIO96dXMWWy0MnWVtmwkA9/13aqxPnvrjFYMA2as=
