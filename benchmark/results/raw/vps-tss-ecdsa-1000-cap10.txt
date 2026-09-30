@@ -1,0 +1,27 @@
+
+===============================
+ECDSA SIGNING BENCHMARK RESULTS SUMMARY
+===============================
+Timestamp: 2026-09-30T14:36:01+07:00
+Operation Type: ECDSA Signing
+Total benchmark time: 7m27.426573292s
+Total batches sent: 125
+Total requests sent: 1000
+Successful completions: 1000
+Failed operations: 0
+Success rate: 100.00%
+Error rate: 0.00%
+Average operations per minute: 134.10
+Average operation time: 3m32.290703928s
+Median operation time: 3m33.273736958s
+
+------------------------------
+8 REQUEST ANALYSIS
+------------------------------
+Completed from first 8: 8/8
+Fastest (first 8): 1.102877334s
+Slowest (first 8): 3.850252708s
+
+
+================================================================================
+

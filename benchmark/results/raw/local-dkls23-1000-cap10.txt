@@ -1,0 +1,27 @@
+
+===============================
+DKLS23 SIGNING BENCHMARK RESULTS SUMMARY
+===============================
+Timestamp: 2026-09-30T13:52:52+07:00
+Operation Type: DKLS23 Signing
+Total benchmark time: 13.671956041s
+Total batches sent: 125
+Total requests sent: 1000
+Successful completions: 1000
+Failed operations: 0
+Success rate: 100.00%
+Error rate: 0.00%
+Average operations per minute: 4388.55
+Average operation time: 41.682814ms
+Median operation time: 39.163937ms
+
+------------------------------
+8 REQUEST ANALYSIS
+------------------------------
+Completed from first 8: 8/8
+Fastest (first 8): 27.632958ms
+Slowest (first 8): 29.8025ms
+
+
+================================================================================
+
