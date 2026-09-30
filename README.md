@@ -471,6 +471,63 @@ mpcium generate-authorizer \
 - `--encrypt` stores the private key as `<name>.authorizer.key.age`; omit it to write the plain hex key.
 - The identity JSON is saved as `<name>.authorizer.identity.json`; copy the `public_key` into `authorization.authorizer_public_keys`.
 
+## DKLs23 (optional ECDSA backend)
+
+Besides tss-lib, Mpcium can sign with [DKLs23](https://eprint.iacr.org/2023/765) threshold ECDSA (secp256k1 only). It uses far less CPU per signature and is much faster at scale; see [benchmark results](./benchmark/results/dkls-vs-tss.md).
+
+![DKLs23 vs tss-lib signing throughput](./benchmark/results/dkls-vs-tss.svg)
+
+It is opt-in: the Rust library is built through cgo behind the `dkls` build tag, and the default build does not include it.
+
+### Build
+
+```bash
+git submodule update --init third_party/dkls23   # needs read access to fystack/DKLs23
+make dkls-lib                                    # cargo build --release (Rust toolchain required)
+go build -tags dkls -o mpcium ./cmd/mpcium
+```
+
+- Clone with `--recurse-submodules` to fetch the submodule in one step.
+- The binary loads the library built in `third_party/dkls23/target/release`, so run it on the machine that built it.
+- All nodes must run a `-tags dkls` build of the same version; upgrade them together.
+- `mpcium-cli` and Go clients need no build tag.
+
+### Use
+
+Nodes start as usual (`mpcium start -n node0`). Clients opt in per request with `types.ProtocolDkls23`:
+
+```go
+// Keygen also creates the tss-lib ECDSA/EdDSA keys; the DKLs23 result carries DKLSPubKey and DKLSChainCode.
+mpcClient.CreateWalletWithProtocol(walletID, types.ProtocolDkls23, nil)
+
+mpcClient.SignTransaction(&types.SignTxMessage{
+    KeyType:        types.KeyTypeSecp256k1,
+    Protocol:       types.ProtocolDkls23,
+    WalletID:       walletID,
+    TxID:           txID,
+    Tx:             hash32[:],        // DKLs23 signs a 32-byte hash
+    DerivationPath: []uint32{1, 5},   // optional, see below
+})
+```
+
+- The signing result has `R`, `S`, `SignatureRecovery`, and `Signature` (`r || s`).
+- `dkls_pub_key` is the 64-byte `X||Y` public key, the same format as tss-lib ECDSA keys.
+- **HD derivation:** set `DerivationPath` to sign with a BIP-32 child key. Only non-hardened indices (below 2^31) work, because no party holds the full key. The chain code comes from the DKG, not from `chain_code` in the config. With the public key and `dkls_chain_code`, clients derive child public keys offline.
+- Not supported for DKLs23 wallets: EdDSA and resharing.
+
+A runnable end-to-end example (keygen, sign with the master and a child key, verify both signatures):
+
+```bash
+go run ./examples/dkls --path 1,5
+```
+
+### Tests
+
+```bash
+make test-dkls          # in-memory and in-process tests
+make test-dkls-nats     # same, plus real NATS (starts a Docker container)
+```
+
 ### Testing
 
 ## 1. Unit tests
@@ -515,3 +572,21 @@ mpcium-cli benchmark --config config.yaml --output signing-results.txt \
 ```
 
 Use `--prompt-password` for secure key password input and `--help` for all options.
+
+### DKLs23 Benchmark
+
+```bash
+# Create a DKLs23 wallet; the wallet ID is printed as "Wallet created: <id>"
+mpcium-cli benchmark --client-id run1 keygen-dkls 1
+
+# Sign 1000 requests and write the summary to a file
+mpcium-cli benchmark --client-id run1 --output dkls.txt sign-dkls23 1000 <wallet-id> --batch-size 8
+
+# Library-level comparison (tss-lib vs DKLs23, no network) and a real-NATS run
+make bench-dkls
+make bench-dkls-nats
+```
+
+- Give every run its own `--client-id`. Without it, all clients share one results consumer and another consumer on the same NATS can take your results, so the benchmark waits until it times out.
+- Keep `max_concurrent_signing` at its default for tss-lib: its consumer handles one request at a time, and a large value makes requests wait past the ack time and get redelivered.
+- Saved results and a comparison with tss-lib are in [`benchmark/results`](./benchmark/results).
