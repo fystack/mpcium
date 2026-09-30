@@ -1,0 +1,4 @@
+[submodule "third_party/dkls23"]
+	path = third_party/dkls23
+	url = git@github.com:fystack/DKLs23.git
+	branch = dev

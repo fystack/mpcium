@@ -28,3 +28,8 @@ config.yaml
 .gomodcache
 .codex
 relay.credentials
+# DKLs23 build output and local artifacts
+/mpcium
+/mpcium-cli
+*.test
+benchmark/output.txt
