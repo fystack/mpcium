@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	filippo.io/age v1.3.1
+	github.com/fystack/DKLs23/wrapper/go-ll v0.0.0-00010101000000-000000000000
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
@@ -106,3 +107,5 @@ require (
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
 replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.1
+
+replace github.com/fystack/DKLs23/wrapper/go-ll => ./third_party/dkls23/wrapper/go-ll
