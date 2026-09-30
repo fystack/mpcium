@@ -26,6 +26,9 @@ const (
 	MPCSignEvent     = "mpc:sign"
 	MPCReshareEvent  = "mpc:reshare"
 
+	MPCDklsGenerateEvent = "mpc:dkls:generate"
+	MPCDklsSignEvent     = "mpc:dkls:sign"
+
 	DefaultConcurrentKeygen  = 2
 	DefaultConcurrentSigning = 20
 	KeyGenTimeOut            = 30 * time.Second
@@ -436,9 +439,10 @@ func (ec *eventConsumer) handleSigningEvent(natMsg *nats.Msg) {
 		return
 	}
 
-	var session mpc.SigningSession
 	idempotentKey := composeSigningIdempotentKey(msg.TxID, natMsg)
 	resultTopic := event.SigningResultSubject(natMsg.Header.Get(event.ClientIDHeader))
+
+	var session mpc.SigningSession
 	var sessionErr error
 	switch msg.KeyType {
 	case types.KeyTypeSecp256k1:

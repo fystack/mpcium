@@ -269,6 +269,9 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	eventConsumer.Run()
 	defer eventConsumer.Close()
 
+	stopDkls := startDkls(nodeID, pubsub, identityStore, badgerKV, keyinfoStore, peerRegistry, genKeyResultQueue, singingResultQueue)
+	defer stopDkls()
+
 	timeoutConsumer := eventconsumer.NewTimeOutConsumer(
 		natsConn,
 		singingResultQueue,
