@@ -111,7 +111,7 @@ func (sc *signingConsumer) Run(ctx context.Context) error {
 		ctx,
 		event.SigningConsumerStream,
 		event.SigningRequestTopic,
-		sc.handleSigningEvent,
+		sc.dispatchSigningEvent,
 	)
 	if err != nil {
 		if ctx.Err() == context.Canceled {
@@ -147,6 +147,22 @@ func (sc *signingConsumer) Run(ctx context.Context) error {
 // The MPC signing sessions manage the distributed cryptographic operations across multiple nodes, handling message routing, party updates, and signature verification.
 // When signing completes, the session publishes the result to a queue and calls the onSuccess callback, which sends a reply to the inbox that the SigningConsumer is monitoring.
 // The reply signals completion, allowing the SigningConsumer to acknowledge the original message.
+// Only DKLs23 runs concurrently; tss-lib keeps its serial handling so its behavior is unchanged.
+func (sc *signingConsumer) dispatchSigningEvent(msg jetstream.Msg) {
+	if requestsDkls23(msg.Data()) {
+		go sc.handleSigningEvent(msg)
+		return
+	}
+	sc.handleSigningEvent(msg)
+}
+
+func requestsDkls23(data []byte) bool {
+	var probe struct {
+		Protocol types.Protocol `json:"protocol"`
+	}
+	return json.Unmarshal(data, &probe) == nil && probe.Protocol == types.ProtocolDkls23
+}
+
 func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	// Parse the signing request message to extract transaction details
 	raw := msg.Data()
@@ -192,7 +208,11 @@ func (sc *signingConsumer) handleSigningEvent(msg jetstream.Msg) {
 	if clientID != "" {
 		headers[event.ClientIDHeader] = clientID
 	}
-	if err := sc.pubsub.PublishWithReply(MPCSignEvent, replyInbox, msg.Data(), headers); err != nil {
+	subject := MPCSignEvent
+	if signingMsg.Protocol == types.ProtocolDkls23 {
+		subject = MPCDklsSignEvent
+	}
+	if err := sc.pubsub.PublishWithReply(subject, replyInbox, msg.Data(), headers); err != nil {
 		logger.Error("SigningConsumer: Failed to publish signing event with reply", err)
 		_ = msg.Nak()
 		return

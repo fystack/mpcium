@@ -172,6 +172,14 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	if clientID != "" {
 		headers[event.ClientIDHeader] = clientID
 	}
+	// The DKLs23 keygen runs alongside the tss-lib one; only the tss-lib reply acks the request.
+	if keygenMsg.Protocol == types.ProtocolDkls23 {
+		if err := sc.pubsub.Publish(MPCDklsGenerateEvent, msg.Data(), headers); err != nil {
+			logger.Error("KeygenConsumer: Failed to publish dkls keygen event", err)
+			_ = msg.Nak()
+			return
+		}
+	}
 	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data(), headers); err != nil {
 		logger.Error("KeygenConsumer: Failed to publish keygen event with reply", err)
 		_ = msg.Nak()
