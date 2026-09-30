@@ -17,6 +17,7 @@ import (
 type MPCClient interface {
 	CreateWallet(walletID string) error
 	CreateWalletWithAuthorizers(walletID string, authorizerSignatures []types.AuthorizerSignature) error
+	CreateWalletWithProtocol(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error
 	OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error
 
 	SignTransaction(msg *types.SignTxMessage) error
@@ -120,10 +121,23 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 
 // CreateWalletWithAuthorizers generates a GenerateKeyMessage with authorizer signatures, signs it, and publishes it.
 func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSignatures []types.AuthorizerSignature) error {
+	return c.createWallet(walletID, "", authorizerSignatures)
+}
+
+// CreateWalletWithProtocol is like CreateWalletWithAuthorizers but additionally
+// requests keygen from an alternate MPC backend (currently only
+// types.ProtocolDkls23) alongside the default tss-lib ECDSA/EdDSA keys. The
+// target cluster must be built with `-tags dkls` for this to succeed.
+func (c *mpcClient) CreateWalletWithProtocol(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error {
+	return c.createWallet(walletID, protocol, authorizerSignatures)
+}
+
+func (c *mpcClient) createWallet(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error {
 	// build the message
 	msg := &types.GenerateKeyMessage{
 		WalletID:             walletID,
 		AuthorizerSignatures: authorizerSignatures,
+		Protocol:             protocol,
 	}
 	// compute the canonical raw bytes
 	raw, err := msg.Raw()
