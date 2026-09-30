@@ -43,6 +43,9 @@ type Store interface {
 	SignMessage(msg *types.TssMessage) ([]byte, error)
 	VerifyMessage(msg *types.TssMessage) error
 
+	SignDklsMessage(msg *types.DklsMessage) ([]byte, error)
+	VerifyDklsMessage(msg *types.DklsMessage) error
+
 	SignEcdhMessage(msg *types.ECDHMessage) ([]byte, error)
 	VerifySignature(msg *types.ECDHMessage) error
 
@@ -505,6 +508,35 @@ func (s *fileStore) VerifyMessage(msg *types.TssMessage) error {
 		return fmt.Errorf("invalid signature")
 	}
 
+	return nil
+}
+
+func (s *fileStore) SignDklsMessage(msg *types.DklsMessage) ([]byte, error) {
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal dkls message for signing: %w", err)
+	}
+	return ed25519.Sign(s.privateKey, msgBytes), nil
+}
+
+func (s *fileStore) VerifyDklsMessage(msg *types.DklsMessage) error {
+	if msg.Signature == nil {
+		return fmt.Errorf("message has no signature")
+	}
+
+	publicKey, err := s.GetPublicKey(msg.From)
+	if err != nil {
+		return fmt.Errorf("failed to get sender's public key: %w", err)
+	}
+
+	msgBytes, err := msg.MarshalForSigning()
+	if err != nil {
+		return fmt.Errorf("failed to marshal dkls message for verification: %w", err)
+	}
+
+	if !ed25519.Verify(publicKey, msgBytes, msg.Signature) {
+		return fmt.Errorf("invalid signature")
+	}
 	return nil
 }
 

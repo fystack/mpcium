@@ -9,6 +9,16 @@ const (
 	KeyTypeEd25519   KeyType = "ed25519"
 )
 
+// Protocol selects which MPC backend runs a keygen/signing request.
+// Empty (the zero value) means the existing tss-lib backend — every message
+// without this field (all pre-existing clients) keeps behaving exactly as
+// before.
+type Protocol string
+
+const (
+	ProtocolDkls23 Protocol = "dkls23"
+)
+
 type EventInitiatorKeyType string
 
 const (
@@ -38,6 +48,9 @@ type GenerateKeyMessage struct {
 	WalletID             string                `json:"wallet_id"`
 	Signature            []byte                `json:"signature"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
+	// Protocol, when set to ProtocolDkls23, additionally runs a DKLs23 keygen
+	// alongside the default ECDSA+EdDSA (tss-lib) keys. Omitted/empty is a no-op.
+	Protocol Protocol `json:"protocol,omitempty"`
 }
 
 type SignTxMessage struct {
@@ -49,6 +62,9 @@ type SignTxMessage struct {
 	Signature            []byte                `json:"signature"`
 	DerivationPath       []uint32              `json:"derivation_path"`
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
+	// Protocol, when set to ProtocolDkls23, signs with the wallet's DKLs23 key
+	// instead of the tss-lib key selected by KeyType. Omitted/empty is a no-op.
+	Protocol Protocol `json:"protocol,omitempty"`
 }
 
 type ResharingMessage struct {
@@ -70,6 +86,7 @@ func (m *SignTxMessage) Raw() ([]byte, error) {
 		TxID                string   `json:"tx_id"`
 		Tx                  []byte   `json:"tx"`
 		DerivationPath      []uint32 `json:"derivation_path,omitempty"`
+		Protocol            Protocol `json:"protocol,omitempty"`
 	}{
 		KeyType:             m.KeyType,
 		WalletID:            m.WalletID,
@@ -77,6 +94,7 @@ func (m *SignTxMessage) Raw() ([]byte, error) {
 		TxID:                m.TxID,
 		Tx:                  m.Tx,
 		DerivationPath:      m.DerivationPath,
+		Protocol:            m.Protocol,
 	}
 	return json.Marshal(payload)
 }
