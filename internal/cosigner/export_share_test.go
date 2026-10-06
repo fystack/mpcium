@@ -44,6 +44,12 @@ func (s *fakeStores) LoadShareWorkspace(sdkprotocol.ProtocolType, string) (strin
 	return s.workspace, nil
 }
 func (s *fakeStores) SaveShareWorkspace(sdkprotocol.ProtocolType, string, string) error { return nil }
+func (s *fakeStores) LoadKeyCommittee(sdkprotocol.ProtocolType, string) (*sdkstorage.KeyCommittee, error) {
+	return nil, nil
+}
+func (s *fakeStores) SaveKeyCommittee(sdkprotocol.ProtocolType, string, *sdkstorage.KeyCommittee) error {
+	return nil
+}
 func (s *fakeStores) LoadPreparamsSlot(sdkprotocol.ProtocolType, string) ([]byte, error) {
 	return nil, nil
 }

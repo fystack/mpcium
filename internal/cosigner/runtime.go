@@ -380,6 +380,7 @@ func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta
 		Shares:             r.stores,
 		ShareRotations:     r.stores,
 		SessionCheckpoint:  r.stores,
+		Committees:         r.stores,
 	})
 	if err != nil {
 		return err

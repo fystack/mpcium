@@ -61,6 +61,7 @@ type Stores interface {
 	ShareRotationStore
 	SessionCheckpointStore
 	SessionArtifactsStore
+	sdkstorage.KeyCommitteeStore
 	Close() error
 }
 
@@ -112,6 +113,26 @@ func (s *badgerStores) LoadShare(protocolType sdkprotocol.ProtocolType, keyID st
 
 func (s *badgerStores) SaveShare(protocolType sdkprotocol.ProtocolType, keyID string, share []byte) error {
 	return s.save(keyShare(protocolType, keyID), share)
+}
+
+func (s *badgerStores) LoadKeyCommittee(protocolType sdkprotocol.ProtocolType, keyID string) (*sdkstorage.KeyCommittee, error) {
+	raw, err := s.load(keyCommittee(protocolType, keyID))
+	if err != nil || len(raw) == 0 {
+		return nil, err
+	}
+	var committee sdkstorage.KeyCommittee
+	if err := json.Unmarshal(raw, &committee); err != nil {
+		return nil, fmt.Errorf("decode key committee: %w", err)
+	}
+	return &committee, nil
+}
+
+func (s *badgerStores) SaveKeyCommittee(protocolType sdkprotocol.ProtocolType, keyID string, committee *sdkstorage.KeyCommittee) error {
+	raw, err := json.Marshal(committee)
+	if err != nil {
+		return fmt.Errorf("encode key committee: %w", err)
+	}
+	return s.save(keyCommittee(protocolType, keyID), raw)
 }
 
 func (s *badgerStores) LoadShareWorkspace(protocolType sdkprotocol.ProtocolType, keyID string) (string, error) {
@@ -308,6 +329,10 @@ func keyPreparamsActiveSlot(protocolType sdkprotocol.ProtocolType) string {
 
 func keyShare(protocolType sdkprotocol.ProtocolType, keyID string) string {
 	return fmt.Sprintf("shares:%s:%s", protocolType, keyID)
+}
+
+func keyCommittee(protocolType sdkprotocol.ProtocolType, keyID string) string {
+	return fmt.Sprintf("committees:%s:%s", protocolType, keyID)
 }
 
 func keyShareMeta(protocolType sdkprotocol.ProtocolType, keyID string) string {
