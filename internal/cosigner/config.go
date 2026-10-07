@@ -27,6 +27,7 @@ type Config struct {
 	MaxActiveSessions     int
 	PresenceInterval      time.Duration
 	TickInterval          time.Duration
+	ExportEnabled         bool
 }
 
 // EmbeddedFileConfig is the subset of config read from the parent process
@@ -39,6 +40,7 @@ type EmbeddedFileConfig struct {
 	MaxActiveSessions        int           `mapstructure:"max_active_sessions"`
 	PresenceInterval         time.Duration `mapstructure:"presence_interval"`
 	TickInterval             time.Duration `mapstructure:"tick_interval"`
+	ExportEnabled            bool          `mapstructure:"export_enabled"`
 }
 
 // LoadEmbeddedConfig builds a Config from a viper subtree plus host-supplied
@@ -65,6 +67,7 @@ func LoadEmbeddedConfig(sub *viper.Viper, participantID string, identityPrivateK
 		MaxActiveSessions:     fc.MaxActiveSessions,
 		PresenceInterval:      fc.PresenceInterval,
 		TickInterval:          fc.TickInterval,
+		ExportEnabled:         fc.ExportEnabled,
 	}
 	cfg.applyDefaults()
 	if err := cfg.ValidateEmbedded(); err != nil {
@@ -98,6 +101,7 @@ type fileConfig struct {
 	OrchestratorID           string     `mapstructure:"orchestrator_id"`
 	OrchestratorPublicKeyHex string     `mapstructure:"orchestrator_public_key_hex"`
 	IdentityPrivateKeyHex    string     `mapstructure:"identity_private_key_hex"`
+	ExportEnabled            bool       `mapstructure:"export_enabled"`
 }
 
 type natsConfig struct {
@@ -135,6 +139,7 @@ func LoadConfig() (Config, error) {
 		OrchestratorPublicKey: orchestratorKey,
 		IdentityPrivateKey:    privateKey,
 		DataDir:               cfg.DataDir,
+		ExportEnabled:         cfg.ExportEnabled,
 	}
 	runtimeCfg.applyDefaults()
 	if err := runtimeCfg.Validate(); err != nil {
