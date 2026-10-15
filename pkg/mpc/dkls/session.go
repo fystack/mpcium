@@ -23,6 +23,7 @@ var (
 	ErrNotParticipant   = errors.New("node is not a participant of this wallet")
 	ErrNotSelected      = errors.New("node is not in the selected signer set")
 	ErrWalletNotFound   = errors.New("dkls wallet not found")
+	ErrShareNotReady    = errors.New("local key share is not available yet")
 	ErrKeyExists        = errors.New("dkls key already exists")
 	ErrPeersNotReady    = errors.New("not all peers are ready")
 )

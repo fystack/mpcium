@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/kvstore"
@@ -30,6 +31,11 @@ type Config struct {
 	KeyInfo  keyinfo.Store
 	Peers    PeerRegistry
 }
+
+const (
+	shareWaitTimeout  = 10 * time.Second
+	sharePollInterval = 50 * time.Millisecond
+)
 
 type Service struct {
 	cfg    Config
@@ -88,12 +94,31 @@ func (s *Service) Sign(walletID, txID string, msgHash []byte, derivationPath []u
 		return Signature{}, ErrNotSelected
 	}
 
+	if err := s.waitForShare(walletID, shareWaitTimeout); err != nil {
+		return Signature{}, err
+	}
+
 	sess, err := s.newSession(walletID, walletID+":"+txID, ActSign, info.ParticipantPeerIDs, info.Threshold)
 	if err != nil {
 		return Signature{}, err
 	}
 	defer sess.Close()
 	return sess.Sign(msgHash, signers, derivationPath)
+}
+
+// Key info lives in shared Consul but shares are local, so a sign can arrive before this node's keygen has saved its share.
+func (s *Service) waitForShare(walletID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := s.keys.LoadShare(walletID)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: %s: %v", ErrShareNotReady, walletID, err)
+		}
+		time.Sleep(sharePollInterval)
+	}
 }
 
 func (s *Service) newSession(walletID, sessionKey string, act Act, participants []string, threshold int) (*Session, error) {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fystack/mpcium/pkg/keyinfo"
 	"github.com/fystack/mpcium/pkg/messaging"
@@ -123,6 +124,35 @@ func TestService_SignErrors(t *testing.T) {
 		seed(svc, nodeIDs, 1)
 		if _, err := svc.Sign("w", "tx", hash[:], nil); !errors.Is(err, ErrNotSelected) {
 			t.Fatalf("err = %v, want ErrNotSelected", err)
+		}
+	})
+}
+
+type lateShareStore struct {
+	KeyShareStore
+	failures int
+}
+
+func (s *lateShareStore) LoadShare(string) ([]byte, error) {
+	if s.failures > 0 {
+		s.failures--
+		return nil, errors.New("Key not found")
+	}
+	return []byte("share"), nil
+}
+
+func TestService_WaitForShare(t *testing.T) {
+	t.Run("waits until the share is saved", func(t *testing.T) {
+		svc := &Service{keys: &lateShareStore{failures: 3}}
+		if err := svc.waitForShare("w", time.Second); err != nil {
+			t.Fatalf("waitForShare: %v", err)
+		}
+	})
+
+	t.Run("gives up with ErrShareNotReady", func(t *testing.T) {
+		svc := &Service{keys: &lateShareStore{failures: 1 << 30}}
+		if err := svc.waitForShare("w", 120*time.Millisecond); !errors.Is(err, ErrShareNotReady) {
+			t.Fatalf("err = %v, want ErrShareNotReady", err)
 		}
 	})
 }
