@@ -529,6 +529,14 @@ make test-dkls          # in-memory and in-process tests
 make test-dkls-nats     # same, plus real NATS (starts a Docker container)
 ```
 
+End-to-end test on 3 real nodes (keygen, sign, child-key sign, refresh, and failure cases). It needs `mpcium` and `mpcium-cli` in `PATH`, with `mpcium` built using `-tags dkls`:
+
+```bash
+cd e2e && CGO_ENABLED=1 E2E_DKLS=1 go test -run TestDklsSigning -timeout 10m -v .
+```
+
+Without `E2E_DKLS=1` the test is skipped.
+
 ### Testing
 
 ## 1. Unit tests
