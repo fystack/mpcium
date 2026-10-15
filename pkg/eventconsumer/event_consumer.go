@@ -28,6 +28,7 @@ const (
 
 	MPCDklsGenerateEvent = "mpc:dkls:generate"
 	MPCDklsSignEvent     = "mpc:dkls:sign"
+	MPCDklsRefreshEvent  = "mpc:dkls:refresh"
 
 	DefaultConcurrentKeygen  = 2
 	DefaultConcurrentSigning = 20

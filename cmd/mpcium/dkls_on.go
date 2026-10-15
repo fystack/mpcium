@@ -24,6 +24,7 @@ func startDkls(
 	peers mpc.PeerRegistry,
 	genKeyResultQueue messaging.MessageQueue,
 	signingResultQueue messaging.MessageQueue,
+	reshareResultQueue messaging.MessageQueue,
 ) (stop func()) {
 	service, err := dkls.NewService(dkls.Config{
 		NodeID:   nodeID,
@@ -36,7 +37,7 @@ func startDkls(
 	if err != nil {
 		logger.Fatal("Failed to start dkls service", err)
 	}
-	consumer := eventconsumer.NewDklsConsumer(service, pubsub, identityStore, genKeyResultQueue, signingResultQueue, viper.GetInt("mpc_threshold"))
+	consumer := eventconsumer.NewDklsConsumer(service, pubsub, identityStore, genKeyResultQueue, signingResultQueue, reshareResultQueue, viper.GetInt("mpc_threshold"))
 	consumer.Run()
 	return func() {
 		_ = consumer.Close()

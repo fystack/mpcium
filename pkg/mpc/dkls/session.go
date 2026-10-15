@@ -134,6 +134,97 @@ func (s *Session) Keygen() (KeyResult, error) {
 	if err != nil {
 		return KeyResult{}, fmt.Errorf("serialize key share: %w", err)
 	}
+	result, err := s.keyResult(party)
+	if err != nil {
+		return KeyResult{}, err
+	}
+
+	info := &keyinfo.KeyInfo{ParticipantPeerIDs: s.participants, Threshold: s.cfg.Threshold, Version: 1}
+	if err := s.cfg.Keys.Save(s.cfg.WalletID, share, info); err != nil {
+		return KeyResult{}, err
+	}
+	return result, nil
+}
+
+// Every participant must take part; the public key and chain code stay the same.
+func (s *Session) Refresh() (KeyResult, error) {
+	party, err := s.loadParty(nil)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	defer party.Free()
+
+	peers := s.peersOf(s.participants)
+	id := sessionID(append([]string{"dkls-refresh", s.cfg.WalletID, s.cfg.SessionKey}, s.participants...)...)
+	refresh, err := dklsll.NewRefreshSession(party, id)
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("new refresh session: %w", err)
+	}
+	defer refresh.Free()
+
+	out1, err := refresh.Phase1()
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("refresh phase1: %w", err)
+	}
+	all1, err := s.round.exchange(PhaseRF1, out1, peers)
+	if err != nil {
+		return KeyResult{}, err
+	}
+
+	out2, err := refresh.Phase2(ofKind(all1, dklsll.MsgPolyFragment, s.self))
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("refresh phase2: %w", err)
+	}
+	all2, err := s.round.exchange(PhaseRF2, out2, peers)
+	if err != nil {
+		return KeyResult{}, err
+	}
+
+	out3, err := refresh.Phase3()
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("refresh phase3: %w", err)
+	}
+	all3, err := s.round.exchange(PhaseRF3, out3, peers)
+	if err != nil {
+		return KeyResult{}, err
+	}
+
+	incoming := addressedTo(all3, s.self)
+	incoming = append(incoming, ofKind(all2, dklsll.MsgRefreshP2, s.self)...)
+	incoming = append(incoming, broadcasts(all2)...)
+	refreshed, err := refresh.Phase4(incoming)
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("refresh phase4: %w", err)
+	}
+	defer refreshed.Free()
+
+	result, err := s.keyResult(refreshed)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	oldPub, err := partyPubKey(party)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	if !slices.Equal(oldPub, result.PubKey) {
+		return KeyResult{}, errors.New("refresh changed the public key")
+	}
+
+	share, err := refreshed.ToBytes()
+	if err != nil {
+		return KeyResult{}, fmt.Errorf("serialize key share: %w", err)
+	}
+	info, err := s.cfg.Keys.Info(s.cfg.WalletID)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	if err := s.cfg.Keys.Save(s.cfg.WalletID, share, info); err != nil {
+		return KeyResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Session) keyResult(party *dklsll.Party) (KeyResult, error) {
 	pubKey, err := partyPubKey(party)
 	if err != nil {
 		return KeyResult{}, err
@@ -141,11 +232,6 @@ func (s *Session) Keygen() (KeyResult, error) {
 	chainCode, err := party.ChainCode()
 	if err != nil {
 		return KeyResult{}, fmt.Errorf("get chain code: %w", err)
-	}
-
-	info := &keyinfo.KeyInfo{ParticipantPeerIDs: s.participants, Threshold: s.cfg.Threshold, Version: 1}
-	if err := s.cfg.Keys.Save(s.cfg.WalletID, share, info); err != nil {
-		return KeyResult{}, err
 	}
 	return KeyResult{PubKey: pubKey, ChainCode: chainCode}, nil
 }

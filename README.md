@@ -513,7 +513,8 @@ mpcClient.SignTransaction(&types.SignTxMessage{
 - The signing result has `R`, `S`, `SignatureRecovery`, and `Signature` (`r || s`).
 - `dkls_pub_key` is the 64-byte `X||Y` public key, the same format as tss-lib ECDSA keys.
 - **HD derivation:** set `DerivationPath` to sign with a BIP-32 child key. Only non-hardened indices (below 2^31) work, because no party holds the full key. The chain code comes from the DKG, not from `chain_code` in the config. With the public key and `dkls_chain_code`, clients derive child public keys offline.
-- Not supported for DKLs23 wallets: EdDSA and resharing.
+- **Refresh:** `mpcClient.RefreshDkls(&types.RefreshMessage{WalletID: id, SessionID: uuid})` rotates every share and keeps the public key and chain code. All participants must be online, and the result arrives through `OnResharingResult`.
+- Not supported for DKLs23 wallets: EdDSA and resharing (changing the committee or threshold).
 
 A runnable end-to-end example (keygen, sign with the master and a child key, verify both signatures):
 

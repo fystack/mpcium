@@ -24,6 +24,8 @@ type MPCClient interface {
 	OnSignResult(callback func(event event.SigningResultEvent)) error
 
 	Resharing(msg *types.ResharingMessage) error
+	// RefreshDkls rotates the shares of a DKLs23 wallet; the result arrives through OnResharingResult.
+	RefreshDkls(msg *types.RefreshMessage) error
 	OnResharingResult(callback func(event event.ResharingResultEvent)) error
 }
 
@@ -241,6 +243,24 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 
 	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes, c.requestHeaders()); err != nil {
 		return fmt.Errorf("Resharing: publish error: %w", err)
+	}
+	return nil
+}
+
+func (c *mpcClient) RefreshDkls(msg *types.RefreshMessage) error {
+	raw, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("RefreshDkls: raw payload error: %w", err)
+	}
+	if msg.Signature, err = c.signer.Sign(raw); err != nil {
+		return fmt.Errorf("RefreshDkls: failed to sign message: %w", err)
+	}
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("RefreshDkls: marshal error: %w", err)
+	}
+	if err := c.pubsub.Publish(eventconsumer.MPCDklsRefreshEvent, bytes, c.requestHeaders()); err != nil {
+		return fmt.Errorf("RefreshDkls: publish error: %w", err)
 	}
 	return nil
 }

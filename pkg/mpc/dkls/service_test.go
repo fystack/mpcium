@@ -3,6 +3,7 @@
 package dkls
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"testing"
@@ -155,4 +156,81 @@ func TestService_WaitForShare(t *testing.T) {
 			t.Fatalf("err = %v, want ErrShareNotReady", err)
 		}
 	})
+}
+
+func TestService_RefreshKeepsKeyAndSigns(t *testing.T) {
+	nodeIDs := []string{"node-a", "node-b", "node-c"}
+	services := newTestServices(t, &fakePubSub{}, nodeIDs, nodeIDs)
+
+	runAll := func(fn func(*Service) (KeyResult, error)) KeyResult {
+		t.Helper()
+		type out struct {
+			res KeyResult
+			err error
+		}
+		ch := make(chan out, len(nodeIDs))
+		for _, svc := range services {
+			go func() {
+				res, err := fn(svc)
+				ch <- out{res, err}
+			}()
+		}
+		var res KeyResult
+		for range nodeIDs {
+			o := <-ch
+			if o.err != nil {
+				t.Fatal(o.err)
+			}
+			res = o.res
+		}
+		return res
+	}
+
+	master := runAll(func(s *Service) (KeyResult, error) { return s.Keygen("wallet-rf", 1) })
+	oldShare, err := services["node-a"].keys.LoadShare("wallet-rf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed := runAll(func(s *Service) (KeyResult, error) { return s.Refresh("wallet-rf", "r1") })
+	if !bytes.Equal(refreshed.PubKey, master.PubKey) || !bytes.Equal(refreshed.ChainCode, master.ChainCode) {
+		t.Fatal("refresh changed the public key or chain code")
+	}
+	newShare, err := services["node-a"].keys.LoadShare("wallet-rf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(oldShare, newShare) {
+		t.Fatal("refresh did not change the stored share")
+	}
+
+	hash := sha256.Sum256([]byte("after refresh"))
+	sigCh := make(chan Signature, len(nodeIDs))
+	errCh := make(chan error, len(nodeIDs))
+	for _, id := range nodeIDs[:2] {
+		go func() {
+			sig, err := services[id].Sign("wallet-rf", "tx-1", hash[:], nil)
+			sigCh <- sig
+			errCh <- err
+		}()
+	}
+	var sig Signature
+	for range nodeIDs[:2] {
+		sig = <-sigCh
+		if err := <-errCh; err != nil && !errors.Is(err, ErrNotSelected) {
+			t.Fatalf("sign after refresh: %v", err)
+		}
+	}
+	verifySignature(t, sig, hash[:], bip32DerivePublic(t, compressXY(t, master.PubKey), master.ChainCode, nil))
+}
+
+func TestService_RefreshNeedsAllParticipants(t *testing.T) {
+	nodeIDs := []string{"node-a", "node-b", "node-c"}
+	svc := newTestServices(t, &fakePubSub{}, nodeIDs[:1], nodeIDs[:2])["node-a"]
+	if err := svc.keys.Save("w", []byte("share"), &keyinfo.KeyInfo{ParticipantPeerIDs: nodeIDs, Threshold: 1, Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Refresh("w", "r1"); !errors.Is(err, ErrPeersNotReady) {
+		t.Fatalf("err = %v, want ErrPeersNotReady", err)
+	}
 }

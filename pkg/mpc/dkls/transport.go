@@ -13,8 +13,9 @@ import (
 type Act string
 
 const (
-	ActKeygen Act = "keygen"
-	ActSign   Act = "sign"
+	ActKeygen  Act = "keygen"
+	ActSign    Act = "sign"
+	ActRefresh Act = "refresh"
 )
 
 type Transport interface {

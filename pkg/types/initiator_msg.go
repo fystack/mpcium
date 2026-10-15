@@ -77,6 +77,29 @@ type ResharingMessage struct {
 	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
 }
 
+// RefreshMessage rotates every share of a DKLs23 wallet without changing its public key.
+type RefreshMessage struct {
+	SessionID            string                `json:"session_id"`
+	WalletID             string                `json:"wallet_id"`
+	Signature            []byte                `json:"signature,omitempty"`
+	AuthorizerSignatures []AuthorizerSignature `json:"authorizer_signatures,omitempty"`
+}
+
+func (m *RefreshMessage) Raw() ([]byte, error) {
+	copy := *m
+	copy.Signature = nil
+	copy.AuthorizerSignatures = nil
+	return json.Marshal(&copy)
+}
+
+func (m *RefreshMessage) Sig() []byte { return m.Signature }
+
+func (m *RefreshMessage) InitiatorID() string { return m.WalletID }
+
+func (m *RefreshMessage) GetAuthorizerSignatures() []AuthorizerSignature {
+	return m.AuthorizerSignatures
+}
+
 func (m *SignTxMessage) Raw() ([]byte, error) {
 	// omit the Signature field itself when computing the signed‐over data
 	payload := struct {

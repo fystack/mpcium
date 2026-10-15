@@ -41,6 +41,13 @@ type Service struct {
 	cfg    Config
 	router *Router
 	keys   KeyShareStore
+	locks  sync.Map
+}
+
+// A refresh rewrites the share, so signing with a half-rotated committee fails; refresh excludes signs per wallet.
+func (s *Service) walletLock(walletID string) *sync.RWMutex {
+	lock, _ := s.locks.LoadOrStore(walletID, &sync.RWMutex{})
+	return lock.(*sync.RWMutex)
 }
 
 // Start it before the node is marked ready so peers never publish to an unsubscribed node.
@@ -70,6 +77,35 @@ func (s *Service) Keygen(walletID string, threshold int) (KeyResult, error) {
 	return sess.Keygen()
 }
 
+func (s *Service) Refresh(walletID, refreshID string) (KeyResult, error) {
+	info, err := s.keys.Info(walletID)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	if !slices.Contains(info.ParticipantPeerIDs, s.cfg.NodeID) {
+		return KeyResult{}, ErrNotParticipant
+	}
+	ready := s.cfg.Peers.GetReadyPeersIncludeSelf()
+	for _, id := range info.ParticipantPeerIDs {
+		if !slices.Contains(ready, id) {
+			return KeyResult{}, fmt.Errorf("%w: %s", ErrPeersNotReady, id)
+		}
+	}
+	lock := s.walletLock(walletID)
+	lock.Lock()
+	defer lock.Unlock()
+	if err := s.waitForShare(walletID, shareWaitTimeout); err != nil {
+		return KeyResult{}, err
+	}
+
+	sess, err := s.newSession(walletID, walletID+":refresh:"+refreshID, ActRefresh, info.ParticipantPeerIDs, info.Threshold)
+	if err != nil {
+		return KeyResult{}, err
+	}
+	defer sess.Close()
+	return sess.Refresh()
+}
+
 func (s *Service) Sign(walletID, txID string, msgHash []byte, derivationPath []uint32) (Signature, error) {
 	info, err := s.keys.Info(walletID)
 	if err != nil {
@@ -94,6 +130,9 @@ func (s *Service) Sign(walletID, txID string, msgHash []byte, derivationPath []u
 		return Signature{}, ErrNotSelected
 	}
 
+	lock := s.walletLock(walletID)
+	lock.RLock()
+	defer lock.RUnlock()
 	if err := s.waitForShare(walletID, shareWaitTimeout); err != nil {
 		return Signature{}, err
 	}

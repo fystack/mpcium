@@ -23,6 +23,9 @@ const (
 	PhaseSG1
 	PhaseSG2
 	PhaseSG3
+	PhaseRF1
+	PhaseRF2
+	PhaseRF3
 )
 
 // Point-to-point payloads are encrypted for their recipient; broadcast entries stay public.

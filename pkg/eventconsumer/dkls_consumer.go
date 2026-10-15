@@ -26,11 +26,13 @@ type DklsConsumer struct {
 	identityStore      identity.Store
 	genKeyResultQueue  messaging.MessageQueue
 	signingResultQueue messaging.MessageQueue
+	reshareResultQueue messaging.MessageQueue
 	threshold          int
 	sessions           *sessionTracker
 
 	keygenSub  messaging.Subscription
 	signingSub messaging.Subscription
+	refreshSub messaging.Subscription
 }
 
 func NewDklsConsumer(
@@ -39,6 +41,7 @@ func NewDklsConsumer(
 	identityStore identity.Store,
 	genKeyResultQueue messaging.MessageQueue,
 	signingResultQueue messaging.MessageQueue,
+	reshareResultQueue messaging.MessageQueue,
 	threshold int,
 ) *DklsConsumer {
 	return &DklsConsumer{
@@ -47,6 +50,7 @@ func NewDklsConsumer(
 		identityStore:      identityStore,
 		genKeyResultQueue:  genKeyResultQueue,
 		signingResultQueue: signingResultQueue,
+		reshareResultQueue: reshareResultQueue,
 		threshold:          threshold,
 		sessions:           newSessionTracker(dklsSessionTTL),
 	}
@@ -56,7 +60,8 @@ func (c *DklsConsumer) Run() {
 	// Handlers block for the whole protocol and NATS runs one subscription's callbacks serially.
 	c.keygenSub = c.subscribe(MPCDklsGenerateEvent, c.handleKeygen)
 	c.signingSub = c.subscribe(MPCDklsSignEvent, c.handleSign)
-	logger.Info("DklsConsumer: subscribed to keygen/signing events")
+	c.refreshSub = c.subscribe(MPCDklsRefreshEvent, c.handleRefresh)
+	logger.Info("DklsConsumer: subscribed to keygen/signing/refresh events")
 }
 
 func (c *DklsConsumer) subscribe(subject string, handle func(*nats.Msg)) messaging.Subscription {
@@ -68,7 +73,7 @@ func (c *DklsConsumer) subscribe(subject string, handle func(*nats.Msg)) messagi
 }
 
 func (c *DklsConsumer) Close() error {
-	for _, sub := range []messaging.Subscription{c.keygenSub, c.signingSub} {
+	for _, sub := range []messaging.Subscription{c.keygenSub, c.signingSub, c.refreshSub} {
 		if sub != nil {
 			_ = sub.Unsubscribe()
 		}
@@ -171,6 +176,57 @@ func (c *DklsConsumer) handleSign(natMsg *nats.Msg) {
 	})
 	logger.Info("[SIGN] DKLS sign successfully", "walletID", msg.WalletID, "txID", msg.TxID)
 	c.sendReply(natMsg)
+}
+
+func (c *DklsConsumer) handleRefresh(natMsg *nats.Msg) {
+	var msg types.RefreshMessage
+	if err := json.Unmarshal(natMsg.Data, &msg); err != nil || !c.authorized(&msg) {
+		return
+	}
+
+	sessionKey := "refresh:" + msg.WalletID + ":" + msg.SessionID
+	if !c.sessions.begin(sessionKey) {
+		logger.Warn("DklsConsumer: duplicate refresh request", "walletID", msg.WalletID, "sessionID", msg.SessionID)
+		c.sendReply(natMsg)
+		return
+	}
+
+	result := event.ResharingResultEvent{WalletID: msg.WalletID, NewThreshold: c.threshold, KeyType: types.KeyTypeSecp256k1}
+	keys, err := c.service.Refresh(msg.WalletID, msg.SessionID)
+	switch {
+	case errors.Is(err, dkls.ErrNotParticipant):
+		c.sessions.release(sessionKey)
+		return
+	case err != nil:
+		c.sessions.release(sessionKey)
+		logger.Error("DklsConsumer: refresh failed", err, "walletID", msg.WalletID)
+		result.ResultType = event.ResultTypeError
+		result.ErrorReason = err.Error()
+		result.ErrorCode = string(event.GetErrorCodeFromError(err))
+	default:
+		result.ResultType = event.ResultTypeSuccess
+		result.PubKey = keys.PubKey
+	}
+
+	c.publishRefreshResult(natMsg, msg.SessionID, result)
+	c.sendReply(natMsg)
+}
+
+func (c *DklsConsumer) publishRefreshResult(natMsg *nats.Msg, sessionID string, result event.ResharingResultEvent) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		logger.Error("DklsConsumer: failed to marshal refresh result", err)
+		return
+	}
+	subject := event.ReshareResultSubject(natMsg.Header.Get(event.ClientIDHeader), sessionID)
+	opts := &messaging.EnqueueOptions{IdempotententKey: composeReshareIdempotentKey(sessionID, natMsg)}
+	if err := c.reshareResultQueue.Enqueue(subject, payload, opts); err != nil {
+		logger.Error("DklsConsumer: failed to enqueue refresh result", err)
+		return
+	}
+	if result.ResultType == event.ResultTypeSuccess {
+		logger.Info("[REFRESH] DKLS refresh completed", "walletID", result.WalletID)
+	}
 }
 
 func (c *DklsConsumer) publishKeygenResult(natMsg *nats.Msg, result event.KeygenResultEvent) {

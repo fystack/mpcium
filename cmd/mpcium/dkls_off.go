@@ -19,6 +19,7 @@ func startDkls(
 	mpc.PeerRegistry,
 	messaging.MessageQueue,
 	messaging.MessageQueue,
+	messaging.MessageQueue,
 ) (stop func()) {
 	return func() {}
 }
