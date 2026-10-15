@@ -79,6 +79,38 @@ else
 	@echo "Successfully installed mpcium and mpcium-cli to $(INSTALL_DIR)/"
 endif
 
+# Build the DKLs23 Rust cgo library required by the (opt-in, build-tag "dkls") DKLs23 backend
+dkls-lib:
+	cd third_party/dkls23/wrapper/go-ll && cargo build --release
+
+# Run DKLs23 backend tests (requires dkls-lib built first)
+test-dkls: dkls-lib
+	CGO_ENABLED=1 go test -tags dkls ./pkg/mpc/dkls/...
+
+# Run DKLs23 tests against a real (throwaway, dockerized) NATS server instead
+# of the in-process MemoryTransport used by test-dkls.
+test-dkls-nats: dkls-lib
+	docker rm -f mpcium-dkls-test-nats >/dev/null 2>&1 || true
+	docker run -d --name mpcium-dkls-test-nats -p 14222:4222 nats:latest -js
+	CGO_ENABLED=1 go test -tags 'dkls dklsnats' ./pkg/mpc/dkls/... ; \
+	status=$$?; \
+	docker rm -f mpcium-dkls-test-nats >/dev/null 2>&1; \
+	exit $$status
+
+# Run the DKLs23 vs tss-lib in-process benchmark (requires dkls-lib built first)
+bench-dkls: dkls-lib
+	CGO_ENABLED=1 go test -tags dklsbench -bench . -benchtime=5x -run '^$$' ./benchmark/dklsvstss/...
+
+# Run the DKLs23 e2e benchmark (real NATS, real ed25519 message signing) instead
+# of the pure library-level bench-dkls above.
+bench-dkls-nats: dkls-lib
+	docker rm -f mpcium-dkls-bench-nats >/dev/null 2>&1 || true
+	docker run -d --name mpcium-dkls-bench-nats -p 14222:4222 nats:latest -js
+	CGO_ENABLED=1 go test -tags 'dkls dklsnats' -bench . -benchtime=3x -run '^$$' ./pkg/mpc/dkls/... ; \
+	status=$$?; \
+	docker rm -f mpcium-dkls-bench-nats >/dev/null 2>&1; \
+	exit $$status
+
 # Run all tests
 test:
 	go test ./...

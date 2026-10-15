@@ -303,8 +303,19 @@ If you encounter signature verification errors or other mysterious test failures
 
 - `base_test.go` - Core test infrastructure and cleanup functions
 - `keygen_test.go` - Key generation tests
+- `dkls_test.go` - DKLs23 keygen, signing and refresh tests (opt-in, see below)
 - `cleanup_test_env.sh` - Standalone cleanup script
 - `docker-compose.test.yaml` - Test infrastructure (NATS, Consul)
+
+### DKLs23
+
+`TestDklsSigning` is skipped unless `E2E_DKLS=1` is set, and needs a `mpcium` binary built with `-tags dkls` in `PATH` (see the DKLs23 section in the root README):
+
+```bash
+GOWORK=off CGO_ENABLED=1 E2E_DKLS=1 go test -run TestDklsSigning -timeout 10m -v .
+```
+
+The node-offline case takes about a minute: a killed node never resigns, so refresh fails only after the 60s phase timeout.
 
 ### Common Issues and Solutions
 

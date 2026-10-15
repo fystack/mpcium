@@ -56,8 +56,10 @@ func benchmarkCommand() *cli.Command {
 		Description: "Run benchmarks for keygen, signing (ECDSA/EdDSA), and resharing operations",
 		Commands: []*cli.Command{
 			keygenBenchmarkCommand(),
+			keygenDklsBenchmarkCommand(),
 			ecdsaSignBenchmarkCommand(),
 			eddsaSignBenchmarkCommand(),
+			dklsSignBenchmarkCommand(),
 			reshareBenchmarkCommand(),
 		},
 		Flags: []cli.Flag{
@@ -108,6 +110,52 @@ func keygenBenchmarkCommand() *cli.Command {
 		Usage:     "Benchmark keygen operations",
 		ArgsUsage: "<num_operations>",
 		Action:    runKeygenBenchmark,
+		Flags: []cli.Flag{
+			&cli.IntFlag{
+				Name:    "timeout",
+				Usage:   "Timeout per operation in seconds",
+				Value:   60,
+				Aliases: []string{"t"},
+			},
+			&cli.IntFlag{
+				Name:    "batch-size",
+				Usage:   "Number of operations per batch",
+				Value:   10,
+				Aliases: []string{"b"},
+			},
+		},
+	}
+}
+
+func keygenDklsBenchmarkCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "keygen-dkls",
+		Usage:     "Benchmark DKLs23 keygen operations (requires a cluster built with -tags dkls)",
+		ArgsUsage: "<num_operations>",
+		Action:    runKeygenDklsBenchmark,
+		Flags: []cli.Flag{
+			&cli.IntFlag{
+				Name:    "timeout",
+				Usage:   "Timeout per operation in seconds",
+				Value:   60,
+				Aliases: []string{"t"},
+			},
+			&cli.IntFlag{
+				Name:    "batch-size",
+				Usage:   "Number of operations per batch",
+				Value:   10,
+				Aliases: []string{"b"},
+			},
+		},
+	}
+}
+
+func dklsSignBenchmarkCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "sign-dkls23",
+		Usage:     "Benchmark DKLs23 signing operations (requires a cluster built with -tags dkls)",
+		ArgsUsage: "<num_operations> <wallet_id>",
+		Action:    runDklsSignBenchmark,
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:    "timeout",
@@ -334,6 +382,14 @@ func getNATSConnection(environment string, appConfig *config.AppConfig) (*nats.C
 }
 
 func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
+	return runKeygenBenchmarkGeneric(ctx, cmd, "", "Keygen")
+}
+
+func runKeygenDklsBenchmark(ctx context.Context, cmd *cli.Command) error {
+	return runKeygenBenchmarkGeneric(ctx, cmd, types.ProtocolDkls23, "DKLS23 Keygen")
+}
+
+func runKeygenBenchmarkGeneric(ctx context.Context, cmd *cli.Command, protocol types.Protocol, label string) error {
 	if cmd.Args().Len() < 1 {
 		return fmt.Errorf("missing required argument: num_operations")
 	}
@@ -351,7 +407,7 @@ func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("Starting keygen benchmark with %d operations...\n", n)
+	fmt.Printf("Starting %s benchmark with %d operations...\n", label, n)
 
 	var results []OperationResult
 	var wg sync.WaitGroup
@@ -362,11 +418,19 @@ func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
 		mu.Lock()
 		defer mu.Unlock()
 
+		// A dkls23 request also yields a tss-lib result; only the DKLs23 one counts.
+		if protocol == types.ProtocolDkls23 && result.ResultType == event.ResultTypeSuccess && len(result.DKLSPubKey) == 0 {
+			return
+		}
+
 		for i := range results {
 			if results[i].ID == result.WalletID && !results[i].Completed {
 				results[i].EndTime = time.Now()
 				results[i].Completed = true
 				results[i].Success = result.ResultType == event.ResultTypeSuccess
+				if results[i].Success {
+					fmt.Printf("Wallet created: %s\n", result.WalletID)
+				}
 				if !results[i].Success {
 					results[i].ErrorReason = result.ErrorReason
 					results[i].ErrorCode = result.ErrorCode
@@ -397,7 +461,7 @@ func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
 
 		wg.Add(1)
 
-		err := mpcClient.CreateWallet(walletID)
+		err := mpcClient.CreateWalletWithProtocol(walletID, protocol, nil)
 		if err != nil {
 			mu.Lock()
 			results[i].Completed = true
@@ -431,7 +495,7 @@ func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
 	// Calculate results
 	benchResult := calculateBenchmarkResult(results, totalTime, 1, []time.Duration{totalTime})
 	outputFile := cmd.String("output")
-	if err := printBenchmarkResult("Keygen", benchResult, outputFile); err != nil {
+	if err := printBenchmarkResult(label, benchResult, outputFile); err != nil {
 		return fmt.Errorf("failed to write benchmark results: %w", err)
 	}
 
@@ -439,14 +503,18 @@ func runKeygenBenchmark(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runECDSASignBenchmark(ctx context.Context, cmd *cli.Command) error {
-	return runSignBenchmark(ctx, cmd, types.KeyTypeSecp256k1, "ECDSA")
+	return runSignBenchmark(ctx, cmd, types.KeyTypeSecp256k1, "", "ECDSA")
 }
 
 func runEdDSASignBenchmark(ctx context.Context, cmd *cli.Command) error {
-	return runSignBenchmark(ctx, cmd, types.KeyTypeEd25519, "EdDSA")
+	return runSignBenchmark(ctx, cmd, types.KeyTypeEd25519, "", "EdDSA")
 }
 
-func runSignBenchmark(ctx context.Context, cmd *cli.Command, keyType types.KeyType, keyTypeName string) error {
+func runDklsSignBenchmark(ctx context.Context, cmd *cli.Command) error {
+	return runSignBenchmark(ctx, cmd, types.KeyTypeSecp256k1, types.ProtocolDkls23, "DKLS23")
+}
+
+func runSignBenchmark(ctx context.Context, cmd *cli.Command, keyType types.KeyType, protocol types.Protocol, keyTypeName string) error {
 	if cmd.Args().Len() < 2 {
 		return fmt.Errorf("missing required arguments: num_operations and wallet_id")
 	}
@@ -546,6 +614,7 @@ func runSignBenchmark(ctx context.Context, cmd *cli.Command, keyType types.KeyTy
 				NetworkInternalCode: "benchmark",
 				TxID:                txID,
 				Tx:                  txData,
+				Protocol:            protocol,
 			}
 
 			result := OperationResult{

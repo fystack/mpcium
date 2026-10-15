@@ -1,0 +1,17 @@
+group,environment,protocol,tx,max_concurrent_signing,success_rate_pct,total_seconds,ops_per_min,avg_op_seconds,notes,raw_file
+final,vps,dkls23,1000,10,100,51.38,1167.70,10.37,,raw/vps-dkls23-1000-cap10.txt
+final,vps,dkls23,1000,40,100,50.77,1181.84,9.68,,raw/vps-dkls23-1000-cap40.txt
+final,vps,tss-lib-ecdsa,1000,10,100,447.43,134.10,212.29,,raw/vps-tss-ecdsa-1000-cap10.txt
+final,local,dkls23,1000,10,100,13.67,4388.55,0.042,,raw/local-dkls23-1000-cap10.txt
+final,local,dkls23,1000,40,100,13.03,4604.07,0.039,,raw/local-dkls23-1000-cap40.txt
+final,local,tss-lib-ecdsa,200,10,100,72.07,166.51,32.44,200 tx sample (not 1000),raw/local-tss-ecdsa-200-cap10.txt
+history,vps,dkls23,1000,10,100,306.55,195.72,136.95,before optimizations,
+history,vps,dkls23,1000,10,100,346.76,173.03,150.97,after concurrent wrapper + 20ms barrier poll,
+history,vps,dkls23,1000,40,100,312.67,191.90,138.38,after concurrent wrapper + 20ms barrier poll,
+history,vps,dkls23,1000,10,100,60.55,990.91,11.34,after per-recipient delivery + binary framing + router,
+history,vps,dkls23,1000,40,100,54.82,1094.54,11.31,after per-recipient delivery + binary framing + router,
+history,vps,dkls23,1000,100,100,59.21,1013.35,13.16,after per-recipient delivery + binary framing + router,
+history,local,dkls23,1000,40,100,21.66,2770.03,0.163,before wire optimizations,
+history,local,tss-lib-ecdsa,1000,40,100,345.09,173.87,,goroutine-per-request variant,
+reference,in-process,tss-lib-ecdsa,1,,100,0.172,,,"2-of-2 sign, M1 Pro, benchmark/dklsvstss",
+reference,in-process,dkls23,1,,100,0.0167,,,"2-of-2 sign, M1 Pro, benchmark/dklsvstss",

@@ -17,12 +17,15 @@ import (
 type MPCClient interface {
 	CreateWallet(walletID string) error
 	CreateWalletWithAuthorizers(walletID string, authorizerSignatures []types.AuthorizerSignature) error
+	CreateWalletWithProtocol(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error
 	OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error
 
 	SignTransaction(msg *types.SignTxMessage) error
 	OnSignResult(callback func(event event.SigningResultEvent)) error
 
 	Resharing(msg *types.ResharingMessage) error
+	// RefreshDkls rotates the shares of a DKLs23 wallet; the result arrives through OnResharingResult.
+	RefreshDkls(msg *types.RefreshMessage) error
 	OnResharingResult(callback func(event event.ResharingResultEvent)) error
 }
 
@@ -120,10 +123,23 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 
 // CreateWalletWithAuthorizers generates a GenerateKeyMessage with authorizer signatures, signs it, and publishes it.
 func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSignatures []types.AuthorizerSignature) error {
+	return c.createWallet(walletID, "", authorizerSignatures)
+}
+
+// CreateWalletWithProtocol is like CreateWalletWithAuthorizers but additionally
+// requests keygen from an alternate MPC backend (currently only
+// types.ProtocolDkls23) alongside the default tss-lib ECDSA/EdDSA keys. The
+// target cluster must be built with `-tags dkls` for this to succeed.
+func (c *mpcClient) CreateWalletWithProtocol(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error {
+	return c.createWallet(walletID, protocol, authorizerSignatures)
+}
+
+func (c *mpcClient) createWallet(walletID string, protocol types.Protocol, authorizerSignatures []types.AuthorizerSignature) error {
 	// build the message
 	msg := &types.GenerateKeyMessage{
 		WalletID:             walletID,
 		AuthorizerSignatures: authorizerSignatures,
+		Protocol:             protocol,
 	}
 	// compute the canonical raw bytes
 	raw, err := msg.Raw()
@@ -227,6 +243,24 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 
 	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes, c.requestHeaders()); err != nil {
 		return fmt.Errorf("Resharing: publish error: %w", err)
+	}
+	return nil
+}
+
+func (c *mpcClient) RefreshDkls(msg *types.RefreshMessage) error {
+	raw, err := msg.Raw()
+	if err != nil {
+		return fmt.Errorf("RefreshDkls: raw payload error: %w", err)
+	}
+	if msg.Signature, err = c.signer.Sign(raw); err != nil {
+		return fmt.Errorf("RefreshDkls: failed to sign message: %w", err)
+	}
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("RefreshDkls: marshal error: %w", err)
+	}
+	if err := c.pubsub.Publish(eventconsumer.MPCDklsRefreshEvent, bytes, c.requestHeaders()); err != nil {
+		return fmt.Errorf("RefreshDkls: publish error: %w", err)
 	}
 	return nil
 }
