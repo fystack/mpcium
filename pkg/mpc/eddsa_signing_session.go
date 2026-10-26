@@ -162,6 +162,11 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 				Signature:           sig.Signature,
 			}
 
+			if err := event.SignNodeResult(&r, s.identityStore); err != nil {
+				s.ErrCh <- errors.Wrap(err, "Failed to sign signing result event")
+				return
+			}
+
 			bytes, err := json.Marshal(r)
 			if err != nil {
 				s.ErrCh <- errors.Wrap(err, "Failed to marshal raw signature")
@@ -169,7 +174,7 @@ func (s *eddsaSigningSession) Sign(onSuccess func(data []byte)) {
 			}
 
 			err = s.resultQueue.Enqueue(event.SigningResultCompleteTopic, bytes, &messaging.EnqueueOptions{
-				IdempotententKey: s.idempotentKey,
+				IdempotententKey: event.NodeScopedIdempotentKey(s.idempotentKey, r.NodeID),
 			})
 			if err != nil {
 				s.ErrCh <- errors.Wrap(err, "Failed to publish sign success message")

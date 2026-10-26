@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/nats-io/nats.go"
@@ -13,15 +14,17 @@ import (
 const maxDeliveriesExceededSubject = "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>"
 
 type timeOutConsumer struct {
-	natsConn    *nats.Conn
-	resultQueue messaging.MessageQueue
-	advisorySub messaging.Subscription
+	natsConn      *nats.Conn
+	resultQueue   messaging.MessageQueue
+	identityStore identity.Store
+	advisorySub   messaging.Subscription
 }
 
-func NewTimeOutConsumer(natsConn *nats.Conn, resultQueue messaging.MessageQueue) *timeOutConsumer {
+func NewTimeOutConsumer(natsConn *nats.Conn, resultQueue messaging.MessageQueue, identityStore identity.Store) *timeOutConsumer {
 	return &timeOutConsumer{
-		natsConn:    natsConn,
-		resultQueue: resultQueue,
+		natsConn:      natsConn,
+		resultQueue:   resultQueue,
+		identityStore: identityStore,
 	}
 }
 
@@ -65,6 +68,11 @@ func (tc *timeOutConsumer) Run() {
 			signErrorResult.IsTimeout = true
 			signErrorResult.ErrorReason = "Signing failed: maximum delivery attempts exceeded"
 
+			if err := event.SignNodeResult(&signErrorResult, tc.identityStore); err != nil {
+				logger.Error("Failed to sign signing result event", err, "txID", signErrorResult.TxID)
+				return
+			}
+
 			signErrorResultBytes, err := json.Marshal(signErrorResult)
 			if err != nil {
 				logger.Error("Failed to marshal signing result event", err)
@@ -72,7 +80,7 @@ func (tc *timeOutConsumer) Run() {
 			}
 
 			err = tc.resultQueue.Enqueue(event.SigningResultTopic, signErrorResultBytes, &messaging.EnqueueOptions{
-				IdempotententKey: signErrorResult.TxID,
+				IdempotententKey: event.NodeScopedIdempotentKey(signErrorResult.TxID, signErrorResult.NodeID),
 			})
 			if err != nil {
 				logger.Error("Failed to publish signing result event", err)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
@@ -42,13 +43,14 @@ type signingConsumer struct {
 	peerRegistry       mpc.PeerRegistry
 	mpcThreshold       int
 	signingResultQueue messaging.MessageQueue
+	identityStore      identity.Store
 
 	// jsSub holds the JetStream subscription, so it can be cleaned up during Close().
 	jsSub messaging.Subscription
 }
 
 // NewSigningConsumer returns a new instance of SigningConsumer.
-func NewSigningConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, pubsub messaging.PubSub, peerRegistry mpc.PeerRegistry, signingResultQueue messaging.MessageQueue) SigningConsumer {
+func NewSigningConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, pubsub messaging.PubSub, peerRegistry mpc.PeerRegistry, signingResultQueue messaging.MessageQueue, identityStore identity.Store) SigningConsumer {
 	mpcThreshold := viper.GetInt("mpc_threshold")
 	return &signingConsumer{
 		natsConn:           natsConn,
@@ -57,6 +59,7 @@ func NewSigningConsumer(natsConn *nats.Conn, jsBroker messaging.MessageBroker, p
 		peerRegistry:       peerRegistry,
 		mpcThreshold:       mpcThreshold,
 		signingResultQueue: signingResultQueue,
+		identityStore:      identityStore,
 	}
 }
 
@@ -221,6 +224,14 @@ func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, error
 		ErrorReason:         err.Error(),
 	}
 
+	if signErr := event.SignNodeResult(&signingResult, sc.identityStore); signErr != nil {
+		logger.Error("Failed to sign signing result event", signErr,
+			"walletID", signMsg.WalletID,
+			"txID", signMsg.TxID,
+		)
+		return
+	}
+
 	signingResultBytes, err := json.Marshal(signingResult)
 	if err != nil {
 		logger.Error("Failed to marshal signing result event", err,
@@ -231,7 +242,7 @@ func (sc *signingConsumer) handleSigningError(signMsg types.SignTxMessage, error
 	}
 
 	err = sc.signingResultQueue.Enqueue(event.SigningResultCompleteTopic, signingResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: buildIdempotentKey(signMsg.TxID, sessionID, mpc.TypeSigningResultFmt),
+		IdempotententKey: event.NodeScopedIdempotentKey(buildIdempotentKey(signMsg.TxID, sessionID, mpc.TypeSigningResultFmt), signingResult.NodeID),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue signing result event", err,

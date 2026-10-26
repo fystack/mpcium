@@ -63,6 +63,7 @@ func TestSigning(t *testing.T) {
 
 	// Ensure cleanup happens even if test fails
 	defer func() {
+		suite.AssertNoResultErrors(t)
 		t.Log("Performing post-test cleanup...")
 		suite.Cleanup(t)
 	}()
@@ -142,7 +143,7 @@ func testKeyGenerationForSigning(t *testing.T, suite *E2ETestSuite) {
 		suite.keygenResults[result.WalletID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Keygen succeeded for wallet %s", result.WalletID)
 		}
@@ -224,7 +225,7 @@ func testSigningAllNodes(t *testing.T, suite *E2ETestSuite) {
 		signingResults[result.TxID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Signing failed for wallet %s (tx: %s): %s (%s)", result.WalletID, result.TxID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Signing failed for wallet %s (tx: %s): %s (%s)", result.WalletID, result.TxID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Signing succeeded for wallet %s (tx: %s)", result.WalletID, result.TxID)
 		}

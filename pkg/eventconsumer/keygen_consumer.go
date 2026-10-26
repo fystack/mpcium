@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fystack/mpcium/pkg/event"
+	"github.com/fystack/mpcium/pkg/identity"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
@@ -39,6 +40,7 @@ type keygenConsumer struct {
 	jsBroker          messaging.MessageBroker
 	peerRegistry      mpc.PeerRegistry
 	keygenResultQueue messaging.MessageQueue
+	identityStore     identity.Store
 
 	// jsSub holds the JetStream subscription, so it can be cleaned up during Close().
 	jsSub messaging.MessageSubscription
@@ -51,6 +53,7 @@ func NewKeygenConsumer(
 	pubsub messaging.PubSub,
 	peerRegistry mpc.PeerRegistry,
 	keygenResultQueue messaging.MessageQueue,
+	identityStore identity.Store,
 ) KeygenConsumer {
 	return &keygenConsumer{
 		natsConn:          natsConn,
@@ -58,6 +61,7 @@ func NewKeygenConsumer(
 		jsBroker:          jsBroker,
 		peerRegistry:      peerRegistry,
 		keygenResultQueue: keygenResultQueue,
+		identityStore:     identityStore,
 	}
 }
 
@@ -199,6 +203,11 @@ func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, 
 		ErrorReason: err.Error(),
 	}
 
+	if signErr := event.SignNodeResult(&keygenResult, sc.identityStore); signErr != nil {
+		logger.Error("Failed to sign keygen result event", signErr, "walletID", keygenResult.WalletID)
+		return
+	}
+
 	keygenResultBytes, err := json.Marshal(keygenResult)
 	if err != nil {
 		logger.Error("Failed to marshal keygen result event", err,
@@ -209,7 +218,7 @@ func (sc *keygenConsumer) handleKeygenError(keygenMsg types.GenerateKeyMessage, 
 
 	topic := fmt.Sprintf(mpc.TypeGenerateWalletResultFmt, keygenResult.WalletID)
 	err = sc.keygenResultQueue.Enqueue(topic, keygenResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: buildIdempotentKey(keygenMsg.WalletID, sessionID, mpc.TypeGenerateWalletResultFmt),
+		IdempotententKey: event.NodeScopedIdempotentKey(buildIdempotentKey(keygenMsg.WalletID, sessionID, mpc.TypeGenerateWalletResultFmt), keygenResult.NodeID),
 	})
 	if err != nil {
 		logger.Error("Failed to enqueue keygen result event", err,

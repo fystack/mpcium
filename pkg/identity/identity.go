@@ -36,6 +36,10 @@ type NodeIdentity struct {
 
 // Store manages node identities
 type Store interface {
+	// NodeID returns the ID of the local node
+	NodeID() string
+	// Sign signs arbitrary data with the node's identity key
+	Sign(data []byte) ([]byte, error)
 	// GetPublicKey retrieves a node's public key by its ID
 	GetPublicKey(nodeID string) ([]byte, error)
 	VerifyInitiatorMessage(msg types.InitiatorMessage) error
@@ -65,6 +69,7 @@ type InitiatorKey struct {
 type fileStore struct {
 	identityDir     string
 	currentNodeName string
+	currentNodeID   string
 
 	// Cache for public keys by node_id
 	publicKeys map[string][]byte
@@ -110,6 +115,7 @@ func NewFileStore(identityDir, nodeName string, decrypt bool, agePasswordFile st
 	store := &fileStore{
 		identityDir:     identityDir,
 		currentNodeName: nodeName,
+		currentNodeID:   peers[nodeName],
 		publicKeys:      make(map[string][]byte),
 		privateKey:      privateKey,
 		initiatorKey:    initiatorKey,
@@ -373,6 +379,19 @@ func (s *fileStore) CheckSymmetricKeyComplete(desired int) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.symmetricKeys) == desired
+}
+
+// NodeID returns the ID of the local node
+func (s *fileStore) NodeID() string {
+	return s.currentNodeID
+}
+
+// Sign signs arbitrary data with the node's identity key
+func (s *fileStore) Sign(data []byte) ([]byte, error) {
+	if s.privateKey == nil {
+		return nil, fmt.Errorf("node private key is not loaded")
+	}
+	return ed25519.Sign(s.privateKey, data), nil
 }
 
 // GetPublicKey retrieves a node's public key by its ID

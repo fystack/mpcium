@@ -21,6 +21,7 @@ func TestKeyGeneration(t *testing.T) {
 
 	// Ensure cleanup happens even if test fails
 	defer func() {
+		suite.AssertNoResultErrors(t)
 		t.Log("Performing post-test cleanup...")
 		suite.Cleanup(t)
 	}()
@@ -92,7 +93,7 @@ func testKeyGeneration(t *testing.T, suite *E2ETestSuite) {
 		suite.keygenResults[result.WalletID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Keygen succeeded for wallet %s", result.WalletID)
 		}

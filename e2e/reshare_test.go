@@ -27,6 +27,7 @@ func TestResharing(t *testing.T) {
 
 	// Ensure cleanup happens even if test fails
 	defer func() {
+		suite.AssertNoResultErrors(t)
 		t.Log("Performing post-test cleanup...")
 		suite.Cleanup(t)
 	}()
@@ -36,10 +37,10 @@ func TestResharing(t *testing.T) {
 		suite.RunMakeClean()
 		suite.SetupInfrastructure(t)
 		suite.SetupTestNodes(t)
+		require.NoError(t, suite.LoadConfig(), "Failed to load config after setup")
 		suite.RegisterPeers(t)
 		suite.StartNodes(t)
 		suite.SetupMPCClient(t)
-		suite.LoadConfig()
 	})
 
 	// Key generation phase
@@ -84,7 +85,7 @@ func testKeyGenerationForResharing(t *testing.T, suite *E2ETestSuite) {
 		suite.keygenResults[result.WalletID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Keygen failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Keygen succeeded for wallet %s", result.WalletID)
 		}
@@ -171,7 +172,7 @@ func testResharingAllNodes(t *testing.T, suite *E2ETestSuite) {
 		suite.resharingResults[result.WalletID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Resharing failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Resharing failed for wallet %s: %s (%s)", result.WalletID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Resharing succeeded for wallet %s", result.WalletID)
 		}
@@ -352,7 +353,7 @@ func testSigningAfterResharing(t *testing.T, suite *E2ETestSuite) {
 		signingResults[result.TxID] = &result
 
 		if result.ResultType == event.ResultTypeError {
-			t.Logf("Signing failed for wallet %s (tx: %s): %s (%s)", result.WalletID, result.TxID, result.ErrorReason, result.ErrorCode)
+			suite.recordResultError("Signing failed for wallet %s (tx: %s): %s (%s)", result.WalletID, result.TxID, result.ErrorReason, result.ErrorCode)
 		} else {
 			t.Logf("Signing succeeded for wallet %s (tx: %s)", result.WalletID, result.TxID)
 		}
