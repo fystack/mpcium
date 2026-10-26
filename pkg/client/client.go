@@ -2,8 +2,14 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/eventconsumer"
@@ -37,6 +43,10 @@ type mpcClient struct {
 	signResultQueue     messaging.MessageQueue
 	reshareSuccessQueue messaging.MessageQueue
 	signer              Signer
+	nodeKeyLookup       event.NodeKeyLookup
+	requiredNodeSigs    int
+	// reshareRequiredSigs maps a resharing session ID to the new committee threshold (t+1) it requested.
+	reshareRequiredSigs sync.Map
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -46,6 +56,14 @@ type Options struct {
 
 	// Signer for signing messages
 	Signer Signer
+
+	// NodeKeyLookup, when set, is used to verify that result events (keygen,
+	// signing, resharing) were signed by a known MPC node. Results without a
+	// valid node signature are rejected. See NewNodeKeyLookup.
+	NodeKeyLookup event.NodeKeyLookup
+
+	// RequiredNodeSignatures is how many distinct nodes must sign the same result (t+1); <= 1 delivers the first one.
+	RequiredNodeSignatures int
 }
 
 // NewMPCClient creates a new MPC client using the provided options.
@@ -53,6 +71,9 @@ type Options struct {
 func NewMPCClient(opts Options) MPCClient {
 	if opts.Signer == nil {
 		logger.Fatal("Signer is required", nil)
+	}
+	if opts.RequiredNodeSignatures > 1 && opts.NodeKeyLookup == nil {
+		logger.Fatal("NodeKeyLookup is required when RequiredNodeSignatures > 1", nil)
 	}
 
 	// 2) Create the PubSub for both publish & subscribe
@@ -99,6 +120,8 @@ func NewMPCClient(opts Options) MPCClient {
 		signResultQueue:     signResultQueue,
 		reshareSuccessQueue: reshareSuccessQueue,
 		signer:              opts.Signer,
+		nodeKeyLookup:       opts.NodeKeyLookup,
+		requiredNodeSigs:    opts.RequiredNodeSignatures,
 	}
 }
 
@@ -132,13 +155,17 @@ func (c *mpcClient) CreateWallet(walletID string) error {
 
 // The callback will be invoked whenever a wallet creation result is received.
 func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error {
+	aggregator := walletResultAggregator(c.requiredNodeSigs, callback)
 	err := c.genKeySuccessQueue.Dequeue(GenerateWalletSuccessTopic, func(msg []byte) error {
 		var event event.KeygenResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
 			return err
 		}
-		callback(event)
+		if err := c.verifyResult(event.NodeID, event.ResultSignature, &event); err != nil {
+			return err
+		}
+		aggregator.Add(event)
 		return nil
 	})
 
@@ -174,13 +201,17 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
+	aggregator := signingResultAggregator(c.requiredNodeSigs, callback)
 	err := c.signResultQueue.Dequeue(event.SigningResultCompleteTopic, func(msg []byte) error {
 		var event event.SigningResultEvent
 		err := json.Unmarshal(msg, &event)
 		if err != nil {
 			return err
 		}
-		callback(event)
+		if err := c.verifyResult(event.NodeID, event.ResultSignature, &event); err != nil {
+			return err
+		}
+		aggregator.Add(event)
 		return nil
 	})
 
@@ -208,6 +239,8 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 		return fmt.Errorf("Resharing: marshal error: %w", err)
 	}
 
+	c.reshareRequiredSigs.Store(msg.SessionID, msg.NewThreshold+1)
+
 	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes); err != nil {
 		return fmt.Errorf("Resharing: publish error: %w", err)
 	}
@@ -216,6 +249,10 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
 
+	aggregator := reshareResultAggregator(c.reshareRequiredFor, func(e event.ResharingResultEvent) {
+		c.reshareRequiredSigs.Delete(e.SessionID)
+		callback(e)
+	})
 	err := c.reshareSuccessQueue.Dequeue(ResharingSuccessTopic, func(msg []byte) error {
 		logger.Info("Received reshare success message", "raw", string(msg))
 		var event event.ResharingResultEvent
@@ -224,8 +261,11 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 			logger.Error("Failed to unmarshal reshare success event", err, "raw", string(msg))
 			return err
 		}
+		if err := c.verifyResult(event.NodeID, event.ResultSignature, &event); err != nil {
+			return err
+		}
 		logger.Info("Deserialized reshare success event", "event", event)
-		callback(event)
+		aggregator.Add(event)
 		return nil
 	})
 
@@ -234,4 +274,72 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 	}
 
 	return nil
+}
+
+// verifyResult checks a node-signed result event. Failed verification returns
+// messaging.ErrPermament so the message is terminated instead of redelivered.
+func (c *mpcClient) verifyResult(nodeID string, signature []byte, res interface{ Raw() ([]byte, error) }) error {
+	if c.nodeKeyLookup == nil {
+		return nil
+	}
+	if err := event.VerifyNodeResult(nodeID, signature, res, c.nodeKeyLookup); err != nil {
+		logger.Error("Rejecting result event", err)
+		return messaging.ErrPermament
+	}
+	return nil
+}
+
+// NewNodeKeyLookup builds a NodeKeyLookup from a directory of node identity
+// files (<node_name>_identity.json) as produced by mpcium-cli generate-identity.
+func NewNodeKeyLookup(identityDir string) (event.NodeKeyLookup, error) {
+	entries, err := os.ReadDir(identityDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read identity directory: %w", err)
+	}
+
+	type nodeIdentity struct {
+		NodeID    string `json:"node_id"`
+		PublicKey string `json:"public_key"`
+	}
+
+	keys := make(map[string][]byte)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_identity.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(identityDir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+		}
+		var identity nodeIdentity
+		if err := json.Unmarshal(data, &identity); err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", entry.Name(), err)
+		}
+		publicKey, err := hex.DecodeString(identity.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid public key in %s: %w", entry.Name(), err)
+		}
+		if len(publicKey) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("invalid public key size in %s: %d", entry.Name(), len(publicKey))
+		}
+		keys[identity.NodeID] = publicKey
+	}
+
+	return func(nodeID string) ([]byte, error) {
+		publicKey, ok := keys[nodeID]
+		if !ok {
+			return nil, fmt.Errorf("unknown node: %s", nodeID)
+		}
+		return publicKey, nil
+	}, nil
+}
+
+func (c *mpcClient) reshareRequiredFor(e event.ResharingResultEvent) int {
+	if c.requiredNodeSigs <= 1 {
+		return c.requiredNodeSigs
+	}
+	if required, ok := c.reshareRequiredSigs.Load(e.SessionID); ok {
+		return required.(int)
+	}
+	return c.requiredNodeSigs
 }

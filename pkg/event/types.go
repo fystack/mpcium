@@ -73,6 +73,9 @@ const (
 	ErrorCodeMessageDelivery     ErrorCode = "ERROR_MESSAGE_DELIVERY"
 	ErrorCodeMaxDeliveryAttempts ErrorCode = "ERROR_MAX_DELIVERY_ATTEMPTS"
 
+	// Result aggregation errors
+	ErrorCodeInsufficientNodeSignatures ErrorCode = "ERROR_INSUFFICIENT_NODE_SIGNATURES"
+
 	// Configuration errors
 	ErrorCodeInvalidConfiguration ErrorCode = "ERROR_INVALID_CONFIGURATION"
 	ErrorCodeInvalidThreshold     ErrorCode = "ERROR_INVALID_THRESHOLD"

@@ -1,12 +1,12 @@
 module github.com/fystack/mpcium/e2e
 
-go 1.23.0
+go 1.23.8
 
 require (
 	github.com/dgraph-io/badger/v4 v4.7.0
 	github.com/fystack/mpcium v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/consul/api v1.26.1
+	github.com/hashicorp/consul/api v1.32.1
 	github.com/nats-io/nats.go v1.31.0
 	github.com/stretchr/testify v1.10.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -91,7 +91,7 @@ require (
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.21.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
-	golang.org/x/exp v0.0.0-20240112132812-db7319d0e0e3 // indirect
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/term v0.31.0 // indirect

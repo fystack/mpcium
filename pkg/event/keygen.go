@@ -14,4 +14,9 @@ type KeygenResultEvent struct {
 	ResultType  ResultType `json:"result_type"`
 	ErrorReason string     `json:"error_reason"`
 	ErrorCode   string     `json:"error_code"`
+
+	// NodeID and ResultSignature authenticate the node that emitted this
+	// result; see SigningResultEvent.
+	NodeID          string `json:"node_id,omitempty"`
+	ResultSignature []byte `json:"result_signature,omitempty"`
 }

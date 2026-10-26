@@ -60,9 +60,15 @@ func main() {
 		logger.Fatal("Failed to create local signer", err)
 	}
 
+	nodeKeyLookup, err := client.NewNodeKeyLookup("./node0/identity")
+	if err != nil {
+		logger.Fatal("Failed to create node key lookup", err)
+	}
+
 	mpcClient := client.NewMPCClient(client.Options{
-		NatsConn: natsConn,
-		Signer:   localSigner,
+		NatsConn:      natsConn,
+		Signer:        localSigner,
+		NodeKeyLookup: nodeKeyLookup,
 	})
 
 	// 3) Listen for signing results

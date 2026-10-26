@@ -22,6 +22,12 @@ type SigningResultEvent struct {
 
 	// TODO: define two separate events for eddsa and ecdsa
 	Signature []byte `json:"signature"`
+
+	// NodeID and ResultSignature identify and authenticate the node that
+	// emitted this result, so consumers can reject events injected or
+	// tampered with by a compromised message broker.
+	NodeID          string `json:"node_id,omitempty"`
+	ResultSignature []byte `json:"result_signature,omitempty"`
 }
 
 type SigningResultSuccessEvent struct {
