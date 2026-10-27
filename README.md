@@ -24,7 +24,7 @@ At its cryptographic core, Mpcium integrates tss-lib, a production-grade thresho
 
 - **EdDSA (Ed25519)**: for Solana, Polkadot, Cardano, and other modern blockchains
 
-![Mpcium Architecture](images/mpcium.png)
+![Mpcium Architecture](images/mpc-cosign-architecture.png)
 
 ---
 
