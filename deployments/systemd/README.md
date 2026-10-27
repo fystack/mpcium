@@ -39,7 +39,7 @@ Steps marked **(designated node)** are run **once**, on a single node (e.g. `nod
 Download Go 1.27.1 (auto-detects `amd64` / `arm64`):
 
 ```bash
-GO_VERSION=go1.27.1
+GO_VERSION=go1.27.3
 ARCH=$(dpkg --print-architecture)   # amd64 or arm64
 wget "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz"
 

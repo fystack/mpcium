@@ -7,7 +7,7 @@ on:
     branches: ["*"]
 
 env:
-  GO_VERSION: "1.25.8"
+  GO_VERSION: "1.27.3"
 
 jobs:
   test:
@@ -89,7 +89,8 @@ jobs:
           govulncheck -format=sarif ./... > govulncheck-results.sarif
 
           govulncheck -json ./... > vuln.json
-          count=$(jq '[.[] | select(.finding != null and .finding.trace != null)] | length' vuln.json || echo 0)
+          # -json emits a stream of objects; count unique OSVs whose vulnerable symbol is actually called
+          count=$(jq -n '[inputs | select(.finding.trace[0].function != null) | .finding.osv] | unique | length' vuln.json || echo 0)
           echo "Found $count vulnerabilities"
 
           if [ "$count" -gt 0 ]; then
@@ -99,11 +100,13 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Clean SARIF file (remove duplicate tags)
+      - name: Clean SARIF file (remove duplicate tags and stacks)
         if: always()
         run: |
-          # Remove duplicate tags from SARIF rules to fix validation errors
-          jq '(.runs[]?.tool.driver.rules[]?.properties.tags) |= unique' \
+          # SARIF requires unique items; govulncheck can emit duplicate tags, stacks and codeFlows
+          jq '(.runs[]?.tool.driver.rules[]?.properties.tags) |= unique
+            | (.runs[]?.results[]? | select(.stacks) | .stacks) |= unique
+            | (.runs[]?.results[]? | select(.codeFlows) | .codeFlows) |= unique' \
             govulncheck-results.sarif > govulncheck-results-clean.sarif
           mv govulncheck-results-clean.sarif govulncheck-results.sarif
           echo "✅ Cleaned govulncheck SARIF file"
