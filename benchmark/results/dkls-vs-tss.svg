@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="900" height="470" fill="#ffffff"/>
+<text x="30" y="40" font-size="22" font-weight="600" fill="#1b2430">Signing throughput: DKLs23 vs tss-lib ECDSA</text>
+<text x="30" y="64" font-size="14" fill="#5b6675">Operations per minute, 3 nodes, higher is better</text>
+<text x="30" y="100" font-size="15" font-weight="600" fill="#1b2430">VPS (NATS over VPN), 1000 tx</text>
+<text x="238" y="135" font-size="14" fill="#33404f" text-anchor="end">tss-lib ECDSA</text>
+<rect x="250" y="116" width="16.5" height="28" rx="3" fill="#6b7a90"/>
+<text x="274.5" y="135" font-size="14" font-weight="600" fill="#1b2430">134</text>
+<text x="238" y="173" font-size="14" fill="#33404f" text-anchor="end">DKLs23, cap 10</text>
+<rect x="250" y="154" width="143.5" height="28" rx="3" fill="#0f8b8d"/>
+<text x="401.5" y="173" font-size="14" font-weight="600" fill="#1b2430">1,168</text>
+<text x="238" y="211" font-size="14" fill="#33404f" text-anchor="end">DKLs23, cap 40</text>
+<rect x="250" y="192" width="145.3" height="28" rx="3" fill="#0f8b8d"/>
+<text x="403.3" y="211" font-size="14" font-weight="600" fill="#1b2430">1,182</text>
+<text x="30" y="252" font-size="15" font-weight="600" fill="#1b2430">Local (NATS in Docker)</text>
+<text x="238" y="287" font-size="14" fill="#33404f" text-anchor="end">tss-lib ECDSA (200 tx)</text>
+<rect x="250" y="268" width="20.5" height="28" rx="3" fill="#6b7a90"/>
+<text x="278.5" y="287" font-size="14" font-weight="600" fill="#1b2430">166</text>
+<text x="238" y="325" font-size="14" fill="#33404f" text-anchor="end">DKLs23, cap 10</text>
+<rect x="250" y="306" width="539.4" height="28" rx="3" fill="#0f8b8d"/>
+<text x="797.4" y="325" font-size="14" font-weight="600" fill="#1b2430">4,389</text>
+<text x="238" y="363" font-size="14" fill="#33404f" text-anchor="end">DKLs23, cap 40</text>
+<rect x="250" y="344" width="565.9" height="28" rx="3" fill="#0f8b8d"/>
+<text x="823.9" y="363" font-size="14" font-weight="600" fill="#1b2430">4,604</text>
+<text x="30" y="452" font-size="12" fill="#7a8595">Apple M1 Pro, all nodes on one machine. Source: benchmark/results/dkls-vs-tss.csv</text>
+</svg>
