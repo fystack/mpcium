@@ -21,7 +21,7 @@ Mpcium is a distributed threshold cryptographic system that requires multiple no
 
 ### Software Dependencies
 
-- **Go 1.27.1** on all nodes
+- **Go 1.27.3** on all nodes
 - **Git** for source code management
 - **jq** (used by `setup-config.sh verify` to check identity files; without it those checks are silently skipped)
 - **systemd v250+** (required for `systemd-creds`)
@@ -36,7 +36,7 @@ Steps marked **(designated node)** are run **once**, on a single node (e.g. `nod
 
 #### Step 1: Install Go (all nodes)
 
-Download Go 1.27.1 (auto-detects `amd64` / `arm64`):
+Download Go 1.27.3 (auto-detects `amd64` / `arm64`):
 
 ```bash
 GO_VERSION=go1.27.3

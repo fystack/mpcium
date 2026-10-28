@@ -13,7 +13,7 @@ func EncodeS256PubKey(pubKey *ecdsa.PublicKey) ([]byte, error) {
 		return nil, errors.New("public key is nil")
 	}
 
-	params := pubKey.Curve.Params()
+	params := pubKey.Params()
 	expected := btcec.S256().Params()
 	if params.P.Cmp(expected.P) != 0 || params.N.Cmp(expected.N) != 0 {
 		return nil, errors.New("unsupported curve, expected secp256k1")

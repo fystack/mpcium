@@ -58,7 +58,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
-	defer natsConn.Drain()
 	defer natsConn.Close()
 
 	localSigner, err := client.NewLocalSigner(types.EventInitiatorKeyType(algorithm), client.LocalSignerOptions{
