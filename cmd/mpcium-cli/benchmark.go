@@ -829,27 +829,27 @@ func generateBenchmarkReport(operationType string, result BenchmarkResult) strin
 
 	report.WriteString("\n")
 	report.WriteString("===============================\n")
-	report.WriteString(fmt.Sprintf("%s BENCHMARK RESULTS SUMMARY\n", strings.ToUpper(operationType)))
+	fmt.Fprintf(&report, "%s BENCHMARK RESULTS SUMMARY\n", strings.ToUpper(operationType))
 	report.WriteString("===============================\n")
-	report.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format(time.RFC3339)))
-	report.WriteString(fmt.Sprintf("Operation Type: %s\n", operationType))
-	report.WriteString(fmt.Sprintf("Total benchmark time: %v\n", result.TotalTime))
-	report.WriteString(fmt.Sprintf("Total batches sent: %d\n", result.TotalBatches))
-	report.WriteString(fmt.Sprintf("Total requests sent: %d\n", result.TotalOperations))
-	report.WriteString(fmt.Sprintf("Successful completions: %d\n", result.SuccessfulOps))
-	report.WriteString(fmt.Sprintf("Failed operations: %d\n", result.FailedOps))
-	report.WriteString(fmt.Sprintf("Success rate: %.2f%%\n", 100.0-result.ErrorRate))
-	report.WriteString(fmt.Sprintf("Error rate: %.2f%%\n", result.ErrorRate))
-	report.WriteString(fmt.Sprintf("Average operations per minute: %.2f\n", result.OperationsPerMin))
+	fmt.Fprintf(&report, "Timestamp: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(&report, "Operation Type: %s\n", operationType)
+	fmt.Fprintf(&report, "Total benchmark time: %v\n", result.TotalTime)
+	fmt.Fprintf(&report, "Total batches sent: %d\n", result.TotalBatches)
+	fmt.Fprintf(&report, "Total requests sent: %d\n", result.TotalOperations)
+	fmt.Fprintf(&report, "Successful completions: %d\n", result.SuccessfulOps)
+	fmt.Fprintf(&report, "Failed operations: %d\n", result.FailedOps)
+	fmt.Fprintf(&report, "Success rate: %.2f%%\n", 100.0-result.ErrorRate)
+	fmt.Fprintf(&report, "Error rate: %.2f%%\n", result.ErrorRate)
+	fmt.Fprintf(&report, "Average operations per minute: %.2f\n", result.OperationsPerMin)
 
 	if len(result.OperationTimes) > 0 {
-		report.WriteString(fmt.Sprintf("Average operation time: %v\n", result.AverageTime))
-		report.WriteString(fmt.Sprintf("Median operation time: %v\n", result.MedianTime))
+		fmt.Fprintf(&report, "Average operation time: %v\n", result.AverageTime)
+		fmt.Fprintf(&report, "Median operation time: %v\n", result.MedianTime)
 	}
 
 	report.WriteString("\n")
 	report.WriteString("------------------------------\n")
-	report.WriteString(fmt.Sprintf("%d REQUEST ANALYSIS\n", result.BatchSize))
+	fmt.Fprintf(&report, "%d REQUEST ANALYSIS\n", result.BatchSize)
 	report.WriteString("------------------------------\n")
 
 	if len(result.OperationTimes) >= result.BatchSize {
@@ -863,7 +863,7 @@ func generateBenchmarkReport(operationType string, result BenchmarkResult) strin
 			completedCount = result.BatchSize
 		}
 
-		report.WriteString(fmt.Sprintf("Completed from first %d: %d/%d\n", result.BatchSize, completedCount, result.BatchSize))
+		fmt.Fprintf(&report, "Completed from first %d: %d/%d\n", result.BatchSize, completedCount, result.BatchSize)
 
 		if len(firstNResults) > 0 {
 			var totalTime time.Duration
@@ -880,8 +880,8 @@ func generateBenchmarkReport(operationType string, result BenchmarkResult) strin
 				}
 			}
 
-			report.WriteString(fmt.Sprintf("Fastest (first %d): %v\n", result.BatchSize, minTime))
-			report.WriteString(fmt.Sprintf("Slowest (first %d): %v\n", result.BatchSize, maxTime))
+			fmt.Fprintf(&report, "Fastest (first %d): %v\n", result.BatchSize, minTime)
+			fmt.Fprintf(&report, "Slowest (first %d): %v\n", result.BatchSize, maxTime)
 		}
 	}
 

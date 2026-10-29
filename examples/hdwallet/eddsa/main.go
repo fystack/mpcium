@@ -87,7 +87,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
-	defer natsConn.Drain()
 	defer natsConn.Close()
 
 	localSigner, err := client.NewLocalSigner(types.EventInitiatorKeyType(algorithm), client.LocalSignerOptions{
@@ -413,8 +412,8 @@ func deriveChildPublicKeyEd25519ViaTSS(masterPubKey []byte, chainCodeHex string,
 
 	childPub := edwards.PublicKey{
 		Curve: tss.Edwards(),
-		X:     childKey.PublicKey.X,
-		Y:     childKey.PublicKey.Y,
+		X:     childKey.X,
+		Y:     childKey.Y,
 	}
 
 	return childPub.SerializeCompressed(), nil

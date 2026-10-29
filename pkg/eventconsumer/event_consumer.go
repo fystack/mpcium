@@ -230,7 +230,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	wg.Add(2)
 
 	// Channel to communicate errors from goroutines to main function
-	errorChan := make(chan error, 2)
+	failedChan := make(chan struct{}, 2)
 
 	go func() {
 		defer wg.Done()
@@ -240,7 +240,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		case err := <-ecdsaSession.ErrChan():
 			logger.Error("ECDSA keygen session error", err)
 			ec.handleKeygenSessionError(walletID, err, "ECDSA keygen session error", natMsg)
-			errorChan <- err
+			failedChan <- struct{}{}
 			doneEcdsa()
 		}
 	}()
@@ -252,7 +252,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 		case err := <-eddsaSession.ErrChan():
 			logger.Error("EdDSA keygen session error", err)
 			ec.handleKeygenSessionError(walletID, err, "EdDSA keygen session error", natMsg)
-			errorChan <- err
+			failedChan <- struct{}{}
 			doneEddsa()
 		}
 	}()
@@ -293,7 +293,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	case <-doneAll:
 		// Check if any errors occurred during execution
 		select {
-		case <-errorChan:
+		case <-failedChan:
 			// Error already handled by the goroutine, just return early
 			return
 		default:

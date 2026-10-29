@@ -41,7 +41,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
-	defer natsConn.Drain()
 	defer natsConn.Close()
 
 	// For AWS production, use:

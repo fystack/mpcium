@@ -46,7 +46,7 @@ func TestCKDGoldenVectors(t *testing.T) {
 		for want, path := range cases {
 			_, ek, err := ckd.Derive("golden-secp", master, path, tss.S256())
 			require.NoErrorf(t, err, "derive path %v", path)
-			got := hex.EncodeToString(serializeCompressed(ek.PublicKey.X, ek.PublicKey.Y))
+			got := hex.EncodeToString(serializeCompressed(ek.X, ek.Y))
 			require.Equalf(t, want, got, "secp256k1 child pubkey drift at path %v", path)
 		}
 	})
@@ -63,7 +63,7 @@ func TestCKDGoldenVectors(t *testing.T) {
 		for want, path := range cases {
 			_, ek, err := ckd.Derive("golden-eddsa", master, path, tss.Edwards())
 			require.NoErrorf(t, err, "derive path %v", path)
-			pk := edwards.PublicKey{Curve: e, X: ek.PublicKey.X, Y: ek.PublicKey.Y}
+			pk := edwards.PublicKey{Curve: e, X: ek.X, Y: ek.Y}
 			got := hex.EncodeToString(pk.SerializeCompressed())
 			require.Equalf(t, want, got, "ed25519 child pubkey drift at path %v", path)
 		}
