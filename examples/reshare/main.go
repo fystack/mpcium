@@ -8,6 +8,7 @@ import (
 	"slices"
 	"syscall"
 
+	"github.com/fystack/mpcium/examples/internal/exampleclient"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/event"
@@ -63,11 +64,11 @@ func main() {
 		logger.Fatal("Failed to create local signer", err)
 	}
 
-	mpcClient := client.NewMPCClient(client.Options{
+	mpcClient := client.NewMPCClient(exampleclient.WithResultVerification(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
 		ClientID: *clientID,
-	})
+	}))
 
 	// 3) Listen for signing results
 	err = mpcClient.OnResharingResult(func(evt event.ResharingResultEvent) {

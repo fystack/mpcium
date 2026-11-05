@@ -218,6 +218,12 @@ scp /opt/mpcium/identity/node0_identity.json root@<node2-ip>:/opt/mpcium/identit
 
 ⚠️ Never copy `*_private.key` / `*_private.key.age` to other nodes.
 
+Collect the node public keys for MPC clients. Clients pin them to check that results were signed by these nodes. They are public keys, not secrets. For a deployment that is already running, run the same command against any node's identity directory, which holds every node's `*_identity.json`:
+
+```bash
+cd /opt/mpcium && mpcium-cli export-node-keys
+```
+
 Before continuing, double-check on every node that:
 
 - `/opt/mpcium/peers.json` exists

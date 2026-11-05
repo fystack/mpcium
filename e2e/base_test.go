@@ -18,6 +18,7 @@ import (
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/kvstore"
+	"github.com/fystack/mpcium/pkg/resultauth"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
@@ -186,6 +187,17 @@ func (s *E2ETestSuite) setupClients(t *testing.T) {
 	t.Log("Clients setup completed")
 }
 
+// e2eRequiredNodeSignatures is mpc_threshold + 1 from config.test.yaml.template.
+const e2eRequiredNodeSignatures = 2
+
+func (s *E2ETestSuite) nodePublicKeys(t *testing.T) map[string]string {
+	t.Helper()
+	publicKeys, err := resultauth.LoadPublicKeys(filepath.Join(s.testDir, "test_node0", "identity"))
+	require.NoError(t, err, "Failed to load node public keys")
+	require.NotEmpty(t, publicKeys, "No node identity files found")
+	return publicKeys
+}
+
 func (s *E2ETestSuite) SetupMPCClient(t *testing.T) {
 	t.Log("Setting up MPC client...")
 
@@ -207,9 +219,12 @@ func (s *E2ETestSuite) SetupMPCClient(t *testing.T) {
 	}
 
 	mpcClient := client.NewMPCClient(client.Options{
-		NatsConn: s.natsConn,
-		Signer:   localSigner,
-		ClientID: "e2e-suite",
+		NatsConn:               s.natsConn,
+		Signer:                 localSigner,
+		ClientID:               "e2e-suite",
+		ResultVerifyMode:       client.ResultVerifyEnforce,
+		NodePublicKeys:         s.nodePublicKeys(t),
+		RequiredNodeSignatures: e2eRequiredNodeSignatures,
 	})
 	s.mpcClient = mpcClient
 	t.Log("MPC client created")

@@ -109,6 +109,10 @@ for i in $(seq 0 $((NUM_NODES-1))); do
     done
 done
 
+# Collect node public keys for clients that verify node-signed results
+echo "🔑 Writing node_public_keys.json ..."
+mpcium-cli export-node-keys --identity-dir node0/identity --peers peers.json --output node_public_keys.json --overwrite
+
 echo "✨ Node identities setup complete!"
 echo
 echo "📂 Created folder structure:"

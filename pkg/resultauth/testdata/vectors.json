@@ -1,0 +1,12 @@
+[
+  {
+    "seed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "node_id": "node-vector-0",
+    "subject": "mpc.mpc_signing_result.complete",
+    "body": "{\"result_type\":\"success\",\"wallet_id\":\"wallet-1\",\"tx_id\":\"tx-1\"}",
+    "signature": "IJjFJSE7bykp+PEfdzZ9SGC1tcd2fht4JjLMX1obph6gWR7tgNxo1PG1bfeotiaMpK/+a4VDUzDp907XvJa5AA==",
+    "node_id_header": "Mpc-Node-Id",
+    "signature_header": "Mpc-Result-Sig"
+  }
+]

@@ -93,10 +93,11 @@ const (
 	ErrorCodeReshareFailure ErrorCode = "ERROR_RESHARE_FAILURE"
 
 	// Context and cancellation errors
-	ErrorCodeContextCancelled ErrorCode = "ERROR_CONTEXT_CANCELLED"
-	ErrorCodeOperationAborted ErrorCode = "ERROR_OPERATION_ABORTED"
-	ErrorCodeNotMajority      ErrorCode = "ERROR_NOT_MAJORITY"
-	ErrorCodeClusterNotReady  ErrorCode = "ERROR_CLUSTER_NOT_READY"
+	ErrorCodeContextCancelled           ErrorCode = "ERROR_CONTEXT_CANCELLED"
+	ErrorCodeOperationAborted           ErrorCode = "ERROR_OPERATION_ABORTED"
+	ErrorCodeNotMajority                ErrorCode = "ERROR_NOT_MAJORITY"
+	ErrorCodeClusterNotReady            ErrorCode = "ERROR_CLUSTER_NOT_READY"
+	ErrorCodeInsufficientNodeSignatures ErrorCode = "ERROR_INSUFFICIENT_NODE_SIGNATURES"
 )
 
 // GetErrorCodeFromError attempts to categorize a generic error into a specific error code

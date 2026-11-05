@@ -460,6 +460,14 @@ func (s *fileStore) GetPublicKey(nodeID string) ([]byte, error) {
 	return nil, fmt.Errorf("public key not found for node ID: %s", nodeID)
 }
 
+// Sign signs arbitrary bytes with the node identity key; used for result signatures.
+func (s *fileStore) Sign(data []byte) ([]byte, error) {
+	if len(s.privateKey) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("node private key is not loaded")
+	}
+	return ed25519.Sign(s.privateKey, data), nil
+}
+
 func (s *fileStore) SignMessage(msg *types.TssMessage) ([]byte, error) {
 	// Get deterministic bytes for signing
 	msgBytes, err := msg.MarshalForSigning()

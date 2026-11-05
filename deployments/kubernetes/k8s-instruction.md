@@ -200,6 +200,12 @@ identity/node0/
 └── node0_private.key.age      (encrypted private key)
 ```
 
+Collect the node public keys for MPC clients. Clients pin them to check that results were signed by these nodes. They are public keys, not secrets. For a deployment that is already running, run the same command against any node's identity directory, which holds every node's `*_identity.json`:
+
+```bash
+mpcium-cli export-node-keys --identity-dir identity/node0 --identity-dir identity/node1 --identity-dir identity/node2
+```
+
 ### Step 5: Prepare Secrets
 
 You'll need the following secrets for each node:
@@ -303,6 +309,9 @@ data:
     chain_code: "<64-char-hex-string>"  # Required: 32-byte hex for HD key derivation
     backup_enabled: false
     backup_period_seconds: 300
+    # Enable only after all clients verify node signatures (t+1 needs every node's copy)
+    result_signing:
+      per_node_results: false
 ```
 
 ### Step 5: Register Peers in Consul

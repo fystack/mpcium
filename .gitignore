@@ -25,3 +25,4 @@ config.yaml
 .vscode
 .vagrant
 .chain_code
+node_public_keys.json
