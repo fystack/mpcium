@@ -318,6 +318,25 @@ configs := []client.KMSSignerOptions{
 
 **Note**: AWS KMS only supports P256 (ECDSA) keys, not Ed25519. If you need Ed25519, use the local signer.
 
+#### Verifying node-signed results
+
+Each node signs the results it publishes with its identity key, in the `Mpc-Node-Id` and `Mpc-Result-Sig` NATS headers. The message body is unchanged. A client pins the node public keys and checks every result before using it:
+
+```go
+mpcClient := client.NewMPCClient(client.Options{
+    NatsConn:               natsConn,
+    Signer:                 localSigner,
+    ResultVerifyMode:       client.ResultVerifyEnforce, // off (default) | log | enforce
+    NodePublicKeys:         nodePublicKeys,             // node_id -> hex public key
+    RequiredNodeSignatures: 3,                          // mpc_threshold + 1
+})
+```
+
+- `setup_identities.sh` writes `node_public_keys.json` for new local setups. For an existing setup or a production cluster, run `mpcium-cli export-node-keys --identity-dir <dir>` against any node's identity directory, which holds every node's `*_identity.json`.
+- `enforce` rejects unsigned or tampered results and delivers a result only after `RequiredNodeSignatures` nodes sent the same one. Set `result_signing.per_node_results: true` on the nodes, or only one copy of each result reaches the client.
+- `log` reports failed checks but still delivers every result. Use it while rolling out.
+- With `RequiredNodeSignatures` above 1, give each client process its own `ClientID`. Processes that share one also share a JetStream consumer, which splits the node copies of a result between them, so none may reach the required count.
+
 ## Test with AWS KMS (LocalStack)
 
 For local development and testing with AWS KMS functionality, you can use LocalStack to simulate AWS KMS services.

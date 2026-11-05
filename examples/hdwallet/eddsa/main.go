@@ -15,6 +15,7 @@ import (
 	"github.com/bnb-chain/tss-lib/v3/tss"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/decred/dcrd/dcrec/edwards/v2"
+	"github.com/fystack/mpcium/examples/internal/exampleclient"
 	"github.com/fystack/mpcium/pkg/ckdutil"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
@@ -96,11 +97,11 @@ func main() {
 		logger.Fatal("Failed to create local signer", err)
 	}
 
-	mpcClient := client.NewMPCClient(client.Options{
+	mpcClient := client.NewMPCClient(exampleclient.WithResultVerification(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
 		ClientID: *clientID,
-	})
+	}))
 
 	// Step 1: Generate ONE master wallet
 	fmt.Println("Step 1: Generating master MPC wallet...")

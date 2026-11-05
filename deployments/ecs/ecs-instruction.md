@@ -137,6 +137,12 @@ identity/node0/
 └── node2_identity.json
 ```
 
+Collect the node public keys for MPC clients. Clients pin them to check that results were signed by these nodes. They are public keys, not secrets. For a deployment that is already running, run the same command against any node's identity directory, which holds every node's `*_identity.json`:
+
+```bash
+mpcium-cli export-node-keys --identity-dir identity/node0
+```
+
 ### Step 5: Generate Chain Code
 
 ```bash
@@ -660,6 +666,11 @@ backup_period_seconds: 300
 healthcheck:
   enabled: true
   address: "0.0.0.0:8080"
+
+# Keep every node's signed copy of a result so clients can require t+1 matching results.
+# Enable only after all clients verify node signatures.
+result_signing:
+  per_node_results: false
 ```
 
 ## Post-Deployment Verification
