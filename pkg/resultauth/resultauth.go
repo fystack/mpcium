@@ -35,9 +35,7 @@ type KeyLookup func(nodeID string) (ed25519.PublicKey, bool)
 
 // SigningPayload binds the signature to the subject so a result cannot be replayed on another topic.
 func SigningPayload(subject string, body []byte) []byte {
-	payload := make([]byte, 0, len(signingDomain)+len(subject)+len(body)+2)
-	payload = append(payload, signingDomain...)
-	payload = append(payload, 0)
+	payload := append([]byte(signingDomain), 0)
 	payload = append(payload, subject...)
 	payload = append(payload, 0)
 	return append(payload, body...)

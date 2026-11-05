@@ -50,7 +50,7 @@ func exportNodeKeys(ctx context.Context, c *cli.Command) error {
 	if _, err := os.Stat(outputPath); err == nil && !c.Bool("overwrite") {
 		return fmt.Errorf("file %s already exists, use --overwrite to replace it", outputPath)
 	}
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("Wrote %d node public keys to %s\n", len(publicKeys), outputPath)

@@ -85,35 +85,52 @@ func NewAggregator[T any](cfg AggregatorConfig[T]) *Aggregator[T] {
 
 func (a *Aggregator[T]) Add(result Result[T]) {
 	a.mu.Lock()
-	r, ok := a.rounds[result.Key]
-	if !ok {
-		if done, finished := a.outcomes[result.Key]; finished {
-			if _, repeated := done.nodes[result.NodeID]; !repeated {
-				done.nodes[result.NodeID] = struct{}{}
-				a.mu.Unlock()
-				settle(result.Ack)
-				return
-			}
-		}
-		r = &round[T]{
-			required:  max(result.Required, 1),
-			nodes:     make(map[string]struct{}),
-			successes: make(map[[sha256.Size]byte]*successGroup[T]),
-		}
-		if r.required > 1 {
-			key := result.Key
-			r.timer = time.AfterFunc(a.cfg.Timeout, func() { a.expire(key) })
-		}
-		a.rounds[result.Key] = r
+	r := a.roundFor(result)
+	if r == nil {
+		a.mu.Unlock()
+		settle(result.Ack)
+		return
 	}
-
 	r.acks = append(r.acks, result.Ack)
 	if _, dup := r.nodes[result.NodeID]; dup {
 		a.mu.Unlock()
 		return
 	}
 	r.nodes[result.NodeID] = struct{}{}
+	finished, outcome := a.record(result, r)
+	a.mu.Unlock()
+	if finished {
+		a.complete(r, outcome)
+	}
+}
 
+// roundFor returns the open round for the result, or nil for a late copy of a finished key. Must hold a.mu.
+func (a *Aggregator[T]) roundFor(result Result[T]) *round[T] {
+	if r, ok := a.rounds[result.Key]; ok {
+		return r
+	}
+	if done, finished := a.outcomes[result.Key]; finished {
+		if _, repeated := done.nodes[result.NodeID]; !repeated {
+			done.nodes[result.NodeID] = struct{}{}
+			return nil
+		}
+	}
+	r := &round[T]{
+		required:  max(result.Required, 1),
+		nodes:     make(map[string]struct{}),
+		successes: make(map[[sha256.Size]byte]*successGroup[T]),
+	}
+	if r.required > 1 {
+		key := result.Key
+		r.timer = time.AfterFunc(a.cfg.Timeout, func() { a.expire(key) })
+	}
+	a.rounds[result.Key] = r
+	return r
+}
+
+// record counts one node's copy and finishes the round once it reaches quorum. Must hold a.mu.
+func (a *Aggregator[T]) record(result Result[T], r *round[T]) (bool, T) {
+	var none T
 	if !result.Success {
 		// Error payloads legitimately differ per node, so only distinct reporters are counted.
 		r.errorCount++
@@ -121,13 +138,10 @@ func (a *Aggregator[T]) Add(result Result[T]) {
 			r.firstError, r.hasError = result.Event, true
 		}
 		if r.errorCount < r.required {
-			a.mu.Unlock()
-			return
+			return false, none
 		}
 		a.finish(result.Key, r, false)
-		a.mu.Unlock()
-		a.complete(r, r.firstError)
-		return
+		return true, r.firstError
 	}
 
 	bodyHash := sha256.Sum256(result.Body)
@@ -141,12 +155,10 @@ func (a *Aggregator[T]) Add(result Result[T]) {
 	}
 	group.nodes[result.NodeID] = struct{}{}
 	if len(group.nodes) < r.required {
-		a.mu.Unlock()
-		return
+		return false, none
 	}
 	a.finish(result.Key, r, true)
-	a.mu.Unlock()
-	a.complete(r, group.event)
+	return true, group.event
 }
 
 // finish must be called with a.mu held.
