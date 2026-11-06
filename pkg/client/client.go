@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/fystack/mpcium/pkg/event"
 	"github.com/fystack/mpcium/pkg/eventconsumer"
@@ -29,21 +28,16 @@ type MPCClient interface {
 }
 
 type mpcClient struct {
-	signingBroker                   messaging.MessageBroker
-	keygenBroker                    messaging.MessageBroker
-	pubsub                          messaging.PubSub
-	genKeySuccessQueue              messaging.MessageQueue
-	signResultQueue                 messaging.MessageQueue
-	reshareSuccessQueue             messaging.MessageQueue
-	signer                          Signer
-	clientID                        string
-	resultVerifier                  resultVerifier
-	requiredNodeSignaturesForWallet func(walletID string) int
-	keygenAggregator                sharedAggregator[event.KeygenResultEvent]
-	signingAggregator               sharedAggregator[event.SigningResultEvent]
-	reshareAggregator               sharedAggregator[event.ResharingResultEvent]
-	// reshareRequiredSigs maps a reshare result subject to the new committee's t+1.
-	reshareRequiredSigs sync.Map
+	signingBroker       messaging.MessageBroker
+	keygenBroker        messaging.MessageBroker
+	pubsub              messaging.PubSub
+	genKeySuccessQueue  messaging.MessageQueue
+	signResultQueue     messaging.MessageQueue
+	reshareSuccessQueue messaging.MessageQueue
+	signer              Signer
+	clientID            string
+	resultVerifier      resultVerifier
+	keygenAggregator    sharedAggregator[event.KeygenResultEvent]
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -54,7 +48,7 @@ type Options struct {
 	// Signer for signing messages
 	Signer Signer
 
-	// ClientID scopes result routing; give each process its own when RequiredNodeSignatures > 1.
+	// ClientID scopes result routing; give each process its own when KeygenRequiredNodeSignatures > 1.
 	ClientID string
 
 	// ResultVerifyMode controls checking of node signatures on results; defaults to off.
@@ -63,11 +57,10 @@ type Options struct {
 	// NodePublicKeys maps node ID to its hex ed25519 identity public key.
 	NodePublicKeys map[string]string
 
-	// RequiredNodeSignatures is how many distinct nodes must send the same result (t+1) in enforce mode.
-	RequiredNodeSignatures int
-
-	// RequiredNodeSignaturesForWallet overrides RequiredNodeSignatures for wallets with their own threshold.
-	RequiredNodeSignaturesForWallet func(walletID string) int
+	// KeygenRequiredNodeSignatures is how many distinct nodes (t+1) must report the same wallet public key.
+	// It needs enforce mode. Signing and reshare results are checked against keys the caller already knows
+	// (see VerifySigningResult), so they are delivered as soon as one valid copy arrives.
+	KeygenRequiredNodeSignatures int
 }
 
 type clientResultRouting struct {
@@ -88,7 +81,7 @@ func NewMPCClient(opts Options) MPCClient {
 	if err := validateClientID(opts.ClientID); err != nil {
 		logger.Fatal("Invalid client ID", err)
 	}
-	verifier, err := newResultVerifier(opts.ResultVerifyMode, opts.NodePublicKeys, opts.RequiredNodeSignatures)
+	verifier, err := newResultVerifier(opts.ResultVerifyMode, opts.NodePublicKeys, opts.KeygenRequiredNodeSignatures)
 	if err != nil {
 		logger.Fatal("Invalid result verification options", err)
 	}
@@ -127,16 +120,15 @@ func NewMPCClient(opts Options) MPCClient {
 	reshareSuccessQueue := manager.NewMessageQueue(routing.reshareConsumerName, routing.reshareSubject)
 
 	return &mpcClient{
-		signingBroker:                   signingBroker,
-		keygenBroker:                    keygenBroker,
-		pubsub:                          pubsub,
-		genKeySuccessQueue:              genKeySuccessQueue,
-		signResultQueue:                 signResultQueue,
-		reshareSuccessQueue:             reshareSuccessQueue,
-		signer:                          opts.Signer,
-		clientID:                        opts.ClientID,
-		resultVerifier:                  verifier,
-		requiredNodeSignaturesForWallet: opts.RequiredNodeSignaturesForWallet,
+		signingBroker:       signingBroker,
+		keygenBroker:        keygenBroker,
+		pubsub:              pubsub,
+		genKeySuccessQueue:  genKeySuccessQueue,
+		signResultQueue:     signResultQueue,
+		reshareSuccessQueue: reshareSuccessQueue,
+		signer:              opts.Signer,
+		clientID:            opts.ClientID,
+		resultVerifier:      verifier,
 	}
 }
 
@@ -168,7 +160,14 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 		return fmt.Errorf("CreateWallet: marshal error: %w", err)
 	}
 
-	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes, c.requestHeaders()); err != nil {
+	headers := c.requestHeaders()
+	if c.resultVerifier.keygenRequired > 1 {
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[event.KeygenResultCopiesHeader] = event.KeygenResultCopiesPerNode
+	}
+	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes, headers); err != nil {
 		return fmt.Errorf("CreateWallet: publish error: %w", err)
 	}
 	return nil
@@ -185,11 +184,23 @@ func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResul
 			done(err)
 			return
 		}
-		handleVerifiedResult(&c.resultVerifier, aggregator, callback, msg, done, resultauth.Result[event.KeygenResultEvent]{
+		nodeID, ok := c.resultVerifier.check(msg, done)
+		if !ok {
+			return
+		}
+		if c.resultVerifier.keygenRequired <= 1 {
+			callback(result)
+			done(nil)
+			return
+		}
+		aggregator.Add(resultauth.Result[event.KeygenResultEvent]{
 			Key:      msg.Subject,
-			Required: c.requiredFor(result.WalletID),
+			Required: c.resultVerifier.keygenRequired,
+			NodeID:   nodeID,
+			Body:     msg.Data,
 			Success:  result.ResultType == event.ResultTypeSuccess,
 			Event:    result,
+			Ack:      func() { done(nil) },
 		})
 	})
 
@@ -225,21 +236,17 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
-	aggregator := c.signingAggregator.register(callback, resultauth.AggregatorConfig[event.SigningResultEvent]{
-		Insufficient: insufficientSigningResult,
-	})
 	err := c.signResultQueue.DequeueMessageAsync(event.SigningResultSubscriptionSubject(c.clientID), func(msg messaging.Message, done func(error)) {
 		var result event.SigningResultEvent
 		if err := json.Unmarshal(msg.Data, &result); err != nil {
 			done(err)
 			return
 		}
-		handleVerifiedResult(&c.resultVerifier, aggregator, callback, msg, done, resultauth.Result[event.SigningResultEvent]{
-			Key:      msg.Subject + ":" + result.TxID,
-			Required: c.requiredFor(result.WalletID),
-			Success:  result.ResultType == event.ResultTypeSuccess,
-			Event:    result,
-		})
+		if _, ok := c.resultVerifier.check(msg, done); !ok {
+			return
+		}
+		callback(result)
+		done(nil)
 	})
 
 	if err != nil {
@@ -266,27 +273,13 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 		return fmt.Errorf("Resharing: marshal error: %w", err)
 	}
 
-	resultSubject := event.ReshareResultSubject(c.clientID, msg.SessionID)
-	if c.resultVerifier.required > 1 {
-		if msg.NewThreshold+1 > c.resultVerifier.nodeCount {
-			return fmt.Errorf("Resharing: new threshold %d needs %d node signatures but only %d node public keys are configured",
-				msg.NewThreshold, msg.NewThreshold+1, c.resultVerifier.nodeCount)
-		}
-		c.reshareRequiredSigs.Store(resultSubject, msg.NewThreshold+1)
-	}
-
 	if err := c.pubsub.Publish(eventconsumer.MPCReshareEvent, bytes, c.requestHeaders()); err != nil {
-		c.reshareRequiredSigs.Delete(resultSubject)
 		return fmt.Errorf("Resharing: publish error: %w", err)
 	}
 	return nil
 }
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
-	aggregator := c.reshareAggregator.register(callback, resultauth.AggregatorConfig[event.ResharingResultEvent]{
-		Insufficient: insufficientReshareResult,
-		Completed:    func(subject string) { c.reshareRequiredSigs.Delete(subject) },
-	})
 	err := c.reshareSuccessQueue.DequeueMessageAsync(event.ReshareResultSubscriptionSubject(c.clientID), func(msg messaging.Message, done func(error)) {
 		logger.Info("Received reshare result message", "raw", string(msg.Data))
 		var result event.ResharingResultEvent
@@ -295,12 +288,11 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 			done(err)
 			return
 		}
-		handleVerifiedResult(&c.resultVerifier, aggregator, callback, msg, done, resultauth.Result[event.ResharingResultEvent]{
-			Key:      msg.Subject,
-			Required: c.reshareRequiredFor(msg.Subject, result.WalletID),
-			Success:  result.ResultType == event.ResultTypeSuccess,
-			Event:    result,
-		})
+		if _, ok := c.resultVerifier.check(msg, done); !ok {
+			return
+		}
+		callback(result)
+		done(nil)
 	})
 
 	if err != nil {
@@ -308,23 +300,6 @@ func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultE
 	}
 
 	return nil
-}
-
-func (c *mpcClient) requiredFor(walletID string) int {
-	if c.requiredNodeSignaturesForWallet != nil && c.resultVerifier.mode == ResultVerifyEnforce {
-		if required := c.requiredNodeSignaturesForWallet(walletID); required > 0 {
-			return required
-		}
-	}
-	return c.resultVerifier.required
-}
-
-// reshareRequiredFor falls back to the wallet's count when the reshare was not sent by this process.
-func (c *mpcClient) reshareRequiredFor(subject, walletID string) int {
-	if stored, ok := c.reshareRequiredSigs.Load(subject); ok {
-		return stored.(int)
-	}
-	return c.requiredFor(walletID)
 }
 
 func (c *mpcClient) requestHeaders() map[string]string {

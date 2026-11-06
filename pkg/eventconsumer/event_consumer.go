@@ -181,9 +181,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	// TODO: to move the following duplicate logic (line 308 and line 341) into a func
 	if storedWalletCreationResult != nil {
 		key := event.KeygenResultSubject(natMsg.Header.Get(event.ClientIDHeader), walletID)
-		if err := ec.genKeyResultQueue.Enqueue(key, storedWalletCreationResult, &messaging.EnqueueOptions{
-			IdempotententKey: composeKeygenIdempotentKey(walletID, natMsg),
-		}); err != nil {
+		if err := ec.genKeyResultQueue.Enqueue(key, storedWalletCreationResult, ec.keygenResultOptions(walletID, natMsg)); err != nil {
 			logger.Error("Failed to enqueue stored wallet creation result", err, "walletID", walletID)
 			ec.handleKeygenSessionError(walletID, err, "Failed to enqueue stored wallet creation result", natMsg)
 			return
@@ -324,7 +322,7 @@ func (ec *eventConsumer) handleKeyGenEvent(natMsg *nats.Msg) {
 	if err := ec.genKeyResultQueue.Enqueue(
 		key,
 		payload,
-		&messaging.EnqueueOptions{IdempotententKey: composeKeygenIdempotentKey(walletID, natMsg)},
+		ec.keygenResultOptions(walletID, natMsg),
 	); err != nil {
 		logger.Error("Failed to publish key generation success message", err)
 		ec.handleKeygenSessionError(walletID, err, "Failed to publish key generation success message", natMsg)
@@ -354,9 +352,7 @@ func (ec *eventConsumer) handleKeygenSessionError(walletID string, err error, co
 	}
 
 	key := event.KeygenResultSubject(natMsg.Header.Get(event.ClientIDHeader), walletID)
-	err = ec.genKeyResultQueue.Enqueue(key, keygenResultBytes, &messaging.EnqueueOptions{
-		IdempotententKey: composeKeygenIdempotentKey(walletID, natMsg),
-	})
+	err = ec.genKeyResultQueue.Enqueue(key, keygenResultBytes, ec.keygenResultOptions(walletID, natMsg))
 	if err != nil {
 		logger.Error("Failed to enqueue keygen result event", err,
 			"walletID", walletID,
@@ -1040,6 +1036,15 @@ func composeIdempotentKey(baseID string, natMsg *nats.Msg, formatTemplate string
 
 func composeKeygenIdempotentKey(walletID string, natMsg *nats.Msg) string {
 	return composeIdempotentKey(walletID, natMsg, mpc.TypeGenerateWalletResultFmt)
+}
+
+// keygenResultOptions keeps one result copy per node when the client asked for it, so it can count t+1 nodes.
+func (ec *eventConsumer) keygenResultOptions(walletID string, natMsg *nats.Msg) *messaging.EnqueueOptions {
+	key := composeKeygenIdempotentKey(walletID, natMsg)
+	if natMsg.Header.Get(event.KeygenResultCopiesHeader) == event.KeygenResultCopiesPerNode {
+		key += ":" + ec.node.ID()
+	}
+	return &messaging.EnqueueOptions{IdempotententKey: key}
 }
 
 func composeSigningIdempotentKey(txID string, natMsg *nats.Msg) string {

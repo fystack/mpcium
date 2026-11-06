@@ -34,8 +34,3 @@ session_warm_up_delay_ms: 100
 healthcheck:
   enabled: false  # disabled by default, set to true for cloud deployment
   address: "127.0.0.1:8080"
-
-# Keep every node's signed copy of a result so clients can require t+1 matching results.
-# Enable only after all clients verify node signatures.
-result_signing:
-  per_node_results: false

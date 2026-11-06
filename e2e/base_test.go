@@ -187,8 +187,8 @@ func (s *E2ETestSuite) setupClients(t *testing.T) {
 	t.Log("Clients setup completed")
 }
 
-// e2eRequiredNodeSignatures is mpc_threshold + 1 from config.test.yaml.template.
-const e2eRequiredNodeSignatures = 2
+// e2eKeygenRequiredNodeSignatures is mpc_threshold + 1 from config.test.yaml.template.
+const e2eKeygenRequiredNodeSignatures = 2
 
 func (s *E2ETestSuite) nodePublicKeys(t *testing.T) map[string]string {
 	t.Helper()
@@ -219,12 +219,12 @@ func (s *E2ETestSuite) SetupMPCClient(t *testing.T) {
 	}
 
 	mpcClient := client.NewMPCClient(client.Options{
-		NatsConn:               s.natsConn,
-		Signer:                 localSigner,
-		ClientID:               "e2e-suite",
-		ResultVerifyMode:       client.ResultVerifyEnforce,
-		NodePublicKeys:         s.nodePublicKeys(t),
-		RequiredNodeSignatures: e2eRequiredNodeSignatures,
+		NatsConn:                     s.natsConn,
+		Signer:                       localSigner,
+		ClientID:                     "e2e-suite",
+		ResultVerifyMode:             client.ResultVerifyEnforce,
+		NodePublicKeys:               s.nodePublicKeys(t),
+		KeygenRequiredNodeSignatures: e2eKeygenRequiredNodeSignatures,
 	})
 	s.mpcClient = mpcClient
 	t.Log("MPC client created")

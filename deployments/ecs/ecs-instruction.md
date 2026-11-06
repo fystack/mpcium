@@ -666,11 +666,6 @@ backup_period_seconds: 300
 healthcheck:
   enabled: true
   address: "0.0.0.0:8080"
-
-# Keep every node's signed copy of a result so clients can require t+1 matching results.
-# Enable only after all clients verify node signatures.
-result_signing:
-  per_node_results: false
 ```
 
 ## Post-Deployment Verification

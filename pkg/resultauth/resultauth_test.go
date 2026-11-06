@@ -160,38 +160,24 @@ func TestSigningQueue(t *testing.T) {
 	require.NoError(t, err)
 	subject, body := "mpc.mpc_signing_result.complete", []byte(`{"tx_id":"tx-1"}`)
 
-	tests := []struct {
-		name           string
-		perNodeResults bool
-		options        *messaging.EnqueueOptions
-		wantKey        string
-	}{
-		{"shared idempotency key", false, &messaging.EnqueueOptions{IdempotententKey: "sign:tx-1"}, "sign:tx-1"},
-		{"per-node idempotency key", true, &messaging.EnqueueOptions{IdempotententKey: "sign:tx-1"}, "sign:tx-1:node0"},
-		{"no options", true, nil, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			inner := &recordingQueue{}
-			queue := NewSigningQueue(inner, signer, "node0", QueueOptions{PerNodeResults: tt.perNodeResults})
-			require.NoError(t, queue.Enqueue(subject, body, tt.options))
+	inner := &recordingQueue{}
+	queue := NewSigningQueue(inner, signer, "node0")
+	require.NoError(t, queue.Enqueue(subject, body, &messaging.EnqueueOptions{IdempotententKey: "sign:tx-1"}))
 
-			require.Equal(t, tt.wantKey, inner.options.IdempotententKey)
-			header := nats.Header{}
-			for k, v := range inner.options.Headers {
-				header.Set(k, v)
-			}
-			nodeID, err := Verify(lookup, inner.topic, inner.message, header.Get)
-			require.NoError(t, err)
-			require.Equal(t, "node0", nodeID)
-		})
+	require.Equal(t, "sign:tx-1", inner.options.IdempotententKey)
+	header := nats.Header{}
+	for k, v := range inner.options.Headers {
+		header.Set(k, v)
 	}
+	nodeID, err := Verify(lookup, inner.topic, inner.message, header.Get)
+	require.NoError(t, err)
+	require.Equal(t, "node0", nodeID)
 }
 
 func TestSigningQueueKeepsCallerHeaders(t *testing.T) {
 	signer, _ := newTestNode(t)
 	inner := &recordingQueue{}
-	queue := NewSigningQueue(inner, signer, "node0", QueueOptions{})
+	queue := NewSigningQueue(inner, signer, "node0")
 	callerHeaders := map[string]string{"ClientID": "client-a"}
 
 	require.NoError(t, queue.Enqueue("subject", []byte("body"), &messaging.EnqueueOptions{Headers: callerHeaders}))
