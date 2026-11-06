@@ -4,6 +4,12 @@ import "strings"
 
 const ClientIDHeader = "ClientID"
 
+// KeygenResultCopiesHeader on a keygen request asks every node to publish its own signed result copy.
+const (
+	KeygenResultCopiesHeader  = "Mpc-Keygen-Result-Copies"
+	KeygenResultCopiesPerNode = "per-node"
+)
+
 const (
 	keygenResultSubjectPrefix  = "mpc.mpc_keygen_result"
 	signingResultSubjectPrefix = "mpc.mpc_signing_result"

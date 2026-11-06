@@ -29,12 +29,8 @@ func WithResultVerification(opts client.Options) client.Options {
 
 	opts.ResultVerifyMode = client.ResultVerifyEnforce
 	opts.NodePublicKeys = publicKeys
-	opts.RequiredNodeSignatures = 1
-	// Counting t+1 matching results needs every node's copy, which nodes only keep with per_node_results.
-	if viper.GetBool("result_signing.per_node_results") {
-		opts.RequiredNodeSignatures = viper.GetInt("mpc_threshold") + 1
-	}
-	logger.Info("Verifying node-signed results", "nodes", len(publicKeys), "requiredNodeSignatures", opts.RequiredNodeSignatures)
+	opts.KeygenRequiredNodeSignatures = viper.GetInt("mpc_threshold") + 1
+	logger.Info("Verifying node-signed results", "nodes", len(publicKeys), "keygenRequiredNodeSignatures", opts.KeygenRequiredNodeSignatures)
 	return opts
 }
 

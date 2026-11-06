@@ -324,18 +324,20 @@ Each node signs the results it publishes with its identity key, in the `Mpc-Node
 
 ```go
 mpcClient := client.NewMPCClient(client.Options{
-    NatsConn:               natsConn,
-    Signer:                 localSigner,
-    ResultVerifyMode:       client.ResultVerifyEnforce, // off (default) | log | enforce
-    NodePublicKeys:         nodePublicKeys,             // node_id -> hex public key
-    RequiredNodeSignatures: 3,                          // mpc_threshold + 1
+    NatsConn:                     natsConn,
+    Signer:                       localSigner,
+    ResultVerifyMode:             client.ResultVerifyEnforce, // off (default) | log | enforce
+    NodePublicKeys:               nodePublicKeys,             // node_id -> hex public key
+    KeygenRequiredNodeSignatures: 3,                          // mpc_threshold + 1
 })
 ```
 
 - `setup_identities.sh` writes `node_public_keys.json` for new local setups. For an existing setup or a production cluster, run `mpcium-cli export-node-keys --identity-dir <dir>` against any node's identity directory, which holds every node's `*_identity.json`.
-- `enforce` rejects unsigned or tampered results and delivers a result only after `RequiredNodeSignatures` nodes sent the same one. Set `result_signing.per_node_results: true` on the nodes, or only one copy of each result reaches the client.
-- `log` reports failed checks but still delivers every result. Use it while rolling out.
-- With `RequiredNodeSignatures` above 1, give each client process its own `ClientID`. Processes that share one also share a JetStream consumer, which splits the node copies of a result between them, so none may reach the required count.
+- `enforce` rejects unsigned or tampered results. `log` reports failed checks but still delivers every result; use it while rolling out.
+- A single compromised node can still sign a false result. Signing and reshare results can be checked against keys the caller already has: verify signatures with `client.VerifySigningResult` against the wallet (or derived child) public key, and check that a reshare kept the wallet public key unchanged.
+- A new wallet public key cannot be checked that way, so `KeygenRequiredNodeSignatures` makes the client wait until that many nodes report the same key. The client asks the nodes for one copy each on its keygen requests; no node config is needed, but the nodes must run a version that understands the request.
+- With `KeygenRequiredNodeSignatures` above 1, give each client process its own `ClientID`. Processes that share one also share a JetStream consumer, which splits the node copies of a result between them, so none may reach the required count.
+- JetStream delivers at least once, so handle a result for the same `TxID`, wallet or reshare session idempotently.
 
 ## Test with AWS KMS (LocalStack)
 

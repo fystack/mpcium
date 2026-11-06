@@ -172,6 +172,9 @@ func (sc *keygenConsumer) handleKeygenEvent(msg jetstream.Msg) {
 	if clientID != "" {
 		headers[event.ClientIDHeader] = clientID
 	}
+	if copies := msg.Headers().Get(event.KeygenResultCopiesHeader); copies != "" {
+		headers[event.KeygenResultCopiesHeader] = copies
+	}
 	if err := sc.pubsub.PublishWithReply(MPCGenerateEvent, replyInbox, msg.Data(), headers); err != nil {
 		logger.Error("KeygenConsumer: Failed to publish keygen event with reply", err)
 		_ = msg.Nak()

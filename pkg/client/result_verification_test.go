@@ -70,9 +70,9 @@ func signedMessage(t *testing.T, node testNode, subject string, payload any) mes
 	return messaging.Message{Subject: subject, Data: body, Header: header}
 }
 
-func newSigningResultClient(t *testing.T, mode ResultVerifyMode, publicKeys map[string]string, required int) (*capturingQueue, *[]event.SigningResultEvent) {
+func newSigningResultClient(t *testing.T, mode ResultVerifyMode, publicKeys map[string]string) (*capturingQueue, *[]event.SigningResultEvent) {
 	t.Helper()
-	verifier, err := newResultVerifier(mode, publicKeys, required)
+	verifier, err := newResultVerifier(mode, publicKeys, 0)
 	require.NoError(t, err)
 	queue := &capturingQueue{}
 	c := &mpcClient{signResultQueue: queue, resultVerifier: verifier}
@@ -81,24 +81,31 @@ func newSigningResultClient(t *testing.T, mode ResultVerifyMode, publicKeys map[
 	return queue, &delivered
 }
 
-func TestOnSignResultEnforceWaitsForRequiredNodes(t *testing.T) {
+func newKeygenResultClient(t *testing.T, publicKeys map[string]string, required int) (*mpcClient, *capturingQueue, *[]event.KeygenResultEvent) {
+	t.Helper()
+	verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, required)
+	require.NoError(t, err)
+	queue := &capturingQueue{}
+	c := &mpcClient{genKeySuccessQueue: queue, resultVerifier: verifier}
+	var delivered []event.KeygenResultEvent
+	require.NoError(t, c.OnWalletCreationResult(func(e event.KeygenResultEvent) { delivered = append(delivered, e) }))
+	return c, queue, &delivered
+}
+
+func TestOnSignResultEnforceDeliversValidCopy(t *testing.T) {
 	nodes, publicKeys := newTestNodes(t, 3)
-	queue, delivered := newSigningResultClient(t, ResultVerifyEnforce, publicKeys, 2)
-	subject := event.SigningResultSubject("")
+	queue, delivered := newSigningResultClient(t, ResultVerifyEnforce, publicKeys)
 	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1", Signature: []byte("sig")}
 
-	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, success)))
-	require.Empty(t, *delivered)
-	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, success)))
-	require.NoError(t, queue.handler(signedMessage(t, nodes[2], subject, success)))
-
+	require.NoError(t, queue.handler(signedMessage(t, nodes[0], event.SigningResultSubject(""), success)))
 	require.Len(t, *delivered, 1)
 	require.Equal(t, "tx-1", (*delivered)[0].TxID)
+	require.Equal(t, []error{nil}, queue.settled)
 }
 
 func TestOnSignResultEnforceRejectsForgedResults(t *testing.T) {
 	nodes, publicKeys := newTestNodes(t, 3)
-	queue, delivered := newSigningResultClient(t, ResultVerifyEnforce, publicKeys, 2)
+	queue, delivered := newSigningResultClient(t, ResultVerifyEnforce, publicKeys)
 	subject := event.SigningResultSubject("")
 	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1", Signature: []byte("sig")}
 
@@ -109,6 +116,10 @@ func TestOnSignResultEnforceRejectsForgedResults(t *testing.T) {
 	tampered := signedMessage(t, nodes[0], subject, success)
 	tampered.Data = []byte(`{"result_type":"success","tx_id":"tx-1","signature":"Zm9yZ2Vk"}`)
 	require.ErrorIs(t, queue.handler(tampered), messaging.ErrPermament)
+
+	wrongSubject := signedMessage(t, nodes[0], event.SigningResultSubject("other-client"), success)
+	wrongSubject.Subject = subject
+	require.ErrorIs(t, queue.handler(wrongSubject), messaging.ErrPermament)
 
 	_, outsiderKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -121,90 +132,9 @@ func TestOnSignResultEnforceRejectsForgedResults(t *testing.T) {
 	require.Empty(t, *delivered)
 }
 
-func TestOnSignResultAcksOnlyAfterDelivery(t *testing.T) {
-	nodes, publicKeys := newTestNodes(t, 3)
-	queue, delivered := newSigningResultClient(t, ResultVerifyEnforce, publicKeys, 2)
-	subject := event.SigningResultSubject("")
-	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1", Signature: []byte("sig")}
-
-	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, success)))
-	require.Empty(t, queue.settled, "a copy waiting for quorum must stay unacked so a crash redelivers it")
-	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, success)))
-	require.Len(t, *delivered, 1)
-	require.Equal(t, []error{nil, nil}, queue.settled)
-
-	require.NoError(t, queue.handler(signedMessage(t, nodes[2], subject, success)))
-	require.Len(t, *delivered, 1)
-	require.Len(t, queue.settled, 3)
-}
-
-func TestOnSignResultLogModeDeliversOnceWithPerNodeCopies(t *testing.T) {
-	nodes, publicKeys := newTestNodes(t, 3)
-	queue, delivered := newSigningResultClient(t, ResultVerifyLog, publicKeys, 2)
-	subject := event.SigningResultSubject("")
-	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1", Signature: []byte("sig")}
-
-	for _, node := range nodes {
-		require.NoError(t, queue.handler(signedMessage(t, node, subject, success)))
-	}
-	require.Len(t, *delivered, 1)
-	require.Len(t, queue.settled, 3)
-}
-
-func TestOnSignResultUsesWalletThreshold(t *testing.T) {
-	nodes, publicKeys := newTestNodes(t, 3)
-	verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, 3)
-	require.NoError(t, err)
-	queue := &capturingQueue{}
-	c := &mpcClient{
-		signResultQueue:                 queue,
-		resultVerifier:                  verifier,
-		requiredNodeSignaturesForWallet: func(walletID string) int { return map[string]int{"small-wallet": 2}[walletID] },
-	}
-	var delivered []event.SigningResultEvent
-	require.NoError(t, c.OnSignResult(func(e event.SigningResultEvent) { delivered = append(delivered, e) }))
-
-	subject := event.SigningResultSubject("")
-	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "small-wallet", TxID: "tx-1", Signature: []byte("sig")}
-	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, success)))
-	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, success)))
-	require.Len(t, delivered, 1)
-}
-
-func TestResharingRejectsThresholdAboveNodeKeys(t *testing.T) {
-	_, publicKeys := newTestNodes(t, 3)
-	verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, 2)
-	require.NoError(t, err)
-	c := &mpcClient{resultVerifier: verifier, signer: staticSigner{}, pubsub: &recordingPubSub{}}
-
-	err = c.Resharing(&types.ResharingMessage{SessionID: "session-1", NewThreshold: 3, WalletID: "wallet-1"})
-	require.Error(t, err)
-}
-
-func TestOnSignResultSubscriptionsShareOneAggregator(t *testing.T) {
-	nodes, publicKeys := newTestNodes(t, 3)
-	verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, 2)
-	require.NoError(t, err)
-	queue := &capturingQueue{}
-	c := &mpcClient{signResultQueue: queue, resultVerifier: verifier}
-	var first, second []event.SigningResultEvent
-	require.NoError(t, c.OnSignResult(func(e event.SigningResultEvent) { first = append(first, e) }))
-	require.NoError(t, c.OnSignResult(func(e event.SigningResultEvent) { second = append(second, e) }))
-	require.Len(t, queue.handlers, 2)
-
-	subject := event.SigningResultSubject("")
-	success := event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1", Signature: []byte("sig")}
-	require.NoError(t, queue.handlers[0](signedMessage(t, nodes[0], subject, success)))
-	require.NoError(t, queue.handlers[1](signedMessage(t, nodes[1], subject, success)))
-	require.NoError(t, queue.handlers[0](signedMessage(t, nodes[2], subject, success)))
-
-	require.Empty(t, first)
-	require.Len(t, second, 1, "copies split across subscriptions must still reach t+1 once")
-}
-
 func TestOnSignResultLogModeDeliversUnsignedResults(t *testing.T) {
 	_, publicKeys := newTestNodes(t, 3)
-	queue, delivered := newSigningResultClient(t, ResultVerifyLog, publicKeys, 2)
+	queue, delivered := newSigningResultClient(t, ResultVerifyLog, publicKeys)
 	body, err := json.Marshal(event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1"})
 	require.NoError(t, err)
 
@@ -213,7 +143,7 @@ func TestOnSignResultLogModeDeliversUnsignedResults(t *testing.T) {
 }
 
 func TestOnSignResultOffDeliversEveryResult(t *testing.T) {
-	queue, delivered := newSigningResultClient(t, "", nil, 0)
+	queue, delivered := newSigningResultClient(t, "", nil)
 	body, err := json.Marshal(event.SigningResultEvent{ResultType: event.ResultTypeSuccess, TxID: "tx-1"})
 	require.NoError(t, err)
 
@@ -222,27 +152,96 @@ func TestOnSignResultOffDeliversEveryResult(t *testing.T) {
 	require.Len(t, *delivered, 2)
 }
 
-func TestOnResharingResultUsesNewCommitteeThreshold(t *testing.T) {
+func TestOnResharingResultEnforceDeliversValidCopy(t *testing.T) {
 	nodes, publicKeys := newTestNodes(t, 3)
 	verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, 2)
 	require.NoError(t, err)
 	queue := &capturingQueue{}
-	c := &mpcClient{reshareSuccessQueue: queue, resultVerifier: verifier, signer: staticSigner{}, pubsub: &recordingPubSub{}}
+	c := &mpcClient{reshareSuccessQueue: queue, resultVerifier: verifier}
 	var delivered []event.ResharingResultEvent
 	require.NoError(t, c.OnResharingResult(func(e event.ResharingResultEvent) { delivered = append(delivered, e) }))
 
-	require.NoError(t, c.Resharing(&types.ResharingMessage{SessionID: "session-1", NewThreshold: 2, WalletID: "wallet-1"}))
 	subject := event.ReshareResultSubject("", "session-1")
-	success := event.ResharingResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", NewThreshold: 2, PubKey: []byte("pub")}
+	success := event.ResharingResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", PubKey: []byte("pub")}
+	unsigned := signedMessage(t, nodes[0], subject, success)
+	unsigned.Header = nats.Header{}
+	require.ErrorIs(t, queue.handler(unsigned), messaging.ErrPermament)
 
 	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, success)))
-	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, success)))
-	require.Empty(t, delivered, "new threshold 2 needs 3 matching results")
-	require.NoError(t, queue.handler(signedMessage(t, nodes[2], subject, success)))
-	require.Len(t, delivered, 1)
+	require.Len(t, delivered, 1, "reshare needs no quorum; the caller checks the public key is unchanged")
+}
 
-	_, stillTracked := c.reshareRequiredSigs.Load(subject)
-	require.False(t, stillTracked)
+func TestOnWalletCreationResultWaitsForRequiredNodes(t *testing.T) {
+	nodes, publicKeys := newTestNodes(t, 3)
+	_, queue, delivered := newKeygenResultClient(t, publicKeys, 2)
+	subject := event.KeygenResultSubject("", "wallet-1")
+	success := event.KeygenResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", ECDSAPubKey: []byte("pub")}
+
+	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, success)))
+	require.Empty(t, *delivered)
+	require.Empty(t, queue.settled, "a copy waiting for quorum must stay unacked so a crash redelivers it")
+
+	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, success)))
+	require.Len(t, *delivered, 1)
+	require.Equal(t, []error{nil, nil}, queue.settled)
+
+	require.NoError(t, queue.handler(signedMessage(t, nodes[2], subject, success)))
+	require.Len(t, *delivered, 1, "a late copy must not deliver again")
+	require.Len(t, queue.settled, 3)
+}
+
+func TestOnWalletCreationResultForgedPubKeyNeedsQuorum(t *testing.T) {
+	nodes, publicKeys := newTestNodes(t, 3)
+	_, queue, delivered := newKeygenResultClient(t, publicKeys, 2)
+	subject := event.KeygenResultSubject("", "wallet-1")
+	honest := event.KeygenResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", ECDSAPubKey: []byte("honest")}
+	forged := event.KeygenResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", ECDSAPubKey: []byte("attacker")}
+
+	require.NoError(t, queue.handler(signedMessage(t, nodes[0], subject, forged)))
+	require.NoError(t, queue.handler(signedMessage(t, nodes[1], subject, honest)))
+	require.Empty(t, *delivered)
+	require.NoError(t, queue.handler(signedMessage(t, nodes[2], subject, honest)))
+
+	require.Len(t, *delivered, 1)
+	require.Equal(t, []byte("honest"), (*delivered)[0].ECDSAPubKey)
+}
+
+func TestOnWalletCreationResultSubscriptionsShareOneAggregator(t *testing.T) {
+	nodes, publicKeys := newTestNodes(t, 3)
+	c, queue, first := newKeygenResultClient(t, publicKeys, 2)
+	var second []event.KeygenResultEvent
+	require.NoError(t, c.OnWalletCreationResult(func(e event.KeygenResultEvent) { second = append(second, e) }))
+	require.Len(t, queue.handlers, 2)
+
+	subject := event.KeygenResultSubject("", "wallet-1")
+	success := event.KeygenResultEvent{ResultType: event.ResultTypeSuccess, WalletID: "wallet-1", ECDSAPubKey: []byte("pub")}
+	require.NoError(t, queue.handlers[0](signedMessage(t, nodes[0], subject, success)))
+	require.NoError(t, queue.handlers[1](signedMessage(t, nodes[1], subject, success)))
+
+	require.Empty(t, *first)
+	require.Len(t, second, 1, "copies split across subscriptions must still reach t+1 once")
+}
+
+func TestCreateWalletRequestsPerNodeCopiesOnlyWithQuorum(t *testing.T) {
+	_, publicKeys := newTestNodes(t, 3)
+	for _, tt := range []struct {
+		name     string
+		required int
+		want     string
+	}{
+		{"single copy", 1, ""},
+		{"t+1 copies", 2, event.KeygenResultCopiesPerNode},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			verifier, err := newResultVerifier(ResultVerifyEnforce, publicKeys, tt.required)
+			require.NoError(t, err)
+			broker := &recordingBroker{}
+			c := &mpcClient{keygenBroker: broker, signer: staticSigner{}, resultVerifier: verifier}
+
+			require.NoError(t, c.CreateWallet("wallet-1"))
+			require.Equal(t, tt.want, broker.headers[event.KeygenResultCopiesHeader])
+		})
+	}
 }
 
 func TestNewResultVerifierValidation(t *testing.T) {
@@ -255,6 +254,8 @@ func TestNewResultVerifierValidation(t *testing.T) {
 		wantErr    bool
 	}{
 		{"off needs nothing", ResultVerifyOff, nil, 0, false},
+		{"off with keygen quorum", ResultVerifyOff, nil, 2, true},
+		{"log with keygen quorum", ResultVerifyLog, publicKeys, 2, true},
 		{"unknown mode", "strict", publicKeys, 1, true},
 		{"enforce without keys", ResultVerifyEnforce, nil, 1, true},
 		{"required above key count", ResultVerifyEnforce, publicKeys, 3, true},

@@ -226,20 +226,19 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	directMessaging := messaging.NewNatsDirectMessaging(natsConn)
 	mqManager := messaging.NewNATsMessageQueueManager("mpc", event.ResultStreamSubjects(), natsConn)
 
-	resultQueueOpts := resultauth.QueueOptions{PerNodeResults: viper.GetBool("result_signing.per_node_results")}
 	genKeyResultQueue := resultauth.NewSigningQueue(
 		mqManager.NewMessageQueue("mpc_keygen_result", event.KeygenResultSubscriptionSubject("")),
-		identityStore, nodeID, resultQueueOpts,
+		identityStore, nodeID,
 	)
 	defer genKeyResultQueue.Close()
 	singingResultQueue := resultauth.NewSigningQueue(
 		mqManager.NewMessageQueue("mpc_signing_result", event.SigningResultSubscriptionSubject("")),
-		identityStore, nodeID, resultQueueOpts,
+		identityStore, nodeID,
 	)
 	defer singingResultQueue.Close()
 	reshareResultQueue := resultauth.NewSigningQueue(
 		mqManager.NewMessageQueue("mpc_reshare_result", event.ReshareResultSubscriptionSubject("")),
-		identityStore, nodeID, resultQueueOpts,
+		identityStore, nodeID,
 	)
 	defer reshareResultQueue.Close()
 
