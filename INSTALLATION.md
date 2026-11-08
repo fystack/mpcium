@@ -4,7 +4,7 @@
 
 Before starting, ensure you have:
 
-- **Go** 1.25.0+ installed: [Install Go here](https://go.dev/doc/install)
+- **Go** 1.27.3+ installed: [Install Go here](https://go.dev/doc/install)
 - **NATS** server running
 - **Consul** server running
 

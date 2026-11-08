@@ -1,11 +1,9 @@
 package main
 
 import (
-	"crypto/ecdsa"
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"math/big"
 	"os"
 	"slices"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/fystack/mpcium/pkg/ckdutil"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
@@ -84,7 +83,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to connect to NATS", err)
 	}
-	defer natsConn.Drain()
 	defer natsConn.Close()
 
 	localSigner, err := client.NewLocalSigner(types.EventInitiatorKeyType(algorithm), client.LocalSignerOptions{
@@ -413,23 +411,21 @@ func verifySignature(message, pubKey, rBytes, sBytes []byte) (bool, error) {
 		return false, fmt.Errorf("signature components missing")
 	}
 
-	curve := btcec.S256()
-	x := new(big.Int).SetBytes(pubKey[:32])
-	y := new(big.Int).SetBytes(pubKey[32:])
-
-	if !curve.IsOnCurve(x, y) {
+	pub, err := btcec.ParsePubKey(append([]byte{0x04}, pubKey...))
+	if err != nil {
 		return false, fmt.Errorf("public key not on secp256k1 curve")
 	}
 
-	r := new(big.Int).SetBytes(rBytes)
-	s := new(big.Int).SetBytes(sBytes)
+	var r, s btcec.ModNScalar
+	if len(rBytes) > 32 || len(sBytes) > 32 || r.SetByteSlice(rBytes) || s.SetByteSlice(sBytes) {
+		return false, nil
+	}
 
-	if r.Sign() <= 0 || s.Sign() <= 0 {
+	if r.IsZero() || s.IsZero() {
 		return false, fmt.Errorf("invalid signature values")
 	}
 
-	ok := ecdsa.Verify(&ecdsa.PublicKey{Curve: curve, X: x, Y: y}, message, r, s)
-	return ok, nil
+	return ecdsa.NewSignature(&r, &s).Verify(message, pub), nil
 }
 
 func serializeUncompressed(pub *btcec.PublicKey) []byte {

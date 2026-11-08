@@ -58,7 +58,7 @@ Both services can be deployed in the same Kubernetes cluster or externally. Exam
 
 ### Required Software (for pre-deployment setup)
 
-- **Go 1.25+** (on your local machine for generating identities)
+- **Go 1.27+** (on your local machine for generating identities)
 - **mpcium-cli** binary (build from source or download release)
 - **age** (for encrypted identity storage) - https://github.com/FiloSottile/age
 

@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      checks:
+        # staticcheck's defaults
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # Capitalised error strings predate v2's merged stylecheck; not enforced yet
+        - -ST1005
+  exclusions:
+    # Roughly the default exclusions golangci-lint v1 applied
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Go 1.26 deprecated ecdsa.PublicKey.X/Y, but the stdlib replacements only support
+      # NIST curves; tss-lib and btcec keys on secp256k1/Ed25519 still expose raw coordinates
+      - linters: [staticcheck]
+        text: "SA1019: .*\\.(X|Y) has been deprecated"

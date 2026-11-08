@@ -117,8 +117,7 @@ func TestKMSSigner_PublicKey(t *testing.T) {
 	// Verify we can parse the public key back
 	parsedPubKey, err := encryption.ParseP256PublicKeyFromBytes(pubKeyBytes)
 	require.NoError(t, err)
-	assert.Equal(t, privateKey.PublicKey.X, parsedPubKey.X)
-	assert.Equal(t, privateKey.PublicKey.Y, parsedPubKey.Y)
+	assert.True(t, privateKey.PublicKey.Equal(parsedPubKey))
 }
 
 func TestKMSSigner_PublicKey_NotLoaded(t *testing.T) {
@@ -195,8 +194,7 @@ func TestKMSSignerMockIntegration(t *testing.T) {
 
 	parsedPubKey, err := encryption.ParseP256PublicKeyFromBytes(decodedBytes)
 	require.NoError(t, err)
-	assert.Equal(t, signer.publicKey.X, parsedPubKey.X)
-	assert.Equal(t, signer.publicKey.Y, parsedPubKey.Y)
+	assert.True(t, signer.publicKey.Equal(parsedPubKey))
 
 	// Test algorithm
 	assert.Equal(t, types.EventInitiatorKeyTypeP256, signer.Algorithm())

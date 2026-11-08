@@ -3,6 +3,7 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 
 	"github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
 	"github.com/bnb-chain/tss-lib/v3/eddsa/resharing"
@@ -22,7 +23,10 @@ type eddsaReshareSession struct {
 	oldPeerIDs    []string
 	newPeerIDs    []string
 	reshareParams *tss.ReSharingParameters
-	endCh         chan *keygen.LocalPartySaveData
+	// paramsErr defers a session-nonce failure to Init, since the constructor
+	// cannot return an error.
+	paramsErr error
+	endCh     chan *keygen.LocalPartySaveData
 }
 
 func NewEDDSAReshareSession(
@@ -42,6 +46,7 @@ func NewEDDSAReshareSession(
 	newPeerIDs []string,
 	isNewParty bool,
 	version int,
+	sessionNonce *big.Int,
 ) *eddsaReshareSession {
 
 	realPartyIDs := oldPartyIDs
@@ -58,6 +63,7 @@ func NewEDDSAReshareSession(
 		participantPeerIDs: participantPeerIDs,
 		selfPartyID:        selfID,
 		partyIDs:           realPartyIDs,
+		sessionNonce:       sessionNonce,
 		outCh:              make(chan tss.Message),
 		ErrCh:              make(chan error, 1),
 		doneCh:             make(chan struct{}),
@@ -80,7 +86,7 @@ func NewEDDSAReshareSession(
 		identityStore: identityStore,
 	}
 
-	reshareParams := tss.NewReSharingParameters(
+	reshareParams, paramsErr := newTSSReSharingParameters(
 		tss.Edwards(),
 		tss.NewPeerContext(oldPartyIDs),
 		tss.NewPeerContext(newPartyIDs),
@@ -89,6 +95,7 @@ func NewEDDSAReshareSession(
 		threshold,
 		len(newPartyIDs),
 		newThreshold,
+		sessionNonce,
 	)
 
 	var oldPeerIDs []string
@@ -99,6 +106,7 @@ func NewEDDSAReshareSession(
 	return &eddsaReshareSession{
 		session:       &session,
 		reshareParams: reshareParams,
+		paramsErr:     paramsErr,
 		isNewParty:    isNewParty,
 		oldPeerIDs:    oldPeerIDs,
 		newPeerIDs:    newPeerIDs,
@@ -129,6 +137,9 @@ func (s *eddsaReshareSession) GetLegacyCommitteePeers() []string {
 }
 
 func (s *eddsaReshareSession) Init() error {
+	if s.paramsErr != nil {
+		return fmt.Errorf("failed to build eddsa resharing parameters: %w", s.paramsErr)
+	}
 	logger.Infof("Initializing eddsa resharing session with partyID: %s, peerIDs %s", s.selfPartyID, s.partyIDs)
 	var share keygen.LocalPartySaveData
 	if s.isNewParty {
@@ -161,7 +172,7 @@ func (s *eddsaReshareSession) Reshare(done func()) {
 			if saveData.EDDSAPub != nil {
 				defer security.ZeroEddsaKeygenLocalPartySaveData(saveData)
 
-					keyBytes, err := json.Marshal(saveData)
+				keyBytes, err := json.Marshal(saveData)
 				if err != nil {
 					s.ErrCh <- err
 					return

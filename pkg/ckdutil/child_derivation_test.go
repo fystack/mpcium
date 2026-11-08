@@ -42,7 +42,7 @@ func TestEd25519StandaloneMatchesTSS(t *testing.T) {
 		_, tssChild, err := ckd.Derive("wallet-ed25519-test", masterPoint, path, tss.Edwards())
 		require.NoErrorf(t, err, "tss derivation failed at index %d", i)
 
-		tssPub := edwards.PublicKey{Curve: curve, X: tssChild.PublicKey.X, Y: tssChild.PublicKey.Y}
+		tssPub := edwards.PublicKey{Curve: curve, X: tssChild.X, Y: tssChild.Y}
 		require.Equalf(t, tssPub.SerializeCompressed(), localChild, "pubkey mismatch at index %d", i)
 	}
 }
@@ -73,7 +73,7 @@ func TestSecp256k1StandaloneMatchesTSS(t *testing.T) {
 		_, tssChild, err := ckd.Derive("wallet-secp-test", masterPoint, path, tss.S256())
 		require.NoErrorf(t, err, "tss derivation failed at index %d", i)
 
-		tssChildBytes := serializeCompressed(tssChild.PublicKey.X, tssChild.PublicKey.Y)
+		tssChildBytes := serializeCompressed(tssChild.X, tssChild.Y)
 		require.Equalf(t, tssChildBytes, localChild, "pubkey mismatch at index %d", i)
 	}
 }

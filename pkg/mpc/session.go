@@ -3,6 +3,7 @@ package mpc
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -65,10 +66,14 @@ type session struct {
 	selfPartyID        *tss.PartyID
 	// IDs of all parties in the session including self
 	partyIDs []*tss.PartyID
-	outCh    chan tss.Message
-	ErrCh    chan error
-	party    tss.Party
-	version  int
+	// sessionNonce binds every ZK proof in this ceremony to this session via
+	// tss-lib's SSID. Must be byte-identical across all parties; derived from the
+	// verified initiator request. See SessionNonceFromInitiator.
+	sessionNonce *big.Int
+	outCh        chan tss.Message
+	ErrCh        chan error
+	party        tss.Party
+	version      int
 
 	// preParams is nil for EDDSA session
 	preParams    *keygen.LocalPreParams
