@@ -1,5 +1,46 @@
 # CHANGELOG
 
+## v0.4.1 (2026-10-29)
+
+*  Update Go dependencies and improve code quality [View](https://github.com/fystack/mpcium/commit/d1aa0b685f2827cd5cba5902433c353d228dcb1e)
+*  Update Go module dependencies and version [View](https://github.com/fystack/mpcium/commit/1c3352a78dc1c6b75a1dc29dc3f40145a8d63dd0)
+*  Update chart image [View](https://github.com/fystack/mpcium/commit/a60b9d5c168aad11ab53951356c78b8eea64b43d)
+*  Update systemd readme deployment [View](https://github.com/fystack/mpcium/commit/40268bdfdab99c74826fe9c4bd6fb1a214de2e24)
+*  Support CA cert for consul [View](https://github.com/fystack/mpcium/commit/2377f020bcb98aa9e1721d55f2c3ee492587b32b)
+
+
+
+## v0.4.0 (2026-09-09)
+
+*  feat(mpc): bind keygen/signing/resharing to a per-ceremony session nonce [View](https://github.com/fystack/mpcium/commit/3a88aae4f2bf096b68e9224c95e3fb57e0084cdd)
+*  (chore): bump version to v0.4.0 [View](https://github.com/fystack/mpcium/commit/bd6cca2ff9bdb6a92017ae521459aac588202d84)
+*  feat(tss): bump tss-lib v2.0.3 to v3.0.1 [View](https://github.com/fystack/mpcium/commit/f9ae2e1a420acb3813b4a5bd35bd3b8a5a836f10)
+*  fix(types): bind derivation_path in SignTxMessage.Raw() (#162) [View](https://github.com/fystack/mpcium/commit/e99507a730a0fa71262bea18395d5dd1ec13afda)
+*  - update comments - add e2e test for wallet creation result replay [View](https://github.com/fystack/mpcium/commit/e453e3e7501efc19dde1513d8789f929664ceb21)
+*  - fix the condition for error handling for `stored wallet creation result` [View](https://github.com/fystack/mpcium/commit/9ca18f561e52ca6738b4bcea4c1eebc79577db50)
+*  - implement `replay the store wallet creation result` [View](https://github.com/fystack/mpcium/commit/d0485197635afe0006a09238a558a9beda51a4b7)
+*  - make error handling consistent with others [View](https://github.com/fystack/mpcium/commit/29c2151fbb916d15b11230ddef31cd7b475d754b)
+*  - implement storing wallet creation result [View](https://github.com/fystack/mpcium/commit/1733feb3834892aff5845677687d21d2270a40de)
+*  - fix `Badger Password` error with e2e tests for both MacOS and Linux [View](https://github.com/fystack/mpcium/commit/9ea75a3ada96fca96f1519f0fc61ed72c96a7486)
+*  - fix `Badger Password` error with e2e tests [View](https://github.com/fystack/mpcium/commit/ba6e145cad4d10ac8767cca636fd5fb7ddbc044d)
+*  - fix setup.sh by adding PATH [View](https://github.com/fystack/mpcium/commit/e862d582b743cd2deb7a942d406b9be4779953b6)
+*  fix(mpc): return error instead of panic when publicKey is nil in BroadcastPublicKey [View](https://github.com/fystack/mpcium/commit/b28c6d93b8f334b8205a144a6e9afa687311bd34)
+*  Update versions [View](https://github.com/fystack/mpcium/commit/f92ecfa73f9b18383b9cba6864c85a46908d68f4)
+*  refactor: use IAM Default Credential Chain in KMS signer example [View](https://github.com/fystack/mpcium/commit/af10b00e19a556fb22dead39872c12895eefb6c3)
+*  update k8s deployment documentation [View](https://github.com/fystack/mpcium/commit/6721d1cf958d20eb45975b5fc724d3ba1c41b917)
+*  Update ECS deployment documentation [View](https://github.com/fystack/mpcium/commit/5afa8d5cfaab324c3743492a09ef19a7eaff939d)
+*  Update readme example [View](https://github.com/fystack/mpcium/commit/b408230c5a81e70cc4d9314d1f805a4b5d5f0dbe)
+*  Add client id for benchmark cli [View](https://github.com/fystack/mpcium/commit/f87b0d29c833c8968a9f9b4e2e3613705840ba62)
+*  fix(examples): update KeyType and WalletID in SignTxMessage for consistency [View](https://github.com/fystack/mpcium/commit/03006a3708c78d73128f993794c87f826f1b5290)
+*  refactor(client): update MPCClient initialization to use ClientID directly in options [View](https://github.com/fystack/mpcium/commit/94b4d38d02d39273018688d9808ac70d3e64286d)
+*  test(e2e): cover multi-client result routing [View](https://github.com/fystack/mpcium/commit/ce5d4db3abd11bad2284286f7bb02da5f7737d74)
+*  fix(examples): add client-id flag to authorizers generate [View](https://github.com/fystack/mpcium/commit/d195ba1609a87e808212957d47b63be8fe1f97b0)
+*  test(scripts): add client routing checker [View](https://github.com/fystack/mpcium/commit/a5e406486c4933b2f2b5ff8c124d3ee7bd4a1080)
+*  chore(examples): accept client-id for scoped routing [View](https://github.com/fystack/mpcium/commit/5be6479361997f26d9535fe608aaf908c9b39f65)
+*  fix(client): scope result routing by client ID [View](https://github.com/fystack/mpcium/commit/121350fb6a562875267704054dbd5f22d3ad6346)
+
+
+
 ## v0.3.4 (2025-12-09)
 
 *  Disable healthcheck by default [View](https://github.com/fystack/mpcium/commit/fb494f2b7f86616201a8ec01e43b0c57e348d5cb)
