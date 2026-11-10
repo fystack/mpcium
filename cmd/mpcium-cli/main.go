@@ -103,6 +103,36 @@ func main() {
 				Action: generateIdentity,
 			},
 			{
+				Name:  "export-node-keys",
+				Usage: "Write node_id -> public key JSON from node identity files, for clients that verify node-signed results",
+				Flags: []cli.Flag{
+					&cli.StringSliceFlag{
+						Name:    "identity-dir",
+						Aliases: []string{"i"},
+						Value:   []string{"identity"},
+						Usage:   "Directory with <node>_identity.json files; repeat for several directories",
+					},
+					&cli.StringFlag{
+						Name:    "peers",
+						Aliases: []string{"p"},
+						Value:   "peers.json",
+						Usage:   "peers.json used to check that every node has a key; skipped if the file does not exist",
+					},
+					&cli.StringFlag{
+						Name:    "output",
+						Aliases: []string{"o"},
+						Value:   "node_public_keys.json",
+						Usage:   "Output file, or - for stdout",
+					},
+					&cli.BoolFlag{
+						Name:    "overwrite",
+						Aliases: []string{"f"},
+						Usage:   "Overwrite the output file if it already exists",
+					},
+				},
+				Action: exportNodeKeys,
+			},
+			{
 				Name:  "generate-initiator",
 				Usage: "Generate identity files for an event initiator node",
 				Flags: []cli.Flag{

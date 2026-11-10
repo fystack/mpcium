@@ -10,6 +10,7 @@ import (
 	"github.com/fystack/mpcium/pkg/eventconsumer"
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
+	"github.com/fystack/mpcium/pkg/resultauth"
 	"github.com/fystack/mpcium/pkg/types"
 	"github.com/nats-io/nats.go"
 )
@@ -35,6 +36,8 @@ type mpcClient struct {
 	reshareSuccessQueue messaging.MessageQueue
 	signer              Signer
 	clientID            string
+	resultVerifier      resultVerifier
+	keygenAggregator    sharedAggregator[event.KeygenResultEvent]
 }
 
 // Options defines configuration options for creating a new MPCClient
@@ -45,8 +48,19 @@ type Options struct {
 	// Signer for signing messages
 	Signer Signer
 
-	// ClientID optionally scopes result routing for this client instance.
+	// ClientID scopes result routing; give each process its own when KeygenRequiredNodeSignatures > 1.
 	ClientID string
+
+	// ResultVerifyMode controls checking of node signatures on results; defaults to off.
+	ResultVerifyMode ResultVerifyMode
+
+	// NodePublicKeys maps node ID to its hex ed25519 identity public key.
+	NodePublicKeys map[string]string
+
+	// KeygenRequiredNodeSignatures is how many distinct nodes (t+1) must report the same wallet public key.
+	// It needs enforce mode. Signing and reshare results are checked against keys the caller already knows
+	// (see VerifySigningResult), so they are delivered as soon as one valid copy arrives.
+	KeygenRequiredNodeSignatures int
 }
 
 type clientResultRouting struct {
@@ -66,6 +80,10 @@ func NewMPCClient(opts Options) MPCClient {
 	}
 	if err := validateClientID(opts.ClientID); err != nil {
 		logger.Fatal("Invalid client ID", err)
+	}
+	verifier, err := newResultVerifier(opts.ResultVerifyMode, opts.NodePublicKeys, opts.KeygenRequiredNodeSignatures)
+	if err != nil {
+		logger.Fatal("Invalid result verification options", err)
 	}
 
 	// 2) Create the PubSub for both publish & subscribe
@@ -110,6 +128,7 @@ func NewMPCClient(opts Options) MPCClient {
 		reshareSuccessQueue: reshareSuccessQueue,
 		signer:              opts.Signer,
 		clientID:            opts.ClientID,
+		resultVerifier:      verifier,
 	}
 }
 
@@ -141,7 +160,14 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 		return fmt.Errorf("CreateWallet: marshal error: %w", err)
 	}
 
-	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes, c.requestHeaders()); err != nil {
+	headers := c.requestHeaders()
+	if c.resultVerifier.keygenRequired > 1 {
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[event.KeygenResultCopiesHeader] = event.KeygenResultCopiesPerNode
+	}
+	if err := c.keygenBroker.PublishMessage(context.Background(), event.KeygenRequestTopic, bytes, headers); err != nil {
 		return fmt.Errorf("CreateWallet: publish error: %w", err)
 	}
 	return nil
@@ -149,14 +175,33 @@ func (c *mpcClient) CreateWalletWithAuthorizers(walletID string, authorizerSigna
 
 // The callback will be invoked whenever a wallet creation result is received.
 func (c *mpcClient) OnWalletCreationResult(callback func(event event.KeygenResultEvent)) error {
-	err := c.genKeySuccessQueue.Dequeue(event.KeygenResultSubscriptionSubject(c.clientID), func(msg []byte) error {
-		var event event.KeygenResultEvent
-		err := json.Unmarshal(msg, &event)
-		if err != nil {
-			return err
+	aggregator := c.keygenAggregator.register(callback, resultauth.AggregatorConfig[event.KeygenResultEvent]{
+		Insufficient: insufficientKeygenResult,
+	})
+	err := c.genKeySuccessQueue.DequeueMessageAsync(event.KeygenResultSubscriptionSubject(c.clientID), func(msg messaging.Message, done func(error)) {
+		var result event.KeygenResultEvent
+		if err := json.Unmarshal(msg.Data, &result); err != nil {
+			done(err)
+			return
 		}
-		callback(event)
-		return nil
+		nodeID, ok := c.resultVerifier.check(msg, done)
+		if !ok {
+			return
+		}
+		if c.resultVerifier.keygenRequired <= 1 {
+			callback(result)
+			done(nil)
+			return
+		}
+		aggregator.Add(resultauth.Result[event.KeygenResultEvent]{
+			Key:      msg.Subject,
+			Required: c.resultVerifier.keygenRequired,
+			NodeID:   nodeID,
+			Body:     msg.Data,
+			Success:  result.ResultType == event.ResultTypeSuccess,
+			Event:    result,
+			Ack:      func() { done(nil) },
+		})
 	})
 
 	if err != nil {
@@ -191,14 +236,17 @@ func (c *mpcClient) SignTransaction(msg *types.SignTxMessage) error {
 }
 
 func (c *mpcClient) OnSignResult(callback func(event event.SigningResultEvent)) error {
-	err := c.signResultQueue.Dequeue(event.SigningResultSubscriptionSubject(c.clientID), func(msg []byte) error {
-		var event event.SigningResultEvent
-		err := json.Unmarshal(msg, &event)
-		if err != nil {
-			return err
+	err := c.signResultQueue.DequeueMessageAsync(event.SigningResultSubscriptionSubject(c.clientID), func(msg messaging.Message, done func(error)) {
+		var result event.SigningResultEvent
+		if err := json.Unmarshal(msg.Data, &result); err != nil {
+			done(err)
+			return
 		}
-		callback(event)
-		return nil
+		if _, ok := c.resultVerifier.check(msg, done); !ok {
+			return
+		}
+		callback(result)
+		done(nil)
 	})
 
 	if err != nil {
@@ -232,17 +280,19 @@ func (c *mpcClient) Resharing(msg *types.ResharingMessage) error {
 }
 
 func (c *mpcClient) OnResharingResult(callback func(event event.ResharingResultEvent)) error {
-	err := c.reshareSuccessQueue.Dequeue(event.ReshareResultSubscriptionSubject(c.clientID), func(msg []byte) error {
-		logger.Info("Received reshare success message", "raw", string(msg))
-		var event event.ResharingResultEvent
-		err := json.Unmarshal(msg, &event)
-		if err != nil {
-			logger.Error("Failed to unmarshal reshare success event", err, "raw", string(msg))
-			return err
+	err := c.reshareSuccessQueue.DequeueMessageAsync(event.ReshareResultSubscriptionSubject(c.clientID), func(msg messaging.Message, done func(error)) {
+		logger.Info("Received reshare result message", "raw", string(msg.Data))
+		var result event.ResharingResultEvent
+		if err := json.Unmarshal(msg.Data, &result); err != nil {
+			logger.Error("Failed to unmarshal reshare result event", err, "raw", string(msg.Data))
+			done(err)
+			return
 		}
-		logger.Info("Deserialized reshare success event", "event", event)
-		callback(event)
-		return nil
+		if _, ok := c.resultVerifier.check(msg, done); !ok {
+			return
+		}
+		callback(result)
+		done(nil)
 	})
 
 	if err != nil {

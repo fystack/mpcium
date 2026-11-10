@@ -170,9 +170,12 @@ func newScopedMPCClient(t *testing.T, suite *E2ETestSuite, clientID string) (cli
 	require.NoError(t, err, "Failed to connect scoped client %s to NATS", clientID)
 
 	mpcClient := client.NewMPCClient(client.Options{
-		NatsConn: natsConn,
-		Signer:   signer,
-		ClientID: clientID,
+		NatsConn:                     natsConn,
+		Signer:                       signer,
+		ClientID:                     clientID,
+		ResultVerifyMode:             client.ResultVerifyEnforce,
+		NodePublicKeys:               suite.nodePublicKeys(t),
+		KeygenRequiredNodeSignatures: e2eKeygenRequiredNodeSignatures,
 	})
 
 	return mpcClient, natsConn

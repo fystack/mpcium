@@ -8,6 +8,7 @@ import (
 	"slices"
 	"syscall"
 
+	"github.com/fystack/mpcium/examples/internal/exampleclient"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/event"
@@ -61,11 +62,11 @@ func main() {
 		logger.Fatal("Failed to create signer", err)
 	}
 
-	mpcClient := client.NewMPCClient(client.Options{
+	mpcClient := client.NewMPCClient(exampleclient.WithResultVerification(client.Options{
 		NatsConn: natsConn,
 		Signer:   signer,
 		ClientID: *clientID,
-	})
+	}))
 
 	// 2) Once wallet exists, immediately fire a SignTransaction
 	txID := uuid.New().String()

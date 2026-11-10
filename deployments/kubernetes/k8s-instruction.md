@@ -200,6 +200,12 @@ identity/node0/
 └── node0_private.key.age      (encrypted private key)
 ```
 
+Collect the node public keys for MPC clients. Clients pin them to check that results were signed by these nodes. They are public keys, not secrets. For a deployment that is already running, run the same command against any node's identity directory, which holds every node's `*_identity.json`:
+
+```bash
+mpcium-cli export-node-keys --identity-dir identity/node0 --identity-dir identity/node1 --identity-dir identity/node2
+```
+
 ### Step 5: Prepare Secrets
 
 You'll need the following secrets for each node:

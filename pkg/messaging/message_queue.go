@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/fystack/mpcium/pkg/logger"
@@ -18,11 +19,21 @@ var (
 type MessageQueue interface {
 	Enqueue(topic string, message []byte, options *EnqueueOptions) error
 	Dequeue(topic string, handler func(message []byte) error) error
+	DequeueMessage(topic string, handler func(msg Message) error) error
+	// DequeueMessageAsync settles each message only when done is called, with the same mapping as a handler error.
+	DequeueMessageAsync(topic string, handler func(msg Message, done func(err error))) error
 	Close()
 }
 
 type EnqueueOptions struct {
 	IdempotententKey string
+	Headers          map[string]string
+}
+
+type Message struct {
+	Subject string
+	Data    []byte
+	Header  nats.Header
 }
 
 type msgQueue struct {
@@ -104,7 +115,10 @@ func (m *NATsMessageQueueManager) NewMessageQueue(consumerName, filterSubject st
 func (mq *msgQueue) Enqueue(topic string, message []byte, options *EnqueueOptions) error {
 	header := nats.Header{}
 	if options != nil {
-		header.Add("Nats-Msg-Id", options.IdempotententKey)
+		if options.IdempotententKey != "" {
+			header.Add("Nats-Msg-Id", options.IdempotententKey)
+		}
+		applyHeaders(header, options.Headers)
 	}
 
 	logger.Info("Publishing message", "topic", topic, "consumerName", mq.consumerName)
@@ -123,34 +137,51 @@ func (mq *msgQueue) Enqueue(topic string, message []byte, options *EnqueueOption
 }
 
 func (mq *msgQueue) Dequeue(topic string, handler func(message []byte) error) error {
+	return mq.DequeueMessage(topic, func(msg Message) error {
+		return handler(msg.Data)
+	})
+}
+
+func (mq *msgQueue) DequeueMessage(topic string, handler func(msg Message) error) error {
+	return mq.DequeueMessageAsync(topic, func(msg Message, done func(err error)) {
+		done(handler(msg))
+	})
+}
+
+func (mq *msgQueue) DequeueMessageAsync(topic string, handler func(msg Message, done func(err error))) error {
 	c, err := mq.consumer.Consume(func(msg jetstream.Msg) {
 		meta, _ := msg.Metadata()
 		logger.Debug("Received message", "meta", meta)
-		err := handler(msg.Data())
-		if err != nil {
-			if errors.Is(err, ErrPermament) {
-				logger.Info("Permanent error on message", "meta", meta)
-				if err := msg.Term(); err != nil {
-					logger.Error("Failed to terminate message", err)
-				}
-				return
-			}
+		var once sync.Once
+		handler(Message{Subject: msg.Subject(), Data: msg.Data(), Header: msg.Headers()}, func(err error) {
+			once.Do(func() { settleMessage(msg, meta, err) })
+		})
+	})
+	mq.consumerContext = c
+	return err
+}
 
-			logger.Error("Error handling message: ", err)
-			if err := msg.Nak(); err != nil {
-				logger.Error("Failed to nak message", err)
+func settleMessage(msg jetstream.Msg, meta *jetstream.MsgMetadata, err error) {
+	if err != nil {
+		if errors.Is(err, ErrPermament) {
+			logger.Info("Permanent error on message", "meta", meta)
+			if err := msg.Term(); err != nil {
+				logger.Error("Failed to terminate message", err)
 			}
 			return
 		}
 
-		logger.Debug("Message Acknowledged", "meta", meta)
-		err = msg.Ack()
-		if err != nil {
-			logger.Error("Error acknowledging message: ", err)
+		logger.Error("Error handling message: ", err)
+		if err := msg.Nak(); err != nil {
+			logger.Error("Failed to nak message", err)
 		}
-	})
-	mq.consumerContext = c
-	return err
+		return
+	}
+
+	logger.Debug("Message Acknowledged", "meta", meta)
+	if err := msg.Ack(); err != nil {
+		logger.Error("Error acknowledging message: ", err)
+	}
 }
 
 func (mq *msgQueue) Close() {

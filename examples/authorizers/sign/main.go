@@ -9,6 +9,7 @@ import (
 	"slices"
 	"syscall"
 
+	"github.com/fystack/mpcium/examples/internal/exampleclient"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/event"
@@ -80,11 +81,11 @@ func main() {
 		authorizerSigners[authorizerID] = signer
 	}
 
-	mpcClient := client.NewMPCClient(client.Options{
+	mpcClient := client.NewMPCClient(exampleclient.WithResultVerification(client.Options{
 		NatsConn: natsConn,
 		Signer:   localSigner,
 		ClientID: *clientID,
-	})
+	}))
 
 	// Create a signing request with authorizers
 	txID := uuid.New().String()

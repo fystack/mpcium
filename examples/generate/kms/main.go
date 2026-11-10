@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fystack/mpcium/examples/internal/exampleclient"
 	"github.com/fystack/mpcium/pkg/client"
 	"github.com/fystack/mpcium/pkg/config"
 	"github.com/fystack/mpcium/pkg/event"
@@ -62,11 +63,11 @@ func main() {
 	}
 	logger.Info("Public key", "key", pubKey)
 
-	mpcClient := client.NewMPCClient(client.Options{
+	mpcClient := client.NewMPCClient(exampleclient.WithResultVerification(client.Options{
 		NatsConn: natsConn,
 		Signer:   kmsSigner,
 		ClientID: *clientID,
-	})
+	}))
 
 	var walletStartTimes sync.Map
 	var walletIDs []string

@@ -24,6 +24,7 @@ import (
 	"github.com/fystack/mpcium/pkg/logger"
 	"github.com/fystack/mpcium/pkg/messaging"
 	"github.com/fystack/mpcium/pkg/mpc"
+	"github.com/fystack/mpcium/pkg/resultauth"
 	"github.com/fystack/mpcium/pkg/security"
 	"github.com/hashicorp/consul/api"
 	"github.com/nats-io/nats.go"
@@ -225,11 +226,20 @@ func runNode(ctx context.Context, c *cli.Command) error {
 	directMessaging := messaging.NewNatsDirectMessaging(natsConn)
 	mqManager := messaging.NewNATsMessageQueueManager("mpc", event.ResultStreamSubjects(), natsConn)
 
-	genKeyResultQueue := mqManager.NewMessageQueue("mpc_keygen_result", event.KeygenResultSubscriptionSubject(""))
+	genKeyResultQueue := resultauth.NewSigningQueue(
+		mqManager.NewMessageQueue("mpc_keygen_result", event.KeygenResultSubscriptionSubject("")),
+		identityStore, nodeID,
+	)
 	defer genKeyResultQueue.Close()
-	singingResultQueue := mqManager.NewMessageQueue("mpc_signing_result", event.SigningResultSubscriptionSubject(""))
+	singingResultQueue := resultauth.NewSigningQueue(
+		mqManager.NewMessageQueue("mpc_signing_result", event.SigningResultSubscriptionSubject("")),
+		identityStore, nodeID,
+	)
 	defer singingResultQueue.Close()
-	reshareResultQueue := mqManager.NewMessageQueue("mpc_reshare_result", event.ReshareResultSubscriptionSubject(""))
+	reshareResultQueue := resultauth.NewSigningQueue(
+		mqManager.NewMessageQueue("mpc_reshare_result", event.ReshareResultSubscriptionSubject("")),
+		identityStore, nodeID,
+	)
 	defer reshareResultQueue.Close()
 
 	logger.Info("Starting mpcium node", "version", Version, "ID", nodeID, "name", nodeName)
