@@ -79,42 +79,35 @@ func TestVerifyRejectsSignatureFromOtherNode(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSignature)
 }
 
-func TestVectors(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("testdata", "vectors.json"))
+// The same vector is in apex pkg/wallet/mpc/resultauth, so a signing format change on either side fails there too.
+func TestVector(t *testing.T) {
+	const (
+		seed      = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+		publicKey = "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+		nodeID    = "node-vector-0"
+		subject   = "mpc.mpc_signing_result.complete"
+		body      = `{"result_type":"success","wallet_id":"wallet-1","tx_id":"tx-1"}`
+		signature = "IJjFJSE7bykp+PEfdzZ9SGC1tcd2fht4JjLMX1obph6gWR7tgNxo1PG1bfeotiaMpK/+a4VDUzDp907XvJa5AA=="
+	)
+	// Header names are part of the wire format: nats.Header.Get is case-sensitive.
+	require.Equal(t, "Mpc-Node-Id", NodeIDHeader)
+	require.Equal(t, "Mpc-Result-Sig", SignatureHeader)
+
+	seedBytes, err := hex.DecodeString(seed)
 	require.NoError(t, err)
-	var vectors []struct {
-		Seed      string `json:"seed"`
-		PublicKey string `json:"public_key"`
-		NodeID    string `json:"node_id"`
-		Subject   string `json:"subject"`
-		Body      string `json:"body"`
-		Signature string `json:"signature"`
-		// Header names are part of the wire format: nats.Header.Get is case-sensitive.
-		NodeIDHeader    string `json:"node_id_header"`
-		SignatureHeader string `json:"signature_header"`
-	}
-	require.NoError(t, json.Unmarshal(data, &vectors))
-	require.NotEmpty(t, vectors)
+	privateKey := ed25519.NewKeyFromSeed(seedBytes)
+	require.Equal(t, publicKey, hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)))
 
-	for _, v := range vectors {
-		require.Equal(t, v.NodeIDHeader, NodeIDHeader)
-		require.Equal(t, v.SignatureHeader, SignatureHeader)
-		seed, err := hex.DecodeString(v.Seed)
-		require.NoError(t, err)
-		privateKey := ed25519.NewKeyFromSeed(seed)
-		require.Equal(t, v.PublicKey, hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)))
+	headers, err := SignHeaders(keySigner{privateKey: privateKey}, nodeID, subject, []byte(body))
+	require.NoError(t, err)
+	require.Equal(t, signature, headers[SignatureHeader])
 
-		headers, err := SignHeaders(keySigner{privateKey: privateKey}, v.NodeID, v.Subject, []byte(v.Body))
-		require.NoError(t, err)
-		require.Equal(t, v.Signature, headers[SignatureHeader])
-
-		lookup, err := NewKeyLookup(map[string]string{v.NodeID: v.PublicKey})
-		require.NoError(t, err)
-		_, err = Verify(lookup, v.Subject, []byte(v.Body), headerOf(map[string]string{
-			NodeIDHeader: v.NodeID, SignatureHeader: v.Signature,
-		}))
-		require.NoError(t, err)
-	}
+	lookup, err := NewKeyLookup(map[string]string{nodeID: publicKey})
+	require.NoError(t, err)
+	_, err = Verify(lookup, subject, []byte(body), headerOf(map[string]string{
+		NodeIDHeader: nodeID, SignatureHeader: signature,
+	}))
+	require.NoError(t, err)
 }
 
 func TestNewKeyLookupRejectsBadKeys(t *testing.T) {
