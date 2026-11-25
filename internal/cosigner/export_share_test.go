@@ -32,8 +32,20 @@ func (f *fakeRelay) Close()                                    {}
 func (f *fakeRelay) ProtocolType() sdkprotocol.TransportType   { return "" }
 
 type fakeStores struct {
-	share     []byte
-	workspace string
+	share             []byte
+	workspace         string
+	committedReshares map[string]*sdkprotocol.SessionEvent
+}
+
+func (s *fakeStores) SaveCommittedReshare(event *sdkprotocol.SessionEvent) error {
+	if s.committedReshares == nil {
+		s.committedReshares = map[string]*sdkprotocol.SessionEvent{}
+	}
+	s.committedReshares[event.SessionID] = event
+	return nil
+}
+func (s *fakeStores) LoadCommittedReshare(sessionID string) (*sdkprotocol.SessionEvent, error) {
+	return s.committedReshares[sessionID], nil
 }
 
 func (s *fakeStores) LoadShare(sdkprotocol.ProtocolType, string) ([]byte, error) {

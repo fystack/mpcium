@@ -54,6 +54,12 @@ type ShareRotationStore interface {
 	AbortShareRotation(protocolType sdkprotocol.ProtocolType, keyID, sessionID string) error
 }
 
+// CommittedReshareStore keeps a committed reshare's completion so a commit the orchestrator retries after cleanup is answered.
+type CommittedReshareStore interface {
+	SaveCommittedReshare(event *sdkprotocol.SessionEvent) error
+	LoadCommittedReshare(sessionID string) (*sdkprotocol.SessionEvent, error)
+}
+
 type Stores interface {
 	PreparamsStore
 	SharesStore
@@ -61,6 +67,7 @@ type Stores interface {
 	ShareRotationStore
 	SessionCheckpointStore
 	SessionArtifactsStore
+	CommittedReshareStore
 	sdkstorage.KeyCommitteeStore
 	Close() error
 }
@@ -288,6 +295,26 @@ func (s *badgerStores) DeleteSessionCheckpoint(sessionID string) error {
 	})
 }
 
+func (s *badgerStores) SaveCommittedReshare(event *sdkprotocol.SessionEvent) error {
+	blob, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return s.save(keyCommittedReshare(event.SessionID), blob)
+}
+
+func (s *badgerStores) LoadCommittedReshare(sessionID string) (*sdkprotocol.SessionEvent, error) {
+	blob, err := s.load(keyCommittedReshare(sessionID))
+	if err != nil || len(blob) == 0 {
+		return nil, err
+	}
+	var event sdkprotocol.SessionEvent
+	if err := json.Unmarshal(blob, &event); err != nil {
+		return nil, fmt.Errorf("decode committed reshare: %w", err)
+	}
+	return &event, nil
+}
+
 func (s *badgerStores) load(key string) ([]byte, error) {
 	var value []byte
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -357,4 +384,8 @@ func keyArtifact(sessionID string) string {
 
 func keyCheckpoint(sessionID string) string {
 	return "checkpoint:" + sessionID
+}
+
+func keyCommittedReshare(sessionID string) string {
+	return "committed-reshares:" + sessionID
 }
