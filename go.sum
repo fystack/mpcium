@@ -105,8 +105,8 @@ github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7z
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
-github.com/fystack/mpcium-sdk v0.0.12-0.20261120090804-54bfe05e1e4c h1:Ze1PrW3cG9gRSN9PzW7zomf/uWyWf5eKJefTuhxNKT4=
-github.com/fystack/mpcium-sdk v0.0.12-0.20261120090804-54bfe05e1e4c/go.mod h1:FBrF3UNfUWV0HOgtb91+w776gOkcDK+56AkpkhGSUKM=
+github.com/fystack/mpcium-sdk v0.0.12-0.20261126072522-dc384cb67818 h1:JyBKky2NfsXeyWmFJ9QTH4vYVjeGqcZvYhG0lNyIG5M=
+github.com/fystack/mpcium-sdk v0.0.12-0.20261126072522-dc384cb67818/go.mod h1:FBrF3UNfUWV0HOgtb91+w776gOkcDK+56AkpkhGSUKM=
 github.com/fystack/tss-lib/v3 v3.0.2-0.20261116113509-f65a045b8986 h1:p+2dhV2xQ5S9yuK3Xq3BK+W7y+pPsZt7zDjInQkFLE8=
 github.com/fystack/tss-lib/v3 v3.0.2-0.20261116113509-f65a045b8986/go.mod h1:2YiekCEVQ+XNOq2ECsJDvYeGs1vgK+cfOHJ357XIWIk=
 github.com/go-kit/kit v0.8.0/go.mod h1:xBxKIO96dXMWWy0MnWVtmwkA9/13aqxPnvrjFYMA2as=
