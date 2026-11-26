@@ -291,6 +291,12 @@ func (r *Runtime) handleControl(raw []byte) error {
 	r.sessionOpsMu.Lock()
 	defer r.sessionOpsMu.Unlock()
 	session := r.getSession(msg.SessionID)
+	if session == nil && msg.ReshareCommit != nil {
+		if err := r.verifyControlSignature(&msg); err != nil {
+			return err
+		}
+		return r.replayCommittedReshare(msg.SessionID)
+	}
 	if session == nil {
 		logger.Warn("ignoring control for unknown session", "session_id", msg.SessionID)
 		return nil
@@ -345,6 +351,20 @@ func (r *Runtime) handleControl(raw []byte) error {
 		return r.flushPendingPeerMessages(msg.SessionID)
 	}
 	return nil
+}
+
+// replayCommittedReshare answers a commit retry for a reshare this node already committed and cleaned up.
+func (r *Runtime) replayCommittedReshare(sessionID string) error {
+	event, err := r.stores.LoadCommittedReshare(sessionID)
+	if err != nil {
+		return err
+	}
+	if event == nil {
+		logger.Warn("ignoring reshare commit for unknown session", "session_id", sessionID)
+		return nil
+	}
+	logger.Info("cosigner re-sent completion of a committed reshare", "session_id", sessionID)
+	return r.dispatchActions(participant.Actions{SessionEvents: []*sdkprotocol.SessionEvent{event}})
 }
 
 func (r *Runtime) startSession(msg *sdkprotocol.ControlMessage, meta sessionMeta) error {
@@ -583,6 +603,15 @@ func (r *Runtime) dispatchActions(actions participant.Actions) error {
 		r.recordShareWorkspace(actions.Result.KeyShare.KeyID, actions.Cleanup)
 	}
 	if actions.Cleanup != nil && actions.Cleanup.DropCheckpoint {
+		if actions.Result != nil && actions.Result.Reshare != nil {
+			for _, event := range actions.SessionEvents {
+				if event != nil && event.SessionCompleted != nil {
+					if err := r.stores.SaveCommittedReshare(event); err != nil {
+						logger.Error("persist committed reshare failed; a retried commit will go unanswered", err, "session_id", event.SessionID)
+					}
+				}
+			}
+		}
 		outcome := "cleanup"
 		if actions.Result != nil {
 			switch {

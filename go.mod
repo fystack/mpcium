@@ -14,7 +14,7 @@ require (
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4
 	github.com/dgraph-io/badger/v4 v4.9.0
-	github.com/fystack/mpcium-sdk v0.0.11
+	github.com/fystack/mpcium-sdk v0.0.12-0.20261126072522-dc384cb67818
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/consul/api v1.33.2
 	github.com/mitchellh/mapstructure v1.5.0
@@ -103,4 +103,4 @@ require (
 
 replace github.com/agl/ed25519 => github.com/binance-chain/edwards25519 v0.0.0-20200305024217-f36fc4b53d43
 
-replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.1
+replace github.com/bnb-chain/tss-lib/v3 => github.com/fystack/tss-lib/v3 v3.0.2-0.20261116113509-f65a045b8986
